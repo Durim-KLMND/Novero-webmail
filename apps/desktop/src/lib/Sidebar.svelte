@@ -20,6 +20,8 @@
 <script lang="ts">
   import type { Account, Folder, UpdateInfo } from "./api";
   import { errorText } from "./api";
+  import Icon, { type IconName } from "./Icon.svelte";
+  import { items, openMenu, openMenuAt, type MenuItem } from "./menus.svelte";
 
   /** A dropped connection is expected and recovers by itself, so it is not shown as an error. */
   function isOffline(error: string): boolean {
@@ -35,6 +37,8 @@
     selected: Folder | null;
     allInboxes: boolean;
     onSelect: (folder: Folder) => void;
+    /** A right-click on a folder. */
+    onFolderMenu: (folder: Folder, event: MouseEvent) => void;
     onAllInboxes: () => void;
     /** The search box changed; an empty query ends the search. */
     onSearch: (query: string) => void;
@@ -57,6 +61,7 @@
     selected,
     allInboxes,
     onSelect,
+    onFolderMenu,
     onAllInboxes,
     onSearch,
     onSettings,
@@ -80,17 +85,29 @@
     return n === 1 ? `1 ${one}` : `${n.toLocaleString()} ${one}s`;
   }
 
-  let menuFor = $state<number | null>(null);
+  function accountMenu(account: Account): MenuItem[] {
+    return items(
+      { label: "Check for mail", icon: "refresh", run: () => onSync(account.id) },
+      { label: "Sign in again", icon: "sign-in", run: () => onSignInAgain(account) },
+      "separator",
+      { label: "Remove account", icon: "remove-account", danger: true, run: () => onRemove(account) },
+    );
+  }
+
+  function moreMenu(account: Account, event: MouseEvent) {
+    const at = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenuAt(at.left, at.bottom + 2, accountMenu(account));
+  }
   let collapsed = $state<Record<number, boolean>>({});
 
-  const icons: Record<string, string> = {
-    inbox: "📥",
-    sent: "📤",
-    drafts: "📝",
-    trash: "🗑",
-    junk: "⚠",
-    archive: "🗄",
-    other: "📁",
+  const icons: Record<string, IconName> = {
+    inbox: "inbox",
+    sent: "sent",
+    drafts: "drafts",
+    trash: "trash",
+    junk: "junk",
+    archive: "archive",
+    other: "folder",
   };
 
   /** Searching starts after a pause in typing. */
@@ -160,7 +177,7 @@
   <div class="scroll">
     {#if accounts.length > 1}
       <button class="folder all" class:active={allInboxes} onclick={onAllInboxes}>
-        <span class="icon" aria-hidden="true">📥</span>
+        <Icon name="all-inboxes" />
         <span class="label">All inboxes</span>
         {#if unreadInboxes > 0}<span class="badge">{unreadInboxes.toLocaleString()}</span>{/if}
       </button>
@@ -172,10 +189,11 @@
           <button
             class="account-name"
             onclick={() => (collapsed[account.id] = !collapsed[account.id])}
+            oncontextmenu={(e) => openMenu(e, accountMenu(account))}
             aria-expanded={!collapsed[account.id]}
             title={account.email}
           >
-            <span class="chevron">{collapsed[account.id] ? "▸" : "▾"}</span>
+            <span class="chevron"><Icon name={collapsed[account.id] ? "chevron-right" : "chevron-down"} size={14} /></span>
             <span class="names">
               <strong>{account.displayName}</strong>
               {#if account.displayName !== account.email}<small class="quiet">{account.email}</small>{/if}
@@ -183,14 +201,7 @@
           </button>
           {#if sync?.running}<span class="spinner small" title={sync.detail}></span>{/if}
           {#if sync?.error && !isOffline(sync.error)}<span class="warn" title={errorText(sync.error)}>!</span>{/if}
-          <button class="more" aria-label="Account options" onclick={() => (menuFor = menuFor === account.id ? null : account.id)}>⋯</button>
-          {#if menuFor === account.id}
-            <div class="menu" role="menu">
-              <button role="menuitem" onclick={() => { menuFor = null; onSync(account.id); }}>Check for mail</button>
-              <button role="menuitem" onclick={() => { menuFor = null; onSignInAgain(account); }}>Sign in again</button>
-              <button role="menuitem" class="danger" onclick={() => { menuFor = null; onRemove(account); }}>Remove account</button>
-            </div>
-          {/if}
+          <button class="more" aria-label="Account options" aria-haspopup="menu" onclick={(e) => moreMenu(account, e)}><Icon name="more" /></button>
         </div>
         {#if sync?.running && sync.progress}
           {@const p = sync.progress}
@@ -237,8 +248,9 @@
                   class:active={selected?.id === folder.id}
                   style:padding-left="{12 + depth(folder) * 14}px"
                   onclick={() => onSelect(folder)}
+                  oncontextmenu={(e) => onFolderMenu(folder, e)}
                 >
-                  <span class="icon" aria-hidden="true">{icons[folder.role]}</span>
+                  <Icon name={icons[folder.role]} />
                   <span class="label">{folderLabel(folder.name, folder.role, folder.delimiter)}</span>
                   {#if folder.unread > 0 && folder.role !== "sent" && folder.role !== "trash"}
                     <span class="badge">{folder.unread.toLocaleString()}</span>
@@ -260,9 +272,9 @@
     </div>
   {/if}
   <div class="footer">
-    <button class="add" onclick={onAddAccount}>＋ Add account</button>
-    <button class="tool" onclick={onHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
-    <button class="tool" onclick={onSettings} aria-label="Settings" title="Settings">⚙</button>
+    <button class="add" onclick={onAddAccount}><Icon name="plus" /> Add account</button>
+    <button class="tool" onclick={onHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"><Icon name="keyboard" size={18} /></button>
+    <button class="tool" onclick={onSettings} aria-label="Settings" title="Settings"><Icon name="settings" size={18} /></button>
   </div>
 </nav>
 
@@ -315,34 +327,16 @@
     white-space: nowrap;
   }
   .chevron {
-    width: 12px;
+    display: flex;
     color: var(--text-quiet);
   }
   .more {
     border: none;
     background: none;
-    padding: 2px 6px;
+    padding: 3px 5px;
+    color: var(--text-quiet);
   }
-  .menu {
-    position: absolute;
-    right: 0;
-    top: 100%;
-    z-index: 5;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px;
-    display: grid;
-    min-width: 170px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  }
-  .menu button {
-    border: none;
-    text-align: left;
-  }
-  .menu .danger {
-    color: var(--danger);
-  }
+
   .warn {
     color: var(--danger);
     font-weight: 700;
@@ -390,9 +384,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .icon {
-    width: 18px;
-    text-align: center;
+  .folder :global(.icon) {
+    color: var(--text-quiet);
+  }
+  .folder.active :global(.icon) {
+    color: var(--accent-ink);
   }
   .badge {
     font-size: 12px;
@@ -424,8 +420,8 @@
     padding: 7px 8px;
   }
   .tool {
-    padding: 4px 10px;
-    font-size: 16px;
+    padding: 6px 9px;
+    color: var(--text-quiet);
   }
   .search {
     padding: 0 12px 10px;

@@ -1,7 +1,9 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { api, errorText, type FlagKind, type Folder, type MessageSummary } from "./api";
   import { folderLabel } from "./format";
   import MessageCard from "./MessageCard.svelte";
+  import { openMenuAt } from "./menus.svelte";
 
   interface Props {
     /** The selected row of the message list: a message or a conversation. */
@@ -25,6 +27,19 @@
   const rowId = $derived(row?.id ?? null);
   const canArchive = $derived(row?.folderRole !== "archive" && folders.some((f) => f.role === "archive"));
   const moveTargets = $derived(folders.filter((f) => f.id !== row?.folderId));
+
+  function moveMenu(event: MouseEvent) {
+    const at = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenuAt(
+      at.left,
+      at.bottom + 2,
+      moveTargets.map((f) => ({
+        label: folderLabel(f.name, f.role, f.delimiter),
+        icon: f.role === "other" ? "folder" : f.role,
+        run: () => onMove(f.id),
+      })),
+    );
+  }
 
   /** The conversation, oldest first. */
   let messages = $state<MessageSummary[]>([]);
@@ -110,33 +125,29 @@
   {:else}
     <div class="actions" role="toolbar" aria-label="Message actions">
       {#if latest}
-        <button onclick={() => onReply(latest.id, false)} title="Reply (R)">Reply</button>
-        <button onclick={() => onReply(latest.id, true)} title="Reply all (A)">Reply all</button>
-        <button onclick={() => onForward(latest.id)} title="Forward (F)">Forward</button>
+        <button onclick={() => onReply(latest.id, false)} title="Reply (R)"><Icon name="reply" />Reply</button>
+        <button onclick={() => onReply(latest.id, true)} title="Reply all (A)"><Icon name="reply-all" />Reply all</button>
+        <button onclick={() => onForward(latest.id)} title="Forward (F)"><Icon name="forward" />Forward</button>
         <span class="gap"></span>
       {/if}
-      {#if canArchive}<button onclick={onArchive} title="Archive (E)">Archive</button>{/if}
-      <button onclick={onDelete} title="Delete (#)">{row.folderRole === "trash" ? "Delete forever" : "Delete"}</button>
-      <button onclick={() => onToggle("seen", !seen)} title={seen ? "Mark unread (Shift+U)" : "Mark read (Shift+I)"}>
-        {seen ? "Mark unread" : "Mark read"}
+      {#if canArchive}<button onclick={onArchive} title="Archive (E)" aria-label="Archive"><Icon name="archive" /><span class="text">Archive</span></button>{/if}
+      <button onclick={onDelete} title="Delete (#)" aria-label={row.folderRole === "trash" ? "Delete forever" : "Delete"}>
+        <Icon name="trash" /><span class="text">{row.folderRole === "trash" ? "Delete forever" : "Delete"}</span>
       </button>
-      <button aria-pressed={flagged} onclick={() => onToggle("flagged", !flagged)} title="Flag (S)">
-        {flagged ? "⚑ Flagged" : "⚐ Flag"}
+      <button
+        onclick={() => onToggle("seen", !seen)}
+        title={seen ? "Mark unread (Shift+U)" : "Mark read (Shift+I)"}
+        aria-label={seen ? "Mark unread" : "Mark read"}
+      >
+        <Icon name={seen ? "unread" : "read"} /><span class="text">{seen ? "Mark unread" : "Mark read"}</span>
+      </button>
+      <button aria-pressed={flagged} onclick={() => onToggle("flagged", !flagged)} title="Flag (S)" aria-label="Flag">
+        <Icon name="flag" filled={flagged} /><span class="text">{flagged ? "Flagged" : "Flag"}</span>
       </button>
       {#if moveTargets.length}
-        <select
-          aria-label="Move to folder"
-          onchange={(e) => {
-            const target = Number(e.currentTarget.value);
-            e.currentTarget.value = "";
-            if (target) onMove(target);
-          }}
-        >
-          <option value="">Move to…</option>
-          {#each moveTargets as f (f.id)}
-            <option value={f.id}>{folderLabel(f.name, f.role, f.delimiter)}</option>
-          {/each}
-        </select>
+        <button aria-haspopup="menu" title="Move to folder" aria-label="Move to folder" onclick={moveMenu}>
+          <Icon name="move" /><span class="text">Move to</span><Icon name="chevron-down" size={14} />
+        </button>
       {/if}
     </div>
     <header>
@@ -192,11 +203,19 @@
     background: var(--bg);
     z-index: 1;
   }
-  .actions button,
-  .actions select {
+  .actions button {
     width: auto;
     padding: 5px 10px;
     font-size: 13px;
+  }
+  /* In a narrow pane the actions after Forward show only their icons. */
+  .reader {
+    container-type: inline-size;
+  }
+  @container (max-width: 760px) {
+    .actions .text {
+      display: none;
+    }
   }
   .gap {
     width: 8px;

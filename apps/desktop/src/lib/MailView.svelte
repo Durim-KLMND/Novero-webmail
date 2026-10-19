@@ -31,6 +31,7 @@
   import ShortcutHelp from "./ShortcutHelp.svelte";
   import Toasts from "./Toasts.svelte";
   import CrashReport from "./CrashReport.svelte";
+  import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
 
   interface Props {
     accounts: Account[];
@@ -119,6 +120,12 @@
     // The app may have been started by clicking an email link.
     openMailto();
   });
+
+  setMailtoHandler((link) => {
+    const account = selected?.accountId ?? selectedFolder?.accountId ?? accounts[0]?.id;
+    if (account != null) openComposer(() => api.mailtoDraft(account, link));
+  });
+  onDestroy(() => setMailtoHandler(null));
 
   const unlistenUpdate = onUpdateReady((found) => (update = found));
   const unlistenMailto = onMailto(openMailto);
@@ -344,6 +351,70 @@
     act((ids) => api.deleteMessages(ids), true, (many) => (forever ? `${what(many)} deleted` : `${what(many)} moved to Trash`));
   }
 
+  /** The right-click menu of a message row. The row is selected first, so the
+   *  actions are the toolbar's. */
+  async function rowMenu(item: MessageSummary, event: MouseEvent) {
+    event.preventDefault();
+    const draft = item.folderRole === "drafts";
+    if (selected?.id !== item.id) {
+      if (draft) {
+        await leaveComposer();
+        selected = item;
+      } else {
+        await selectMessage(item);
+      }
+    }
+    const target = () => (selected?.id === item.id ? reader?.replyTarget() : null) ?? item.id;
+    const seen = item.flags.seen;
+    const flagged = item.flags.flagged;
+    const targets = (folders[item.accountId] ?? []).filter((f) => f.id !== item.folderId);
+    const moveTo: MenuItem[] = targets.map((f) => ({
+      label: folderLabel(f.name, f.role, f.delimiter),
+      icon: f.role === "other" ? "folder" : f.role,
+      run: () => move(f.id),
+    }));
+    openMenu(
+      event,
+      items(
+        draft && { label: "Open draft", icon: "drafts", run: () => selectMessage(item) },
+        !draft && { label: "Reply", icon: "reply", shortcut: "R", run: () => openComposer(() => api.replyDraft(target(), false)) },
+        !draft && { label: "Reply all", icon: "reply-all", shortcut: "A", run: () => openComposer(() => api.replyDraft(target(), true)) },
+        !draft && { label: "Forward", icon: "forward", shortcut: "F", run: () => openComposer(() => api.forwardDraft(target())) },
+        "separator",
+        !draft && {
+          label: seen ? "Mark unread" : "Mark read",
+          icon: seen ? "unread" : "read",
+          shortcut: seen ? "Shift+U" : "Shift+I",
+          run: () => toggle("seen", !seen),
+        },
+        !draft && { label: flagged ? "Remove flag" : "Flag", icon: flagged ? "unflag" : "flag", shortcut: "S", run: () => toggle("flagged", !flagged) },
+        "separator",
+        !draft && moveTo.length > 0 && { label: "Move to", icon: "move", items: moveTo },
+        canArchive && { label: "Archive", icon: "archive", shortcut: "E", run: archive },
+        {
+          label: item.folderRole === "trash" ? "Delete forever" : "Delete",
+          icon: "trash",
+          shortcut: "Del",
+          danger: true,
+          run: remove,
+        },
+      ),
+    );
+  }
+
+  /** The right-click menu of a folder in the sidebar. */
+  function folderMenu(folder: Folder, event: MouseEvent) {
+    openMenu(
+      event,
+      items(
+        { label: "Open", icon: folder.role === "other" ? "folder" : folder.role, run: () => selectFolder(folder) },
+        { label: "Check for mail", icon: "refresh", run: () => api.syncAccount(folder.accountId) },
+        "separator",
+        { label: "New message", icon: "drafts", shortcut: "C", run: () => openComposer(() => api.newDraft(folder.accountId)) },
+      ),
+    );
+  }
+
   function opened() {
     if (selected) scheduleRefresh(selected.accountId);
   }
@@ -491,6 +562,7 @@
     selected={allInboxes || searchQuery ? null : selectedFolder}
     allInboxes={allInboxes && !searchQuery}
     onSelect={selectFolder}
+    onFolderMenu={folderMenu}
     onAllInboxes={selectAllInboxes}
     onSearch={search}
     onSettings={() => (showSettings = true)}
@@ -516,6 +588,7 @@
     selected={selected?.id ?? null}
     onSelect={selectMessage}
     onDelete={remove}
+    onMenu={rowMenu}
   />
   {#if composing}
     {#key composing.id}

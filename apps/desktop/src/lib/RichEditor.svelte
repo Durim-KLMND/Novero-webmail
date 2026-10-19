@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon, { type IconName } from "./Icon.svelte";
   import { onMount } from "svelte";
   import { hasFormatting, htmlToText, textToHtml } from "./richtext";
 
@@ -187,12 +188,12 @@
     run("insertHTML", textToHtml(text.replace(/\r\n?/g, "\n")));
   }
 
-  const tools = [
-    { command: "bold", label: "B", title: "Bold (Ctrl+B)", class: "bold" },
-    { command: "italic", label: "I", title: "Italic (Ctrl+I)", class: "italic" },
-    { command: "underline", label: "U", title: "Underline (Ctrl+U)", class: "underline" },
-    { command: "insertUnorderedList", label: "•", title: "Bulleted list", class: "" },
-    { command: "insertOrderedList", label: "1.", title: "Numbered list", class: "" },
+  const tools: { command: string; icon: IconName; title: string }[] = [
+    { command: "bold", icon: "bold", title: "Bold (Ctrl+B)" },
+    { command: "italic", icon: "italic", title: "Italic (Ctrl+I)" },
+    { command: "underline", icon: "underline", title: "Underline (Ctrl+U)" },
+    { command: "insertUnorderedList", icon: "list", title: "Bulleted list" },
+    { command: "insertOrderedList", icon: "list-ordered", title: "Numbered list" },
   ];
 </script>
 
@@ -200,18 +201,17 @@
   <div class="tools" role="toolbar" aria-label="Formatting">
     {#each tools as t (t.command)}
       <button
-        class={t.class}
         class:on={active[t.command]}
         title={t.title}
         aria-label={t.title}
         aria-pressed={Boolean(active[t.command])}
         onmousedown={keepSelection}
-        onclick={() => run(t.command)}>{t.label}</button
+        onclick={() => run(t.command)}><Icon name={t.icon} /></button
       >
     {/each}
-    <button title="Link (Ctrl+K)" aria-label="Link (Ctrl+K)" onmousedown={keepSelection} onclick={openLink}>🔗</button>
+    <button title="Link (Ctrl+K)" aria-label="Link (Ctrl+K)" onmousedown={keepSelection} onclick={openLink}><Icon name="link" /></button>
     <button title="Clear formatting" aria-label="Clear formatting" onmousedown={keepSelection} onclick={clearFormatting}
-      >Tx</button
+      ><Icon name="clear-formatting" /></button
     >
     {#if linking}
       <span class="link-row">
@@ -274,15 +274,6 @@
   .tools button.on {
     background: var(--bg-selected);
     border-color: var(--border);
-  }
-  .bold {
-    font-weight: 700;
-  }
-  .italic {
-    font-style: italic;
-  }
-  .underline {
-    text-decoration: underline;
   }
   .link-row {
     display: flex;

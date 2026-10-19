@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import Icon from "./Icon.svelte";
   import { api, errorText, type Mailbox, type MessageSummary, type SyncStage } from "./api";
   import { listDate, progressLabel, recipientLabel, senderName } from "./format";
 
@@ -20,8 +22,11 @@
     onSelect: (item: MessageSummary) => void;
     /** The Delete key on the selected row. */
     onDelete: () => void;
+    /** A right-click on a row. */
+    onMenu?: (item: MessageSummary, event: MouseEvent) => void;
   }
-  let { mailbox, title, emptyText, unit, progress = null, version, selected, place, onSelect, onDelete }: Props = $props();
+  let { mailbox, title, emptyText, unit, progress = null, version, selected, place, onSelect, onDelete, onMenu }: Props =
+    $props();
 
   const ROW = 64;
   const PAGE = 100;
@@ -69,13 +74,16 @@
     if (mailbox) loadPage(0, mailbox);
   });
 
-  // New mail or changed flags: reload the pages already shown.
+  // New mail or changed flags: reload the pages already shown. Only `version`
+  // and the mailbox start a reload; the pages it writes must not start another.
   $effect(() => {
     void version;
     const box = mailbox;
     if (!box) return;
-    const loaded = Object.keys(pages).map(Number);
-    for (const page of loaded.length ? loaded : [0]) loadPage(page, box, true);
+    untrack(() => {
+      const loaded = Object.keys(pages).map(Number);
+      for (const page of loaded.length ? loaded : [0]) loadPage(page, box, true);
+    });
   });
 
   const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN));
@@ -200,6 +208,7 @@
                 role="option"
                 aria-selected={active}
                 onclick={() => onSelect(item)}
+                oncontextmenu={(e) => onMenu?.(item, e)}
                 tabindex="-1"
               >
                 <span class="line1">
@@ -211,9 +220,9 @@
                 <span class="line2">
                   {#if !item.flags.seen}<span class="dot" aria-label="Unread"></span>{/if}
                   <span class="subject">{item.subject || "(no subject)"}</span>
-                  {#if item.hasAttachments}<span class="clip" aria-label="Has attachments">📎</span>{/if}
-                  {#if item.flags.answered}<span class="answered" aria-label="Replied" title="Replied">↩</span>{/if}
-                  {#if item.flags.flagged}<span class="flag" aria-label="Flagged">⚑</span>{/if}
+                  {#if item.hasAttachments}<span class="clip"><Icon name="attachment" size={14} label="Has attachments" /></span>{/if}
+                  {#if item.flags.answered}<span class="answered" title="Replied"><Icon name="reply" size={14} label="Replied" /></span>{/if}
+                  {#if item.flags.flagged}<span class="flag"><Icon name="flag" size={14} filled label="Flagged" /></span>{/if}
                 </span>
               </button>
             {:else}
@@ -341,10 +350,13 @@
     background: var(--accent-ink);
     flex: none;
   }
+  .clip,
   .answered {
+    display: flex;
     color: var(--text-quiet);
   }
   .flag {
+    display: flex;
     color: var(--accent-ink);
   }
   .empty {

@@ -3,6 +3,7 @@
   import { api, errorText, type Account } from "./lib/api";
   import Onboarding from "./lib/Onboarding.svelte";
   import MailView from "./lib/MailView.svelte";
+  import ContextMenu from "./lib/ContextMenu.svelte";
 
   let accounts = $state<Account[] | null>(null);
   let loadError = $state("");
@@ -40,6 +41,8 @@
     </div>
   {/if}
 {/if}
+
+<ContextMenu />
 
 <style>
   .center {

@@ -114,6 +114,20 @@ button:disabled {
   cursor: default;
 }
 
+/* Icons (lib/Icon.svelte) take the colour of their text. Next to a label they
+   sit on its centre line; buttons holding one line them up. */
+svg.icon {
+  flex-shrink: 0;
+  vertical-align: -0.2em;
+}
+
+button:has(> svg.icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 button.link {
   border: none;
   background: none;

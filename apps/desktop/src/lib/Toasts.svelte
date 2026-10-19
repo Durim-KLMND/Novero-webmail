@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { dismiss, toasts } from "./toast.svelte";
 </script>
 
@@ -6,7 +7,7 @@
   {#each toasts as t (t.id)}
     <div class="toast" class:error={t.kind === "error"} role={t.kind === "error" ? "alert" : "status"}>
       <span>{t.text}</span>
-      <button class="link" onclick={() => dismiss(t.id)} aria-label="Dismiss">✕</button>
+      <button class="link" onclick={() => dismiss(t.id)} aria-label="Dismiss"><Icon name="close" size={14} /></button>
     </div>
   {/each}
 </div>
