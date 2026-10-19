@@ -70,6 +70,8 @@ jobs:
       - run: cargo test -p mail-sync --locked -- --ignored
       - run: cargo test -p mail-send --locked -- --ignored
       - run: cargo test -p mail-auth --locked -- --ignored
+      - name: Search and conversation list speed (100,000 messages)
+        run: cargo test -p mail-store --release --locked -- --ignored --nocapture
       - name: Server logs on failure
         if: failure()
         run: docker compose -f testing/docker-compose.yml logs

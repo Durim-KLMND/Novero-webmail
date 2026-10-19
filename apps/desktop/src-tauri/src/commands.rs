@@ -9,12 +9,13 @@ use mail_core::{
     NewAccount, OAuthProvider, Op, Result, Secret,
 };
 use mail_mime::ParsedMessage;
-use mail_store::{Folder, MessageLocation, MessagePage};
+use mail_store::{Folder, Mailbox, MessageLocation, MessagePage, MessageSummary};
 use mail_sync::ImapSession;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::settings::Settings;
 use crate::state::{
     AppState, emit, oauth_client, push_now, report_pending, request_sync, secret_key,
     start_account, stop_account,
@@ -245,18 +246,34 @@ pub fn list_folders(state: State<'_, AppState>, account: AccountId) -> Result<Ve
     state.store.lock().unwrap().list_folders(account)
 }
 
+/// A page of a folder, of every inbox, or of search results. Folders list
+/// conversations when that setting is on.
 #[tauri::command]
 pub fn list_messages(
     state: State<'_, AppState>,
-    folder: FolderId,
+    mailbox: Mailbox,
     offset: u32,
     limit: u32,
 ) -> Result<MessagePage> {
-    state
-        .store
-        .lock()
-        .unwrap()
-        .list_messages(folder, offset, limit.min(500))
+    let store = state.store.lock().unwrap();
+    let threaded = Settings::load(&store).conversations;
+    store.list(&mailbox, threaded, offset, limit.min(500))
+}
+
+/// The messages of a conversation, oldest first (see `Store::conversation`).
+/// With conversations turned off, just the message itself.
+#[tauri::command]
+pub fn conversation(state: State<'_, AppState>, message: i64) -> Result<Vec<MessageSummary>> {
+    let store = state.store.lock().unwrap();
+    if Settings::load(&store).conversations {
+        store.conversation(message)
+    } else {
+        Ok(store
+            .conversation(message)?
+            .into_iter()
+            .filter(|m| m.id == message)
+            .collect())
+    }
 }
 
 /// Fetches (or reads from cache) a message, then decodes and sanitizes it, and

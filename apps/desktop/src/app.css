@@ -21,8 +21,28 @@
   color-scheme: light;
 }
 
+/* Dark colours: picked in Settings, or following Windows when the theme is "System". */
+:root[data-theme="dark"] {
+  --bg: #111111;
+  --bg-side: #181817;
+  --bg-hover: #232322;
+  --bg-selected: #0f2e2d;
+  --text: #ececea;
+  --text-quiet: #a3a39e;
+  --border: #2b2b29;
+  --accent: var(--brand);
+  --accent-text: #ffffff;
+  /* The brand teal is too dark to read on #111111, so marks use a lighter tint of it. */
+  --accent-ink: #5cbdb4;
+  --danger: #f28b82;
+  --danger-bg: #3a2120;
+  --note-bg: #34301f;
+  --success: #22a35a;
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #111111;
     --bg-side: #181817;
     --bg-hover: #232322;

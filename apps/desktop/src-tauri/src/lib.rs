@@ -2,6 +2,7 @@
 
 mod commands;
 mod compose;
+mod settings;
 mod state;
 
 use std::time::Duration;
@@ -17,6 +18,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let dir = app.path().app_local_data_dir()?;
             let state = state::AppState::open(&dir)?;
@@ -44,6 +46,7 @@ pub fn run() {
             commands::remove_account,
             commands::list_folders,
             commands::list_messages,
+            commands::conversation,
             commands::open_message,
             commands::sync_account,
             commands::pending_changes,
@@ -65,6 +68,9 @@ pub fn run() {
             compose::retry_outbox,
             compose::delete_outbox,
             compose::edit_outbox,
+            settings::get_settings,
+            settings::save_settings,
+            settings::set_signature,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Novero Mail");

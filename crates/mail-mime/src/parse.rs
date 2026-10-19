@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use base64::Engine;
 use mail_core::{Error, MessageHeader, Result};
-use mail_parser::{Address, MessageParser, MimeHeaders};
+use mail_parser::{Address, HeaderValue, MessageParser, MimeHeaders};
 use serde::Serialize;
 
 use crate::html::sanitize_html;
@@ -112,8 +112,18 @@ pub fn parse_header_fields(raw: &[u8]) -> MessageHeader {
                 .subtype()
                 .is_some_and(|s| s.eq_ignore_ascii_case("mixed"))
     });
+    let mut references: Vec<String> = Vec::new();
+    for id in id_list(message.references())
+        .into_iter()
+        .chain(id_list(message.in_reply_to()))
+    {
+        if !references.contains(&id) {
+            references.push(id);
+        }
+    }
     MessageHeader {
-        message_id: message.message_id().map(|id| format!("<{id}>")),
+        message_id: message.message_id().map(bracketed),
+        references,
         from: message.from().and_then(first_address),
         to: message.to().map(all_addresses),
         cc: message.cc().map(all_addresses),
@@ -122,6 +132,49 @@ pub fn parse_header_fields(raw: &[u8]) -> MessageHeader {
         has_attachments,
         ..MessageHeader::default()
     }
+}
+
+/// The words of a message for the search index: its text (converted from
+/// HTML when it has no plain part) and attachment names. Long messages are
+/// cut, since a search rarely needs more than their start.
+pub fn search_text(raw: &[u8]) -> Option<String> {
+    const LIMIT: usize = 64 * 1024;
+    let message = MessageParser::default().parse(raw)?;
+    let mut text = message
+        .body_text(0)
+        .map(|t| t.into_owned())
+        .unwrap_or_default();
+    for part in message.attachments() {
+        if let Some(name) = part.attachment_name() {
+            text.push(' ');
+            text.push_str(name);
+        }
+    }
+    if text.len() > LIMIT {
+        let mut end = LIMIT;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    Some(text)
+}
+
+/// Message-IDs in a References or In-Reply-To header, as `<id>`.
+fn id_list(value: &HeaderValue<'_>) -> Vec<String> {
+    match (value.as_text_list(), value.as_text()) {
+        (Some(list), _) => list.iter().map(|s| bracketed(s)).collect(),
+        (None, Some(one)) => vec![bracketed(one)],
+        _ => Vec::new(),
+    }
+}
+
+/// Message-IDs are compared in their `<id>` form, the way headers write them.
+pub fn bracketed(id: &str) -> String {
+    format!(
+        "<{}>",
+        id.trim().trim_start_matches('<').trim_end_matches('>')
+    )
 }
 
 fn format_addr(name: Option<&str>, address: Option<&str>) -> Option<String> {
@@ -232,6 +285,28 @@ JVBERi0xLjQ=\r\n\
         assert_eq!(h.from.as_deref(), Some("Jürgen <j@example.test>"));
         assert_eq!(h.message_id.as_deref(), Some("<abc@example.test>"));
         assert!(!h.has_attachments);
+    }
+
+    #[test]
+    fn header_fields_list_what_a_message_replies_to() {
+        let h = parse_header_fields(
+            b"Message-ID: <c@x>\r\nReferences: <a@x>\r\n <b@x>\r\nIn-Reply-To: <b@x>\r\n\r\n",
+        );
+        assert_eq!(h.message_id.as_deref(), Some("<c@x>"));
+        assert_eq!(h.references, ["<a@x>", "<b@x>"]);
+        let h = parse_header_fields(b"In-Reply-To: <only@x>\r\n\r\n");
+        assert_eq!(h.references, ["<only@x>"]);
+    }
+
+    #[test]
+    fn search_text_covers_html_bodies_and_attachment_names() {
+        let raw = b"Subject: x\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=b\r\n\r\n\
+--b\r\nContent-Type: text/html\r\n\r\n<p>Quarterly <b>numbers</b></p>\r\n\
+--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=report.pdf\r\n\r\nxx\r\n--b--\r\n";
+        let text = search_text(raw).unwrap();
+        assert!(text.contains("Quarterly numbers"), "{text}");
+        assert!(text.contains("report.pdf"));
     }
 
     #[test]

@@ -11,7 +11,10 @@ use mail_auth::SecretStore;
 use mail_auth::oauth::{self, OAuthClient};
 use mail_core::{Account, AccountId, AuthMethod, Error, Event, OAuthProvider, Result, Secret};
 use mail_store::{OutboxState, Store};
-use mail_sync::{ImapSession, Scope};
+use mail_sync::{ImapSession, NewMail, Scope};
+use tauri_plugin_notification::NotificationExt;
+
+use crate::settings::Settings;
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
@@ -389,6 +392,9 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
         mail_sync::sync_account(&state.store, &account, &secret, scope, |e| emit(app, e)).await
     }
     .await;
+    if let Ok(report) = &result {
+        announce(app, id, &report.new_mail);
+    }
     if result.is_ok() && has_outgoing(app, id) {
         // Reachable again with changes or mail still waiting: send them.
         push_now(app, id);
@@ -400,6 +406,64 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
             error: result.err().map(|e| e.to_string()),
         },
     );
+}
+
+/// Shows a Windows notification for new mail, unless Novero Mail is the
+/// window in front or notifications are turned off.
+fn announce(app: &AppHandle, id: AccountId, new_mail: &[NewMail]) {
+    if new_mail.is_empty() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    if !Settings::load(&state.store.lock().unwrap()).notifications {
+        return;
+    }
+    let focused = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    if focused {
+        return;
+    }
+    let account = state.account(id).map(|a| a.email).unwrap_or_default();
+    let (title, body) = notification_text(&account, new_mail);
+    let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// The title and text of a new-mail notification: the message itself when
+/// one arrived, else a count and the newest few subjects.
+fn notification_text(account: &str, new_mail: &[NewMail]) -> (String, String) {
+    let sender = |m: &NewMail| {
+        let from = m.from.as_deref().unwrap_or("Someone");
+        // "Ann Lee <ann@example.test>" shows as "Ann Lee".
+        match from.split_once(" <") {
+            Some((name, _)) if !name.trim().is_empty() => name.trim().trim_matches('"').to_owned(),
+            _ => from.trim_matches(|c| c == '<' || c == '>').to_owned(),
+        }
+    };
+    let subject = |m: &NewMail| {
+        m.subject
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("(no subject)")
+            .to_owned()
+    };
+    match new_mail {
+        [one] => (sender(one), subject(one)),
+        many => {
+            let lines: Vec<String> = many
+                .iter()
+                .take(3)
+                .map(|m| format!("{}: {}", sender(m), subject(m)))
+                .collect();
+            let more = many.len().saturating_sub(3);
+            let mut body = lines.join("\n");
+            if more > 0 {
+                body.push_str(&format!("\nand {more} more"));
+            }
+            (format!("{} new messages for {account}", many.len()), body)
+        }
+    }
 }
 
 /// Starts a full sync of every account.
@@ -425,4 +489,35 @@ fn account_ids(app: &AppHandle) -> Vec<AccountId> {
         .list_accounts()
         .map(|accounts| accounts.into_iter().map(|a| a.id).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mail(from: &str, subject: &str) -> NewMail {
+        NewMail {
+            id: 1,
+            from: Some(from.into()),
+            subject: Some(subject.into()),
+        }
+    }
+
+    #[test]
+    fn one_new_message_is_shown_by_sender_and_subject() {
+        let (title, body) = notification_text("me@x", &[mail("Ann Lee <ann@x>", "Lunch?")]);
+        assert_eq!((title.as_str(), body.as_str()), ("Ann Lee", "Lunch?"));
+        let (title, _) = notification_text("me@x", &[mail("ann@x", "")]);
+        assert_eq!(title, "ann@x");
+    }
+
+    #[test]
+    fn several_are_counted_with_the_first_few_listed() {
+        let list: Vec<NewMail> = (1..=5)
+            .map(|i| mail(&format!("P{i} <p{i}@x>"), &format!("S{i}")))
+            .collect();
+        let (title, body) = notification_text("me@x", &list);
+        assert_eq!(title, "5 new messages for me@x");
+        assert_eq!(body, "P1: S1\nP2: S2\nP3: S3\nand 2 more");
+    }
 }

@@ -27,8 +27,15 @@
     accounts: Account[];
     folders: Record<number, Folder[]>;
     syncState: Record<number, SyncState>;
+    /** The folder shown, or null for all inboxes or a search. */
     selected: Folder | null;
+    allInboxes: boolean;
     onSelect: (folder: Folder) => void;
+    onAllInboxes: () => void;
+    /** The search box changed; an empty query ends the search. */
+    onSearch: (query: string) => void;
+    onSettings: () => void;
+    onHelp: () => void;
     onAddAccount: () => void;
     onSync: (account: number) => void;
     onRemove: (account: Account) => void;
@@ -41,7 +48,12 @@
     folders,
     syncState,
     selected,
+    allInboxes,
     onSelect,
+    onAllInboxes,
+    onSearch,
+    onSettings,
+    onHelp,
     onAddAccount,
     onSync,
     onRemove,
@@ -72,6 +84,48 @@
     other: "📁",
   };
 
+  /** Searching starts after a pause in typing. */
+  const SEARCH_AFTER = 250;
+  let query = $state("");
+  let searchInput = $state<HTMLInputElement>();
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function typed() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => onSearch(query.trim()), SEARCH_AFTER);
+  }
+
+  function searchKey(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      clearTimeout(searchTimer);
+      onSearch(query.trim());
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      clearSearch();
+      searchInput?.blur();
+    }
+  }
+
+  export function focusSearch() {
+    searchInput?.focus();
+    searchInput?.select();
+  }
+
+  export function clearSearch() {
+    clearTimeout(searchTimer);
+    if (!query) return;
+    query = "";
+    onSearch("");
+  }
+
+  const unreadInboxes = $derived(
+    Object.values(folders)
+      .flat()
+      .filter((f) => f.role === "inbox")
+      .reduce((n, f) => n + f.unread, 0),
+  );
+
   function depth(folder: Folder): number {
     if (folder.role !== "other" || !folder.delimiter) return 0;
     return folder.name.split(folder.delimiter).length - 1;
@@ -80,8 +134,28 @@
 
 <nav class="sidebar" aria-label="Accounts and folders">
   <div class="brand">Novero Mail</div>
-  <button class="primary compose" onclick={onCompose}>New message</button>
+  <button class="primary compose" onclick={onCompose} title="New message (C)">New message</button>
+  <div class="search">
+    <input
+      type="search"
+      bind:this={searchInput}
+      bind:value={query}
+      oninput={typed}
+      onkeydown={searchKey}
+      placeholder="Search mail"
+      aria-label="Search mail"
+      title="Search (/). Try from:, to:, subject:, is:unread, has:attachment, in:"
+      spellcheck="false"
+    />
+  </div>
   <div class="scroll">
+    {#if accounts.length > 1}
+      <button class="folder all" class:active={allInboxes} onclick={onAllInboxes}>
+        <span class="icon" aria-hidden="true">📥</span>
+        <span class="label">All inboxes</span>
+        {#if unreadInboxes > 0}<span class="badge">{unreadInboxes.toLocaleString()}</span>{/if}
+      </button>
+    {/if}
     {#each accounts as account (account.id)}
       {@const sync = syncState[account.id]}
       <section>
@@ -163,7 +237,11 @@
       </section>
     {/each}
   </div>
-  <button class="add" onclick={onAddAccount}>＋ Add account</button>
+  <div class="footer">
+    <button class="add" onclick={onAddAccount}>＋ Add account</button>
+    <button class="tool" onclick={onHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
+    <button class="tool" onclick={onSettings} aria-label="Settings" title="Settings">⚙</button>
+  </div>
 </nav>
 
 <style>
@@ -295,9 +373,29 @@
     padding: 6px 12px 6px 24px;
     font-size: 13px;
   }
-  .add {
+  .footer {
+    display: flex;
+    gap: 6px;
     margin: 8px;
+  }
+  .add {
+    flex: 1;
     border-style: dashed;
+    white-space: nowrap;
+    padding: 7px 8px;
+  }
+  .tool {
+    padding: 4px 10px;
+    font-size: 16px;
+  }
+  .search {
+    padding: 0 12px 10px;
+  }
+  .search input {
+    padding: 6px 10px;
+  }
+  .all {
+    margin-bottom: 8px;
   }
   .compose {
     margin: 4px 12px 12px;

@@ -1,0 +1,263 @@
+<script lang="ts">
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { api, errorText, type MessageSummary, type ParsedMessage } from "./api";
+  import { fileSize, folderLabel, fullDate, listDate, senderName } from "./format";
+
+  interface Props {
+    summary: MessageSummary;
+    expanded: boolean;
+    /** Shown next to the sender when the message is in another folder than the list. */
+    showFolder: boolean;
+    onExpand: (expanded: boolean) => void;
+    /** The message was downloaded and shown; it is read now. */
+    onOpened: (summary: MessageSummary) => void;
+    onReply: (all: boolean) => void;
+    onForward: () => void;
+  }
+  let { summary, expanded, showFolder, onExpand, onOpened, onReply, onForward }: Props = $props();
+
+  let message = $state<ParsedMessage | null>(null);
+  let loading = $state(false);
+  let error = $state("");
+  const offline = $derived(error.startsWith("Network error"));
+  let allowRemote = $state(false);
+  let request = 0;
+  const isDraft = $derived(summary.folderRole === "drafts");
+
+  async function load(remote: boolean) {
+    const mine = ++request;
+    loading = true;
+    error = "";
+    try {
+      const result = await api.openMessage(summary.id, remote);
+      if (mine !== request) return;
+      message = result;
+      onOpened(summary);
+    } catch (err) {
+      if (mine === request) error = errorText(err);
+    } finally {
+      if (mine === request) loading = false;
+    }
+  }
+
+  $effect(() => {
+    if (expanded && !message && !loading && !error) load(allowRemote);
+  });
+
+  function loadImages() {
+    allowRemote = true;
+    load(true);
+  }
+
+  /** The message HTML in its own document: no scripts, no network unless images are allowed. */
+  function frameDoc(html: string, remote: boolean): string {
+    const images = remote ? "data: https: http:" : "data:";
+    return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; font-src data:">
+<base target="_blank">
+<style>body{margin:0;padding:16px 20px;font:14px/1.5 "Anthropic Sans","Segoe UI",system-ui,sans-serif;color:#1a1a19;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>
+</head><body>${html}</body></html>`;
+  }
+
+  /** Links open in the default browser instead of inside the app. */
+  function wireFrame(frame: HTMLIFrameElement) {
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    doc.addEventListener("click", (event) => {
+      const link = (event.target as Element | null)?.closest?.("a[href]");
+      if (!link) return;
+      event.preventDefault();
+      const href = link.getAttribute("href") ?? "";
+      if (/^(https?:|mailto:)/i.test(href)) openUrl(href).catch(() => {});
+    });
+    frame.style.height = `${Math.max(doc.documentElement.scrollHeight, 120)}px`;
+  }
+</script>
+
+<div class="card" class:expanded>
+  <button class="head" onclick={() => onExpand(!expanded)} aria-expanded={expanded}>
+    {#if !summary.flags.seen}<span class="dot" aria-label="Unread"></span>{/if}
+    <span class="from">{senderName(summary.from)}</span>
+    {#if isDraft}<span class="tag draft">Draft</span>
+    {:else if showFolder}<span class="tag">{folderLabel(summary.folderName, summary.folderRole, null)}</span>{/if}
+    {#if summary.hasAttachments}<span class="quiet" aria-label="Has attachments">📎</span>{/if}
+    <span class="date quiet" title={fullDate(summary.date)}>{expanded ? fullDate(summary.date) : listDate(summary.date)}</span>
+  </button>
+
+  {#if expanded}
+    {#if error}
+      <div class="pad">
+        <p class="error">
+          {#if offline}
+            This message hasn't been downloaded yet and the server can't be reached. It will open once you're back online.
+          {:else}
+            Could not open this message: {error}
+          {/if}
+        </p>
+        <button onclick={() => load(allowRemote)} disabled={loading}>Try again</button>
+      </div>
+    {:else if !message}
+      <div class="pad"><span class="spinner"></span></div>
+    {:else}
+      <dl>
+        <dt>From</dt><dd>{message.from ?? "(unknown)"}</dd>
+        {#if message.to}<dt>To</dt><dd>{message.to}</dd>{/if}
+        {#if message.cc}<dt>Cc</dt><dd>{message.cc}</dd>{/if}
+      </dl>
+      {#if message.attachments.length}
+        <ul class="attachments">
+          {#each message.attachments as a}
+            <li title={a.mimeType}>📎 {a.name} <span class="quiet">{fileSize(a.size)}</span></li>
+          {/each}
+        </ul>
+      {/if}
+      {#if message.blockedRemote > 0 && !allowRemote}
+        <div class="blocked">
+          <span>Remote images are blocked to protect your privacy ({message.blockedRemote}).</span>
+          <button onclick={loadImages} disabled={loading}>Load images</button>
+        </div>
+      {/if}
+      <div class="body">
+        {#if message.html}
+          {#key message}
+            <iframe
+              title="Message content"
+              sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+              srcdoc={frameDoc(message.html, allowRemote)}
+              onload={(e) => wireFrame(e.currentTarget as HTMLIFrameElement)}
+            ></iframe>
+          {/key}
+        {:else if message.text}
+          <pre>{message.text}</pre>
+        {:else}
+          <p class="quiet pad">This message has no text.</p>
+        {/if}
+      </div>
+      {#if !isDraft}
+        <div class="replies">
+          <button onclick={() => onReply(false)}>Reply</button>
+          <button onclick={() => onReply(true)}>Reply all</button>
+          <button onclick={onForward}>Forward</button>
+        </div>
+      {/if}
+    {/if}
+  {/if}
+</div>
+
+<style>
+  .card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .head {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    border-radius: 0;
+    background: none;
+    text-align: left;
+    padding: 10px 16px;
+  }
+  .from {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .date {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-ink);
+    flex: none;
+  }
+  .tag {
+    font-size: 11px;
+    color: var(--text-quiet);
+    background: var(--bg-hover);
+    border-radius: 4px;
+    padding: 0 5px;
+  }
+  .tag.draft {
+    color: var(--danger);
+  }
+  .pad {
+    padding: 12px 16px;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 12px;
+    margin: 0;
+    padding: 0 16px 10px;
+    font-size: 13px;
+  }
+  dt {
+    color: var(--text-quiet);
+  }
+  dd {
+    margin: 0;
+    word-break: break-word;
+  }
+  .attachments {
+    list-style: none;
+    padding: 0 16px 10px;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .attachments li {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 13px;
+  }
+  .blocked {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--note-bg);
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+  .body {
+    border-top: 1px solid var(--border);
+  }
+  iframe {
+    width: 100%;
+    border: none;
+    display: block;
+    /* Mail is written for a white page, so HTML keeps one in dark mode too. */
+    background: #fff;
+    min-height: 120px;
+  }
+  pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font: 14px/1.5 var(--font);
+    margin: 0;
+    padding: 16px;
+  }
+  .replies {
+    display: flex;
+    gap: 6px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .replies button {
+    padding: 4px 10px;
+    font-size: 13px;
+  }
+</style>

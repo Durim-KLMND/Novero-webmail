@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api,
@@ -9,15 +9,23 @@
     type Draft,
     type FlagKind,
     type Folder,
+    type Mailbox,
     type MailEvent,
     type MessageSummary,
+    type Settings,
   } from "./api";
+  import { folderLabel } from "./format";
+  import { toast } from "./toast.svelte";
+  import { applyTheme } from "./theme";
   import Sidebar, { type SyncState } from "./Sidebar.svelte";
   import MessageList from "./MessageList.svelte";
   import Reader from "./Reader.svelte";
   import Composer from "./Composer.svelte";
   import Outbox from "./Outbox.svelte";
   import SignInAgain from "./SignInAgain.svelte";
+  import SettingsDialog from "./SettingsDialog.svelte";
+  import ShortcutHelp from "./ShortcutHelp.svelte";
+  import Toasts from "./Toasts.svelte";
 
   interface Props {
     accounts: Account[];
@@ -28,12 +36,19 @@
 
   let folders = $state<Record<number, Folder[]>>({});
   let syncState = $state<Record<number, SyncState>>({});
+  /** The folder shown, unless all inboxes or a search are. */
   let selectedFolder = $state<Folder | null>(null);
+  let allInboxes = $state(false);
+  let searchQuery = $state("");
+  /** The selected row of the list: a message or a conversation. */
   let selected = $state<MessageSummary | null>(null);
   let listVersion = $state(0);
-  let notice = $state<{ text: string; kind: "error" | "info" } | null>(null);
-  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
   let list = $state<ReturnType<typeof MessageList>>();
+  let reader = $state<ReturnType<typeof Reader>>();
+  let sidebar = $state<ReturnType<typeof Sidebar>>();
+  let settings = $state<Settings>({ theme: "system", conversations: true, notifications: true });
+  let showSettings = $state(false);
+  let showHelp = $state(false);
   /** The right pane shows the composer, an account's outbox, or the reader. */
   let composing = $state<Draft | null>(null);
   let composer = $state<ReturnType<typeof Composer>>();
@@ -42,7 +57,56 @@
   /** Accounts with a message just sent, so the outcome can be announced. */
   const sending = new Set<number>();
 
-  const accountFolders = $derived(selectedFolder ? (folders[selectedFolder.accountId] ?? []) : []);
+  /** The folders of the selected row's account, for Move and Archive. */
+  const rowFolders = $derived(selected ? (folders[selected.accountId] ?? []) : []);
+
+  const mailbox = $derived<Mailbox | null>(
+    searchQuery
+      ? { kind: "search", query: searchQuery }
+      : allInboxes
+        ? { kind: "allInboxes" }
+        : selectedFolder
+          ? { kind: "folder", id: selectedFolder.id }
+          : null,
+  );
+
+  const listTitle = $derived(
+    searchQuery
+      ? "Search results"
+      : allInboxes
+        ? "All inboxes"
+        : selectedFolder
+          ? folderLabel(selectedFolder.name, selectedFolder.role, selectedFolder.delimiter)
+          : "",
+  );
+
+  const emptyText = $derived(
+    searchQuery ? "No messages match your search." : allInboxes ? "No mail yet." : "This folder is empty.",
+  );
+
+  function accountEmail(id: number): string {
+    return accounts.find((a) => a.id === id)?.email ?? "";
+  }
+
+  /** Rows from several accounts or folders say where they are. */
+  function place(item: MessageSummary): string | null {
+    const several = accounts.length > 1;
+    if (searchQuery) {
+      const folder = folderLabel(item.folderName, item.folderRole, null);
+      return several ? `${folder} · ${accountEmail(item.accountId)}` : folder;
+    }
+    if (allInboxes && several) return accountEmail(item.accountId);
+    return null;
+  }
+
+  onMount(async () => {
+    try {
+      settings = await api.getSettings();
+      applyTheme(settings.theme);
+    } catch (err) {
+      say(errorText(err));
+    }
+  });
 
   function stateOf(account: number): SyncState {
     return (
@@ -60,9 +124,7 @@
   }
 
   function say(text: string, kind: "error" | "info" = "error") {
-    clearTimeout(noticeTimer);
-    notice = { text, kind };
-    if (kind === "info") noticeTimer = setTimeout(() => (notice = null), 4000);
+    toast(text, kind);
   }
 
   async function loadFolders(accountId: number) {
@@ -100,7 +162,8 @@
       const ids = [...pending];
       pending.clear();
       await Promise.all(ids.map(loadFolders));
-      if (selectedFolder && ids.includes(selectedFolder.accountId)) listVersion += 1;
+      // Lists that mix accounts refresh for any of them.
+      if (mailbox?.kind !== "folder" || (selectedFolder && ids.includes(selectedFolder.accountId))) listVersion += 1;
     }, 700);
   }
 
@@ -132,57 +195,93 @@
   onDestroy(() => {
     unlisten.then((fn) => fn());
     clearTimeout(refreshTimer);
-    clearTimeout(noticeTimer);
   });
 
   function selectFolder(folder: Folder) {
-    if (selectedFolder?.id !== folder.id) selected = null;
+    if (selectedFolder?.id !== folder.id || allInboxes || searchQuery) selected = null;
     selectedFolder = folder;
+    allInboxes = false;
+    sidebar?.clearSearch();
   }
 
-  /** Runs a change on the open message. Changes that take it out of the
-   *  folder move the selection to its neighbour. */
-  async function act(run: (id: number) => Promise<void>, leaves: boolean) {
-    const current = selected;
-    if (!current || !selectedFolder) return;
+  function selectAllInboxes() {
+    if (!allInboxes || searchQuery) selected = null;
+    allInboxes = true;
+    sidebar?.clearSearch();
+  }
+
+  function search(query: string) {
+    if (query === searchQuery) return;
+    selected = null;
+    searchQuery = query;
+  }
+
+  /** Runs a change on every message of the selected row. Changes that take
+   *  the row out of the list move the selection to its neighbour, and are
+   *  confirmed with `done`. */
+  async function act(run: (ids: number[]) => Promise<void>, leaves: boolean, done?: (many: boolean) => string) {
+    const shown = selected;
+    if (!shown) return;
+    // The list may have picked up replies since the row was selected.
+    const current = list?.find(shown.id) ?? shown;
     const next = leaves ? (list?.neighbour(current.id) ?? null) : null;
     try {
-      await run(current.id);
-      notice = null;
+      await run(current.ids);
       if (leaves) selected = next;
+      if (done) say(done(current.ids.length > 1), "info");
     } catch (err) {
       say(errorText(err));
     }
-    scheduleRefresh(selectedFolder.accountId);
+    scheduleRefresh(current.accountId);
   }
+
+  const what = (many: boolean) => (many ? "Conversation" : "Message");
 
   function toggle(flag: FlagKind, value: boolean) {
     const current = selected;
-    act((id) => api.setFlag([id], flag, value), false).then(() => {
-      if (selected && current && selected.id === current.id) {
+    if (!current) return;
+    act((ids) => api.setFlag(ids, flag, value), false).then(() => {
+      if (selected && selected.id === current.id) {
         selected = { ...selected, flags: { ...selected.flags, [flag]: value } };
       }
     });
   }
 
+  const canArchive = $derived(
+    !!selected && selected.folderRole !== "archive" && rowFolders.some((f) => f.role === "archive"),
+  );
+
+  function archive() {
+    if (canArchive) act((ids) => api.archiveMessages(ids), true, (many) => `${what(many)} archived`);
+  }
+
+  function move(folder: number) {
+    const target = rowFolders.find((f) => f.id === folder);
+    const label = target ? folderLabel(target.name, target.role, target.delimiter) : "the folder";
+    act((ids) => api.moveMessages(ids, folder), true, (many) => `${what(many)} moved to ${label}`);
+  }
+
   async function remove() {
-    if (!selected || !selectedFolder) return;
-    const forever = selectedFolder.role === "trash" || !accountFolders.some((f) => f.role === "trash");
+    if (!selected) return;
+    const forever = selected.folderRole === "trash" || !rowFolders.some((f) => f.role === "trash");
+    const many = selected.ids.length > 1;
     if (forever) {
-      const confirmed = await ask("Delete this message for good? This cannot be undone.", {
-        title: "Delete message",
-        kind: "warning",
-        okLabel: "Delete",
-        cancelLabel: "Cancel",
-      });
+      const confirmed = await ask(
+        `Delete ${many ? "these messages" : "this message"} for good? This cannot be undone.`,
+        {
+          title: many ? "Delete conversation" : "Delete message",
+          kind: "warning",
+          okLabel: "Delete",
+          cancelLabel: "Cancel",
+        },
+      );
       if (!confirmed) return;
     }
-    act((id) => api.deleteMessages([id]), true);
+    act((ids) => api.deleteMessages(ids), true, (many) => (forever ? `${what(many)} deleted` : `${what(many)} moved to Trash`));
   }
 
   function opened() {
-    if (selected && !selected.flags.seen) selected = { ...selected, flags: { ...selected.flags, seen: true } };
-    if (selectedFolder) scheduleRefresh(selectedFolder.accountId);
+    if (selected) scheduleRefresh(selected.accountId);
   }
 
   /** Saves and closes an open composer before the pane shows something else. */
@@ -203,13 +302,13 @@
   }
 
   function compose() {
-    const account = selectedFolder?.accountId ?? accounts[0]?.id;
+    const account = (allInboxes || searchQuery ? selected?.accountId : selectedFolder?.accountId) ?? selectedFolder?.accountId ?? accounts[0]?.id;
     if (account != null) openComposer(() => api.newDraft(account));
   }
 
   async function selectMessage(item: MessageSummary) {
     outboxAccount = null;
-    if (selectedFolder?.role === "drafts") {
+    if (item.folderRole === "drafts") {
       selected = item;
       await openComposer(() => api.openDraft(item.id));
       return;
@@ -221,7 +320,7 @@
   function composerClosed(outcome: "sent" | "saved" | "discarded") {
     const draft = composing;
     composing = null;
-    if (selectedFolder?.role === "drafts") selected = null;
+    if (selected?.folderRole === "drafts") selected = null;
     if (!draft) return;
     if (outcome === "sent") {
       sending.add(draft.account);
@@ -255,23 +354,83 @@
     if (!confirmed) return;
     await api.removeAccount(account.id);
     delete folders[account.id];
+    if (selected?.accountId === account.id) selected = null;
     if (selectedFolder?.accountId === account.id) {
-      selected = null;
       const next = accounts.find((a) => a.id !== account.id);
       const list = next ? (folders[next.id] ?? []) : [];
       selectedFolder = list.find((f) => f.role === "inbox") ?? list[0] ?? null;
     }
     onAccountsChanged();
   }
+
+  function settingsClosed(saved: Settings | null, signaturesChanged: boolean) {
+    showSettings = false;
+    if (signaturesChanged) onAccountsChanged();
+    if (!saved) return;
+    const regroup = saved.conversations !== settings.conversations;
+    settings = saved;
+    if (regroup) {
+      selected = null;
+      listVersion += 1;
+    }
+    say("Settings saved", "info");
+  }
+
+  /** Typing in a field, or a dialog is open: keys belong to it. */
+  function typing(event: KeyboardEvent): boolean {
+    const target = event.target as HTMLElement | null;
+    if (!target) return false;
+    return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+  }
+
+  function shortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (showHelp) {
+      if (event.key === "Escape" || event.key === "?") {
+        event.preventDefault();
+        showHelp = false;
+      }
+      return;
+    }
+    if (showSettings || signingIn || typing(event)) return;
+    const key = event.key;
+    if (key === "?") showHelp = true;
+    else if (key === "/") sidebar?.focusSearch();
+    else if (key === "Escape" && searchQuery) sidebar?.clearSearch();
+    else if (composing || outboxAccount != null) return;
+    else if (key === "j" || key === "ArrowDown") list?.move(1);
+    else if (key === "k" || key === "ArrowUp") list?.move(-1);
+    else if (key === "c") compose();
+    else if (key === "r" || key === "a" || key === "f") {
+      const target = reader?.replyTarget();
+      if (target == null) return;
+      if (key === "f") openComposer(() => api.forwardDraft(target));
+      else openComposer(() => api.replyDraft(target, key === "a"));
+    } else if (key === "e") archive();
+    else if (key === "#" || key === "Delete") remove();
+    else if (key === "s" && selected) toggle("flagged", !(reader?.rowFlags().flagged ?? selected.flags.flagged));
+    else if (key === "U" && selected) toggle("seen", false);
+    else if (key === "I" && selected) toggle("seen", true);
+    else return;
+    event.preventDefault();
+  }
 </script>
+
+<svelte:window onkeydown={shortcut} />
 
 <div class="layout">
   <Sidebar
     {accounts}
     {folders}
     {syncState}
-    selected={selectedFolder}
+    bind:this={sidebar}
+    selected={allInboxes || searchQuery ? null : selectedFolder}
+    allInboxes={allInboxes && !searchQuery}
     onSelect={selectFolder}
+    onAllInboxes={selectAllInboxes}
+    onSearch={search}
+    onSettings={() => (showSettings = true)}
+    onHelp={() => (showHelp = true)}
     {onAddAccount}
     onSync={(id) => api.syncAccount(id)}
     onRemove={removeAccount}
@@ -281,8 +440,12 @@
   />
   <MessageList
     bind:this={list}
-    folder={selectedFolder}
+    {mailbox}
+    title={listTitle}
+    {emptyText}
+    unit={settings.conversations ? "conversation" : "message"}
     version={listVersion}
+    {place}
     selected={selected?.id ?? null}
     onSelect={selectMessage}
     onDelete={remove}
@@ -306,27 +469,29 @@
     />
   {:else}
   <Reader
-    summary={selected}
-    folder={selectedFolder}
-    folders={accountFolders}
+    bind:this={reader}
+    row={selected}
+    folders={rowFolders}
+    version={listVersion}
     onOpened={opened}
-    onArchive={() => act((id) => api.archiveMessages([id]), true)}
+    onArchive={archive}
     onDelete={remove}
     onToggle={toggle}
-    onMove={(folder) => act((id) => api.moveMessages([id], folder), true)}
-    onReply={(all) => selected && openComposer(() => api.replyDraft(selected!.id, all))}
-    onForward={() => selected && openComposer(() => api.forwardDraft(selected!.id))}
+    onMove={move}
+    onReply={(message, all) => openComposer(() => api.replyDraft(message, all))}
+    onForward={(message) => openComposer(() => api.forwardDraft(message))}
   />
   {/if}
   {#if signingIn}
     <SignInAgain account={signingIn} onDone={signInDone} />
   {/if}
-  {#if notice}
-    <div class="notice" class:error={notice.kind === "error"} class:info={notice.kind === "info"} role="alert">
-      <span>{notice.text}</span>
-      <button class="link" onclick={() => (notice = null)}>Dismiss</button>
-    </div>
+  {#if showSettings}
+    <SettingsDialog {accounts} {settings} onClose={settingsClosed} />
   {/if}
+  {#if showHelp}
+    <ShortcutHelp onClose={() => (showHelp = false)} />
+  {/if}
+  <Toasts />
 </div>
 
 <style>
@@ -335,21 +500,5 @@
     grid-template-columns: 240px minmax(300px, 380px) 1fr;
     height: 100%;
     position: relative;
-  }
-  .notice {
-    position: absolute;
-    right: 16px;
-    bottom: 16px;
-    max-width: 420px;
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-  }
-  .notice.info {
-    background: var(--bg-side);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px 14px;
   }
 </style>

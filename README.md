@@ -52,6 +52,7 @@ docker compose -f testing/docker-compose.yml up -d --build --wait
 cargo test -p mail-sync -- --ignored
 cargo test -p mail-send -- --ignored
 cargo test -p mail-auth -- --ignored
+cargo test -p mail-store --release -- --ignored --nocapture   # search speed over 100,000 messages
 docker compose -f testing/docker-compose.yml down
 ```
 
@@ -72,6 +73,36 @@ To check the TLS path against a real server (bad credentials on purpose; success
 ```sh
 cargo run -p mail-sync --example tls_probe -- imap.gmail.com
 ```
+
+## Searching
+
+The search box (press `/`) looks through the subject, addresses, text and attachment names of
+every account's mail. Words match as prefixes ("inv" finds "invoice"), ignoring case and accents;
+put words in quotes to match a phrase. Filters can be mixed with words:
+
+| Filter | Finds |
+| --- | --- |
+| `from:ann` | Mail from Ann, by name or address |
+| `to:ann` | Mail to or copied to ann |
+| `subject:invoice` | Words in the subject only |
+| `is:unread`, `is:read`, `is:flagged` | Mail by its state |
+| `has:attachment` | Mail with attachments |
+| `in:sent` | Mail in a folder (by name or role: inbox, sent, drafts, archive, trash, junk) |
+
+Trash and Junk are left out unless `in:` names them. Message text is searchable once the message
+has been downloaded: opening it does that, and each sync downloads the last 30 days ahead of time.
+
+## Keyboard shortcuts
+
+Press `?` in the app for the list. `J`/`K` move through the list, `C` writes, `R`/`A`/`F` reply,
+reply all and forward, `E` archives, `#` deletes, `S` flags, `Shift+U`/`Shift+I` mark unread or
+read, and `Ctrl+Enter` sends.
+
+## Settings
+
+The gear at the bottom of the sidebar sets the theme (follow Windows, light or dark), whether
+messages are grouped into conversations, new-mail notifications, and a signature per account.
+Settings are kept in the app's database.
 
 ## Google and Microsoft sign-in
 

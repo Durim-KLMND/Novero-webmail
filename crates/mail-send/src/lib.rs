@@ -222,6 +222,7 @@ mod tests {
             imap: endpoint(host),
             smtp: endpoint(host),
             auth: Default::default(),
+            signature: String::new(),
         };
         assert!(saves_sent_itself(&account("imap.gmail.com")));
         assert!(saves_sent_itself(&account("IMAP.GoogleMail.com")));

@@ -19,15 +19,22 @@ use crate::state::{AppState, push_now, report_outbox};
 /// larger messages, and base64 makes them a third bigger on the wire.
 const MAX_ATTACHMENTS: u64 = 25 * 1024 * 1024;
 
-/// An empty draft from `account`.
+/// An empty draft from `account`, with its signature.
 #[tauri::command]
 pub fn new_draft(state: State<'_, AppState>, account: AccountId) -> Result<Draft> {
-    let email = state.account(account)?.email;
-    state
-        .store
-        .lock()
-        .unwrap()
-        .create_draft(NewDraft::new(account, mail_mime::new_message_id(&email)))
+    let account = state.account(account)?;
+    let mut draft = NewDraft::new(account.id, mail_mime::new_message_id(&account.email));
+    draft.fields.body = with_signature("", &account.signature);
+    state.store.lock().unwrap().create_draft(draft)
+}
+
+/// Puts the signature above `body` (a quote or forwarded text, which starts
+/// with blank lines for the reply), after the usual "-- " separator.
+pub fn with_signature(body: &str, signature: &str) -> String {
+    if signature.trim().is_empty() {
+        return body.to_owned();
+    }
+    format!("\n\n-- \n{signature}{body}")
 }
 
 /// A reply to a cached message, from the account it arrived in.
@@ -48,7 +55,8 @@ pub async fn reply_draft(state: State<'_, AppState>, message: i64, all: bool) ->
     } else {
         ReplyMode::Sender
     };
-    let prefill = mail_mime::reply(&raw, mode, &own)?;
+    let mut prefill = mail_mime::reply(&raw, mode, &own)?;
+    prefill.fields.body = with_signature(&prefill.fields.body, &account.signature);
     create(&state, account.id, &account.email, prefill, Some(message))
 }
 
@@ -56,7 +64,8 @@ pub async fn reply_draft(state: State<'_, AppState>, message: i64, all: bool) ->
 #[tauri::command]
 pub async fn forward_draft(state: State<'_, AppState>, message: i64) -> Result<Draft> {
     let (account, raw) = raw_message(&state, message).await?;
-    let prefill = mail_mime::forward(&raw)?;
+    let mut prefill = mail_mime::forward(&raw)?;
+    prefill.fields.body = with_signature(&prefill.fields.body, &account.signature);
     create(&state, account.id, &account.email, prefill, None)
 }
 
@@ -316,4 +325,19 @@ fn now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_signature;
+
+    #[test]
+    fn signatures_go_above_the_quote() {
+        assert_eq!(with_signature("", "Ann"), "\n\n-- \nAnn");
+        assert_eq!(
+            with_signature("\n\nOn Monday, Bob wrote:\n> Hi", "Ann\nNovero"),
+            "\n\n-- \nAnn\nNovero\n\nOn Monday, Bob wrote:\n> Hi"
+        );
+        assert_eq!(with_signature("\n\n> Hi", "  "), "\n\n> Hi");
+    }
 }

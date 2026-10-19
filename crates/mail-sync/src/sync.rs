@@ -25,6 +25,36 @@ const BATCH: usize = 500;
 /// Without CONDSTORE, flags are refreshed for this many of the newest messages.
 const FLAG_WINDOW: usize = 2000;
 
+/// Bodies of messages newer than this are downloaded during sync, so they
+/// read offline and their text is searchable.
+const PREFETCH_DAYS: i64 = 30;
+
+/// Larger messages (big attachments) are left until opened.
+const PREFETCH_MAX_SIZE: u32 = 2 * 1024 * 1024;
+
+/// Bodies downloaded per folder in one sync, so a first sync stays short;
+/// the next syncs continue where it stopped.
+const PREFETCH_PER_SYNC: u32 = 300;
+
+/// Bodies fetched per round trip.
+const PREFETCH_BATCH: usize = 25;
+
+/// A message that arrived in an inbox since the last sync, unread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewMail {
+    pub id: i64,
+    pub from: Option<String>,
+    pub subject: Option<String>,
+}
+
+/// What a sync found.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SyncReport {
+    /// New unread mail in inboxes that had synced before. A first sync
+    /// reports none, so adding an account does not announce old mail.
+    pub new_mail: Vec<NewMail>,
+}
+
 /// Which folders a sync covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope<'a> {
@@ -45,14 +75,15 @@ pub struct ReplayOutcome {
     pub touched: Vec<String>,
 }
 
-/// Syncs the folders in `scope`, inbox first.
+/// Syncs the folders in `scope`, inbox first, then downloads the bodies of
+/// recent messages in them.
 pub async fn sync_account(
     store: &Mutex<Store>,
     account: &Account,
     secret: &Secret,
     scope: Scope<'_>,
     on_event: impl Fn(Event),
-) -> Result<()> {
+) -> Result<SyncReport> {
     let mut session = ImapSession::connect(&account.imap, &account.username, secret).await?;
     let remote = session.list_folders().await?;
     let mut folders = store.lock().unwrap().sync_folders(account.id, &remote)?;
@@ -62,6 +93,8 @@ pub async fn sync_account(
     }
     folders.sort_by_key(|(_, f)| (f.role != FolderRole::Inbox, f.role.sort_rank()));
 
+    let mut report = SyncReport::default();
+    let mut synced = Vec::new();
     for (folder_id, folder) in folders {
         let result = sync_folder(
             store,
@@ -75,10 +108,84 @@ pub async fn sync_account(
         match result {
             // Deleted on the server since LIST; the next sync drops it.
             Err(Error::Rejected(_)) => continue,
-            other => other?,
+            Ok(new_mail) => report.new_mail.extend(new_mail),
+            Err(e) => return Err(e),
+        }
+        synced.push((folder_id, folder));
+    }
+    // Messages show up first; their bodies follow.
+    let since = now() - PREFETCH_DAYS * 24 * 60 * 60;
+    let mut fetched_any = false;
+    for (folder_id, folder) in synced {
+        if matches!(folder.role, FolderRole::Trash | FolderRole::Junk) {
+            continue;
+        }
+        match prefetch_bodies(store, &mut session, folder_id, &folder.name, since).await {
+            Err(Error::Rejected(_)) => continue,
+            Ok(n) => fetched_any |= n > 0,
+            Err(e) => return Err(e),
         }
     }
-    session.logout().await
+    if fetched_any {
+        // Attachments are known for sure once bodies are in.
+        on_event(Event::MailboxChanged {
+            account: account.id,
+        });
+    }
+    session.logout().await?;
+    Ok(report)
+}
+
+/// Downloads recent bodies the cache lacks and indexes their text. Returns
+/// how many were saved.
+async fn prefetch_bodies(
+    store: &Mutex<Store>,
+    session: &mut ImapSession,
+    folder_id: FolderId,
+    name: &str,
+    since: i64,
+) -> Result<usize> {
+    let wanted = store.lock().unwrap().bodies_to_prefetch(
+        folder_id,
+        since,
+        PREFETCH_MAX_SIZE,
+        PREFETCH_PER_SYNC,
+    )?;
+    if wanted.is_empty() {
+        return Ok(0);
+    }
+    session.select(name).await?;
+    let mut saved = 0;
+    for chunk in wanted.chunks(PREFETCH_BATCH) {
+        let uids: Vec<u32> = chunk.iter().map(|(_, uid)| *uid).collect();
+        let bodies = session.fetch_raw_many(&uid_set(&uids)).await?;
+        for (id, uid) in chunk {
+            // A message expunged meanwhile is simply missing.
+            let Some((_, raw)) = bodies.iter().find(|(u, _)| u == uid) else {
+                continue;
+            };
+            save_and_index(store, *id, raw)?;
+            saved += 1;
+        }
+    }
+    Ok(saved)
+}
+
+/// Caches a downloaded message and adds its text to the search index.
+fn save_and_index(store: &Mutex<Store>, id: i64, raw: &[u8]) -> Result<()> {
+    let text = mail_mime::search_text(raw);
+    let store = store.lock().unwrap();
+    store.save_raw(id, raw)?;
+    if let Some(text) = text {
+        store.index_body(id, &text)?;
+    }
+    Ok(())
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Sends queued changes and saved drafts, then syncs the folders they
@@ -107,7 +214,9 @@ pub async fn push_changes(
         if let Some(id) = id {
             match sync_folder(store, &mut session, account.id, id, name, &on_event).await {
                 Err(Error::Rejected(_)) => {}
-                other => other?,
+                other => {
+                    other?;
+                }
             }
         }
     }
@@ -198,7 +307,8 @@ fn touch(list: &mut Vec<String>, folder: &str) {
     }
 }
 
-/// Brings one folder's cache in step with the server.
+/// Brings one folder's cache in step with the server. Returns the new unread
+/// messages when the folder is an inbox that had synced before.
 pub async fn sync_folder(
     store: &Mutex<Store>,
     session: &mut ImapSession,
@@ -206,14 +316,18 @@ pub async fn sync_folder(
     folder_id: FolderId,
     name: &str,
     on_event: &impl Fn(Event),
-) -> Result<()> {
+) -> Result<Vec<NewMail>> {
     let status = session.select(name).await?;
     let mut state = store.lock().unwrap().folder_state(folder_id)?;
+    let is_inbox = store.lock().unwrap().folder_role(folder_id)? == Some(FolderRole::Inbox);
+    // Messages at or above the old UIDNEXT arrived since the last sync.
+    let announce_from = state.uid_next.filter(|_| is_inbox);
     if state.uid_validity.is_some() && state.uid_validity != status.uid_validity {
         store.lock().unwrap().reset_folder(account, folder_id)?;
         state = store.lock().unwrap().folder_state(folder_id)?;
     }
     let pending = store.lock().unwrap().pending_uids(account, name)?;
+    let mut new_mail = Vec::new();
 
     // Flag changes on messages we already have.
     if state.count > 0 && status.exists > 0 {
@@ -264,7 +378,12 @@ pub async fn sync_folder(
             .filter(|uid| !local_set.contains(uid) && !pending.contains(uid))
             .collect();
         missing.sort_unstable_by(|a, b| b.cmp(a));
-        fetch_headers(store, session, account, folder_id, name, &missing, on_event).await?;
+        new_mail =
+            fetch_headers(store, session, account, folder_id, name, &missing, on_event).await?;
+        match announce_from {
+            Some(from) => new_mail.retain(|(uid, _)| *uid >= from),
+            None => new_mail.clear(),
+        }
     }
 
     store.lock().unwrap().set_folder_synced(
@@ -272,7 +391,8 @@ pub async fn sync_folder(
         status.uid_validity,
         status.uid_next,
         status.highest_modseq,
-    )
+    )?;
+    Ok(new_mail.into_iter().map(|(_, mail)| mail).collect())
 }
 
 /// How many messages queued moves and deletes have already taken out of the
@@ -288,7 +408,8 @@ fn pending_removals(store: &Mutex<Store>, account: AccountId, folder: &str) -> R
         .sum())
 }
 
-/// Fetches headers newest first, in batches, reporting progress.
+/// Fetches headers newest first, in batches, reporting progress. Returns the
+/// unread messages that were new to the cache, with their UIDs.
 async fn fetch_headers(
     store: &Mutex<Store>,
     session: &mut ImapSession,
@@ -297,7 +418,8 @@ async fn fetch_headers(
     name: &str,
     uids: &[u32],
     on_event: &impl Fn(Event),
-) -> Result<()> {
+) -> Result<Vec<(u32, NewMail)>> {
+    let mut unread = Vec::new();
     let total = uids.len() as u32;
     let mut done = 0;
     on_event(Event::SyncProgress {
@@ -308,7 +430,21 @@ async fn fetch_headers(
     });
     for chunk in uids.chunks(BATCH) {
         let headers = session.fetch_headers(&uid_set(chunk)).await?;
-        store.lock().unwrap().insert_headers(folder_id, &headers)?;
+        let ids = store.lock().unwrap().insert_headers(folder_id, &headers)?;
+        for (h, id) in headers.into_iter().zip(ids) {
+            if let Some(id) = id
+                && !h.flags.seen
+            {
+                unread.push((
+                    h.uid,
+                    NewMail {
+                        id,
+                        from: h.from,
+                        subject: h.subject,
+                    },
+                ));
+            }
+        }
         done += chunk.len() as u32;
         on_event(Event::SyncProgress {
             account,
@@ -317,10 +453,11 @@ async fn fetch_headers(
             total,
         });
     }
-    Ok(())
+    Ok(unread)
 }
 
-/// Fetches a message body the cache does not have yet and saves it.
+/// Fetches a message body the cache does not have yet, saves it and adds
+/// its text to the search index.
 pub async fn fetch_message(
     store: &Mutex<Store>,
     account: &Account,
@@ -335,7 +472,7 @@ pub async fn fetch_message(
     }
     let mut session = ImapSession::connect(&account.imap, &account.username, secret).await?;
     let raw = session.fetch_raw(&source.folder_name, source.uid).await?;
-    store.lock().unwrap().save_raw(message, &raw)?;
+    save_and_index(store, message, &raw)?;
     let _ = session.logout().await;
     Ok(raw)
 }

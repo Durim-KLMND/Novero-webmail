@@ -21,7 +21,7 @@ use tokio::time::timeout;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Fields fetched for the message list. Bodies are fetched on open.
-const HEADER_QUERY: &str = "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID CONTENT-TYPE)])";
+const HEADER_QUERY: &str = "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID CONTENT-TYPE REFERENCES IN-REPLY-TO)])";
 
 /// Any byte stream async-imap can run over (plain TCP or TLS).
 trait Transport: AsyncRead + AsyncWrite + Unpin + Send + fmt::Debug {}
@@ -309,6 +309,23 @@ impl ImapSession {
             .and_then(|f| f.body())
             .map(<[u8]>::to_vec)
             .ok_or_else(|| Error::Protocol(format!("message {uid} is no longer on the server")))
+    }
+
+    /// Full raw messages for a UID set in the selected folder, with their
+    /// UIDs. Uses BODY.PEEK so nothing is marked read.
+    pub async fn fetch_raw_many(&mut self, uid_set: &str) -> Result<Vec<(u32, Vec<u8>)>> {
+        let fetched: Vec<Fetch> = self
+            .session
+            .uid_fetch(uid_set, "(UID BODY.PEEK[])")
+            .await
+            .map_err(protocol)?
+            .try_collect()
+            .await
+            .map_err(protocol)?;
+        Ok(fetched
+            .iter()
+            .filter_map(|f| Some((f.uid?, f.body()?.to_vec())))
+            .collect())
     }
 
     /// Ends the session politely.

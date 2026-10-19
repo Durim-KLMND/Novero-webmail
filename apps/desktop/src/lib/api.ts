@@ -30,6 +30,8 @@ export interface Account {
   imap: Endpoint;
   smtp: Endpoint;
   auth: AuthMethod;
+  /** Added below new messages, replies and forwards. */
+  signature: string;
 }
 
 export type FolderRole =
@@ -59,15 +61,41 @@ export interface Flags {
   deleted: boolean;
 }
 
+/** Which messages the list shows. */
+export type Mailbox =
+  | { kind: "folder"; id: number }
+  | { kind: "allInboxes" }
+  | { kind: "search"; query: string };
+
+/** One row of the message list: a message, or a conversation shown by its
+ * newest message in the mailbox. */
 export interface MessageSummary {
   id: number;
   uid: number;
+  accountId: number;
+  folderId: number;
+  folderName: string;
+  folderRole: FolderRole;
   from: string | null;
   to: string | null;
   subject: string | null;
   date: number | null;
+  /** Unread while any message of the row is; flagged if any is. */
   flags: Flags;
   hasAttachments: boolean;
+  threadId: number | null;
+  /** The messages this row stands for, newest first. */
+  ids: number[];
+  /** Messages in the whole conversation. */
+  count: number;
+}
+
+export type Theme = "system" | "light" | "dark";
+
+export interface Settings {
+  theme: Theme;
+  conversations: boolean;
+  notifications: boolean;
 }
 
 export interface MessagePage {
@@ -193,8 +221,15 @@ export const api = {
   removeAccount: (id: number) => invoke<void>("remove_account", { id }),
   listFolders: (account: number) =>
     invoke<Folder[]>("list_folders", { account }),
-  listMessages: (folder: number, offset: number, limit: number) =>
-    invoke<MessagePage>("list_messages", { folder, offset, limit }),
+  listMessages: (mailbox: Mailbox, offset: number, limit: number) =>
+    invoke<MessagePage>("list_messages", { mailbox, offset, limit }),
+  conversation: (message: number) =>
+    invoke<MessageSummary[]>("conversation", { message }),
+  getSettings: () => invoke<Settings>("get_settings"),
+  saveSettings: (settings: Settings) =>
+    invoke<Settings>("save_settings", { settings }),
+  setSignature: (account: number, signature: string) =>
+    invoke<void>("set_signature", { account, signature }),
   openMessage: (id: number, allowRemote: boolean) =>
     invoke<ParsedMessage>("open_message", { id, allowRemote }),
   syncAccount: (account: number) => invoke<void>("sync_account", { account }),
