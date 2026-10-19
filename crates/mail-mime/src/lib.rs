@@ -1,14 +1,12 @@
-//! MIME parsing and building, HTML sanitizing and threading. Phase 1 of the roadmap fills this in.
+//! MIME parsing and HTML sanitizing.
+//!
+//! Incoming mail is hostile input: everything shown in the UI goes through
+//! [`parse_message`], which decodes the message and sanitizes its HTML.
+//! Building outgoing mail (phase 3) and threading (phase 5) come later.
 
+mod html;
+mod parse;
+
+pub use html::{SanitizedHtml, sanitize_html};
 pub use mail_core::{Error, Result};
-
-/// Name of this crate, used in logs.
-pub const CRATE: &str = env!("CARGO_PKG_NAME");
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_name_is_set() {
-        assert_eq!(super::CRATE, "mail-mime");
-    }
-}
+pub use parse::{AttachmentInfo, ParsedMessage, parse_header_fields, parse_message};

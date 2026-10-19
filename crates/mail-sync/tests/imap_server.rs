@@ -4,8 +4,11 @@
 //! then run `cargo test -p mail-sync -- --ignored`. Override the address with
 //! `MAIL_TEST_IMAP_HOST` and `MAIL_TEST_IMAP_PORT`.
 
-use mail_core::{Endpoint, FolderRole, Security};
-use mail_sync::ImapSession;
+use std::sync::Mutex;
+
+use mail_core::{Endpoint, Event, FolderRole, NewAccount, Security};
+use mail_store::Store;
+use mail_sync::{ImapSession, fetch_message, sync_account};
 
 fn endpoint() -> Endpoint {
     Endpoint {
@@ -16,6 +19,20 @@ fn endpoint() -> Endpoint {
             .unwrap_or(1143),
         security: Security::Insecure,
     }
+}
+
+fn store_with_alice(dir: &std::path::Path) -> (Mutex<Store>, mail_core::Account) {
+    let store = Store::open_in_memory(dir).unwrap();
+    let account = store
+        .add_account(&NewAccount {
+            display_name: "Alice".into(),
+            email: "alice@example.test".into(),
+            username: "alice".into(),
+            imap: endpoint(),
+            smtp: endpoint(),
+        })
+        .unwrap();
+    (Mutex::new(store), account)
 }
 
 #[tokio::test]
@@ -36,18 +53,18 @@ async fn lists_folders_with_special_use_roles() {
 
 #[tokio::test]
 #[ignore = "needs the test IMAP server"]
-async fn fetches_the_newest_hundred_envelopes() {
+async fn fetches_the_newest_hundred_headers() {
     let mut session = ImapSession::connect(&endpoint(), "alice", "secret")
         .await
         .unwrap();
-    let envelopes = session.fetch_latest_envelopes("INBOX", 100).await.unwrap();
+    let headers = session.fetch_latest_headers("INBOX", 100).await.unwrap();
 
-    assert_eq!(envelopes.len(), 100);
+    assert_eq!(headers.len(), 100);
     assert!(
-        envelopes.windows(2).all(|w| w[0].uid > w[1].uid),
+        headers.windows(2).all(|w| w[0].uid > w[1].uid),
         "newest first"
     );
-    let newest = &envelopes[0];
+    let newest = &headers[0];
     assert_eq!(newest.subject.as_deref(), Some("Test message 150"));
     assert_eq!(
         newest.message_id.as_deref(),
@@ -57,14 +74,15 @@ async fn fetches_the_newest_hundred_envelopes() {
         newest.from.as_deref(),
         Some("Sender 3 <sender3@example.test>")
     );
+    assert!(newest.date.is_some());
     assert!(newest.flags.seen, "message 150 is seeded as read");
-    assert!(!envelopes[1].flags.seen, "message 149 is seeded as unread");
+    assert!(!headers[1].flags.seen, "message 149 is seeded as unread");
     session.logout().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "needs the test IMAP server"]
-async fn reports_condstore_state_on_select() {
+async fn reports_folder_state_on_select() {
     let mut session = ImapSession::connect(&endpoint(), "alice", "secret")
         .await
         .unwrap();
@@ -80,4 +98,110 @@ async fn reports_condstore_state_on_select() {
 async fn wrong_password_is_an_auth_error() {
     let result = ImapSession::connect(&endpoint(), "alice", "wrong").await;
     assert!(matches!(result, Err(mail_core::Error::Auth(_))));
+}
+
+#[tokio::test]
+#[ignore = "needs the test IMAP server"]
+async fn full_sync_fills_every_folder_and_a_second_sync_adds_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, account) = store_with_alice(dir.path());
+
+    let events = Mutex::new(Vec::new());
+    sync_account(&store, &account, "secret", |e| {
+        events.lock().unwrap().push(e)
+    })
+    .await
+    .unwrap();
+
+    let folders = store.lock().unwrap().list_folders(account.id).unwrap();
+    let count = |name: &str| folders.iter().find(|f| f.name == name).unwrap().total;
+    assert_eq!(folders[0].name, "INBOX", "inbox sorts first");
+    assert_eq!(count("INBOX"), 150);
+    assert_eq!(count("Sent"), 5);
+    assert_eq!(folders[0].unread, 100);
+
+    let events = events.into_inner().unwrap();
+    assert!(events.contains(&Event::SyncProgress {
+        account: account.id,
+        folder: "INBOX".into(),
+        done: 150,
+        total: 150,
+    }));
+
+    let again = Mutex::new(Vec::new());
+    sync_account(&store, &account, "secret", |e| {
+        again.lock().unwrap().push(e)
+    })
+    .await
+    .unwrap();
+    let fetched: u32 = again
+        .into_inner()
+        .unwrap()
+        .iter()
+        .map(|e| match e {
+            Event::SyncProgress { total, .. } => *total,
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(fetched, 0, "nothing new to fetch");
+}
+
+#[tokio::test]
+#[ignore = "needs the test IMAP server"]
+async fn interrupted_sync_is_completed_next_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, account) = store_with_alice(dir.path());
+
+    // Pretend a first sync stopped after the newest 20 inbox messages.
+    let mut session = ImapSession::connect(&endpoint(), "alice", "secret")
+        .await
+        .unwrap();
+    let remote = session.list_folders().await.unwrap();
+    let newest = session.fetch_latest_headers("INBOX", 20).await.unwrap();
+    session.logout().await.unwrap();
+    let inbox = {
+        let mut s = store.lock().unwrap();
+        let ids = s.sync_folders(account.id, &remote).unwrap();
+        let inbox = ids.iter().find(|(_, f)| f.name == "INBOX").unwrap().0;
+        s.insert_headers(inbox, &newest).unwrap();
+        inbox
+    };
+
+    sync_account(&store, &account, "secret", |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        store.lock().unwrap().folder_state(inbox).unwrap().count,
+        150
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the test IMAP server"]
+async fn opening_a_message_fetches_and_caches_its_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, account) = store_with_alice(dir.path());
+    sync_account(&store, &account, "secret", |_| {})
+        .await
+        .unwrap();
+
+    let inbox = store.lock().unwrap().list_folders(account.id).unwrap()[0].id;
+    let id = store
+        .lock()
+        .unwrap()
+        .list_messages(inbox, 0, 1)
+        .unwrap()
+        .items[0]
+        .id;
+    let raw = fetch_message(&store, &account, "secret", id).await.unwrap();
+    let parsed = mail_mime::parse_message(&raw, false).unwrap();
+    assert_eq!(parsed.subject.as_deref(), Some("Test message 150"));
+    assert_eq!(
+        parsed.text.as_deref().map(str::trim),
+        Some("Body of test message 150.")
+    );
+
+    // The second open reads from disk, even with a wrong password.
+    let again = fetch_message(&store, &account, "wrong", id).await.unwrap();
+    assert_eq!(again, raw);
 }

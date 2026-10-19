@@ -8,6 +8,11 @@ publish.workspace = true
 
 [dependencies]
 mail-core.workspace = true
+serde.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+keyring-core = "1"
+windows-native-keyring-store = "1"
 
 [lints]
 workspace = true

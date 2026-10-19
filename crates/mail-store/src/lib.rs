@@ -3,13 +3,19 @@
 //! Migrations are plain SQL files applied in order and tracked with
 //! `PRAGMA user_version`, so a database records which ones it has.
 
+mod store;
+
 use std::path::Path;
 
 pub use mail_core::{Error, Result};
 use rusqlite::Connection;
+pub use store::{Folder, FolderState, MessagePage, MessageSource, MessageSummary, Store};
 
 /// Migrations in order. Never edit one that has shipped; add a new file.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_initial.sql"),
+    include_str!("../migrations/0002_account_username.sql"),
+];
 
 /// Schema version a fully migrated database has.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -54,7 +60,7 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-fn storage(err: rusqlite::Error) -> Error {
+pub(crate) fn storage(err: rusqlite::Error) -> Error {
     Error::Storage(err.to_string())
 }
 
