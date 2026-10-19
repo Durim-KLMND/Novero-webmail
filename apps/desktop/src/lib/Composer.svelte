@@ -1,9 +1,11 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, errorText, type Account, type Draft, type DraftFields } from "./api";
   import { fileSize } from "./format";
   import RichEditor from "./RichEditor.svelte";
+  import { openMenu } from "./contextmenu.svelte";
   import { textToHtml } from "./richtext";
 
   interface Props {
@@ -208,7 +210,7 @@
 <section class="composer" aria-label="New message" onkeydown={keydown}>
   <div class="actions" role="toolbar" aria-label="Message actions">
     <button class="primary" onclick={send} disabled={busy}>{busy ? "Sending…" : "Send"}</button>
-    <button onclick={attach} disabled={busy}>📎 Attach</button>
+    <button onclick={attach} disabled={busy}><Icon name="attachment" />Attach</button>
     <span class="status quiet" aria-live="polite">{status}</span>
     <button onclick={discard} disabled={busy} title="Delete this draft">Discard</button>
     <button onclick={close} disabled={busy} title="Save the draft and close">Close</button>
@@ -256,9 +258,12 @@
   {#if attachments.length}
     <ul class="attachments" aria-label="Attachments">
       {#each attachments as a, i (i)}
-        <li title={a.mimeType}>
-          📎 {a.name} <span class="quiet">{fileSize(a.size)}</span>
-          <button class="remove" aria-label="Remove {a.name}" onclick={() => detach(i)}>✕</button>
+        <li
+          title={a.mimeType}
+          oncontextmenu={(e) => openMenu(e, [{ label: "Remove attachment", icon: "close", danger: true, run: () => detach(i) }])}
+        >
+          <Icon name="attachment" size={14} /> {a.name} <span class="quiet">{fileSize(a.size)}</span>
+          <button class="remove" aria-label="Remove {a.name}" onclick={() => detach(i)}><Icon name="close" size={14} /></button>
         </li>
       {/each}
     </ul>

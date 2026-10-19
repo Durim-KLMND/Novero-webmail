@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { onDestroy } from "svelte";
   import { api, errorText, onMailEvent, type Account, type MailEvent } from "./api";
   import AccountForm from "./AccountForm.svelte";
@@ -55,7 +56,7 @@
 <div class="page">
   <div class="card">
     {#if step === "welcome"}
-      <div class="logo" aria-hidden="true">✉</div>
+      <div class="logo"><Icon name="unread" size={28} /></div>
       <h1>Welcome to Novero Mail</h1>
       <p class="lead">A fast, private email app for Windows. Let's connect your first account.</p>
       <ul class="points">
@@ -76,7 +77,7 @@
         />
       {/key}
     {:else}
-      <div class="logo ok" aria-hidden="true">✓</div>
+      <div class="logo ok"><Icon name="check" size={28} /></div>
       <h1>{added.length === 1 ? "You're all set" : `${added.length} accounts connected`}</h1>
       <ul class="accounts">
         {#each added as account (account.id)}

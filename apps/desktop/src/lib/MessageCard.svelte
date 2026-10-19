@@ -1,5 +1,7 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { closeMenu, fallbackMenu, items, openMenu } from "./contextmenu.svelte";
   import { api, errorText, type MessageSummary, type ParsedMessage } from "./api";
   import { fileSize, folderLabel, fullDate, listDate, senderName } from "./format";
 
@@ -70,17 +72,41 @@
       const href = link.getAttribute("href") ?? "";
       if (/^(https?:|mailto:)/i.test(href)) openUrl(href).catch(() => {});
     });
+    // The frame is a document of its own, so right-clicks and clicks in it
+    // don't reach the app's menu by themselves.
+    doc.addEventListener("contextmenu", (event) => {
+      const at = frame.getBoundingClientRect();
+      fallbackMenu(event, doc, { x: at.left, y: at.top });
+    });
+    doc.addEventListener("pointerdown", (event) => {
+      if (event.button !== 2) closeMenu();
+    });
     frame.style.height = `${Math.max(doc.documentElement.scrollHeight, 120)}px`;
   }
 </script>
 
 <div class="card" class:expanded>
-  <button class="head" onclick={() => onExpand(!expanded)} aria-expanded={expanded}>
+  <button
+    class="head"
+    onclick={() => onExpand(!expanded)}
+    oncontextmenu={(e) =>
+      openMenu(
+        e,
+        items(
+          { label: expanded ? "Collapse" : "Expand", icon: expanded ? "chevron-down" : "chevron-right", run: () => onExpand(!expanded) },
+          "separator",
+          !isDraft && { label: "Reply", icon: "reply", run: () => onReply(false) },
+          !isDraft && { label: "Reply all", icon: "reply-all", run: () => onReply(true) },
+          !isDraft && { label: "Forward", icon: "forward", run: onForward },
+        ),
+      )}
+    aria-expanded={expanded}
+  >
     {#if !summary.flags.seen}<span class="dot" aria-label="Unread"></span>{/if}
     <span class="from">{senderName(summary.from)}</span>
     {#if isDraft}<span class="tag draft">Draft</span>
     {:else if showFolder}<span class="tag">{folderLabel(summary.folderName, summary.folderRole, null)}</span>{/if}
-    {#if summary.hasAttachments}<span class="quiet" aria-label="Has attachments">📎</span>{/if}
+    {#if summary.hasAttachments}<span class="quiet clip"><Icon name="attachment" size={14} label="Has attachments" /></span>{/if}
     <span class="date quiet" title={fullDate(summary.date)}>{expanded ? fullDate(summary.date) : listDate(summary.date)}</span>
   </button>
 
@@ -107,7 +133,7 @@
       {#if message.attachments.length}
         <ul class="attachments">
           {#each message.attachments as a}
-            <li title={a.mimeType}>📎 {a.name} <span class="quiet">{fileSize(a.size)}</span></li>
+            <li title={a.mimeType}><Icon name="attachment" size={14} /> {a.name} <span class="quiet">{fileSize(a.size)}</span></li>
           {/each}
         </ul>
       {/if}
@@ -135,9 +161,9 @@
       </div>
       {#if !isDraft}
         <div class="replies">
-          <button onclick={() => onReply(false)}>Reply</button>
-          <button onclick={() => onReply(true)}>Reply all</button>
-          <button onclick={onForward}>Forward</button>
+          <button onclick={() => onReply(false)}><Icon name="reply" />Reply</button>
+          <button onclick={() => onReply(true)}><Icon name="reply-all" />Reply all</button>
+          <button onclick={onForward}><Icon name="forward" />Forward</button>
         </div>
       {/if}
     {/if}
