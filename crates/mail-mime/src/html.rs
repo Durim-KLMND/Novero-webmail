@@ -107,6 +107,34 @@ fn filter_attribute<'u>(
     }
 }
 
+/// What a formatted message being written may contain: text styles, links,
+/// lists and quotes. Anything else, such as pasted scripts, styles or remote
+/// images, is dropped before the message is saved or sent.
+pub fn clean_compose_html(html: &str) -> String {
+    ammonia::Builder::empty()
+        .add_tags([
+            "a",
+            "b",
+            "strong",
+            "i",
+            "em",
+            "u",
+            "s",
+            "br",
+            "p",
+            "div",
+            "ul",
+            "ol",
+            "li",
+            "blockquote",
+        ])
+        .add_tag_attributes("a", ["href"])
+        .url_schemes(["http", "https", "mailto"].into())
+        .link_rel(Some("noopener noreferrer"))
+        .clean(html)
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

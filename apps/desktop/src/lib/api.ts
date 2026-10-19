@@ -179,7 +179,10 @@ export interface DraftFields {
   cc: string;
   bcc: string;
   subject: string;
+  /** The text as typed; with formatting, the plain-text copy of `html`. */
   body: string;
+  /** The formatted text; empty for plain-text messages. */
+  html: string;
 }
 
 export interface Draft extends DraftFields {

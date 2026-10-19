@@ -3,6 +3,8 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, errorText, type Account, type Draft, type DraftFields } from "./api";
   import { fileSize } from "./format";
+  import RichEditor from "./RichEditor.svelte";
+  import { textToHtml } from "./richtext";
 
   interface Props {
     draft: Draft;
@@ -27,6 +29,7 @@
     bcc: start.bcc,
     subject: start.subject,
     body: start.body,
+    html: start.html,
   });
   let attachments = $state(start.attachments);
   let showCopies = $state(Boolean(start.cc || start.bcc));
@@ -38,7 +41,9 @@
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let uploadTimer: ReturnType<typeof setInterval> | undefined;
   let toInput = $state<HTMLInputElement>();
-  let bodyInput = $state<HTMLTextAreaElement>();
+  let editor = $state<RichEditor>();
+  /** What the editor starts with: the formatted text, or the plain text shown as such. */
+  const startHtml = start.html || textToHtml(start.body);
   let closed = false;
 
   const account = $derived(accounts.find((a) => a.id === draft.account));
@@ -47,9 +52,7 @@
     await tick();
     if (draft.inReplyTo && fields.to) {
       // A reply: start typing above the quoted text.
-      bodyInput?.focus();
-      bodyInput?.setSelectionRange(0, 0);
-      if (bodyInput) bodyInput.scrollTop = 0;
+      editor?.focusStart();
     } else {
       toInput?.focus();
     }
@@ -62,6 +65,12 @@
     clearTimeout(saveTimer);
     clearInterval(uploadTimer);
   });
+
+  function bodyChanged(text: string, html: string) {
+    fields.body = text;
+    fields.html = html;
+    edited();
+  }
 
   function edited() {
     dirty = true;
@@ -169,12 +178,7 @@
 
   /** Replaces the old sender's signature with the new one's, if it is still in the text. */
   function swapSignature(from: string, to: string) {
-    if (!from.trim()) return;
-    const block = `\n\n-- \n${from}`;
-    const at = fields.body.indexOf(block);
-    if (at < 0) return;
-    const replacement = to.trim() ? `\n\n-- \n${to}` : "";
-    fields.body = fields.body.slice(0, at) + replacement + fields.body.slice(at + block.length);
+    if (from.trim()) editor?.replaceSignature(from, to);
   }
 
   /** Moves the draft to another account: a new draft there, this one deleted. */
@@ -260,13 +264,7 @@
     </ul>
   {/if}
 
-  <textarea
-    bind:this={bodyInput}
-    bind:value={fields.body}
-    oninput={edited}
-    aria-label="Message"
-    placeholder="Write your message"
-  ></textarea>
+  <RichEditor bind:this={editor} html={startHtml} placeholder="Write your message" onChange={bodyChanged} />
   <p class="hint quiet">Ctrl+Enter sends. Drafts are saved as you type.</p>
 </section>
 
@@ -344,19 +342,6 @@
     background: none;
     padding: 0 4px;
     color: var(--text-quiet);
-  }
-  textarea {
-    flex: 1;
-    min-height: 120px;
-    resize: none;
-    border: none;
-    padding: 16px 24px;
-    font: 14px/1.5 var(--font);
-    color: var(--text);
-    background: var(--bg);
-  }
-  textarea:focus {
-    outline: none;
   }
   .hint {
     font-size: 12px;

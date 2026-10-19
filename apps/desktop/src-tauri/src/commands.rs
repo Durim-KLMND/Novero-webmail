@@ -113,6 +113,11 @@ pub async fn add_account(
 
     let session = ImapSession::connect(&input.imap, &username, &secret).await?;
     let _ = session.logout().await;
+    // Sending problems (a wrong SMTP server, SMTP turned off for the mailbox)
+    // are found now rather than at the first message.
+    mail_send::check_login(&input.smtp, &username, &secret)
+        .await
+        .map_err(sending_failed)?;
 
     let account = state.store.lock().unwrap().add_account(&NewAccount {
         display_name: match input.display_name.trim() {
@@ -137,6 +142,18 @@ pub async fn add_account(
     start_account(&app, account.id);
     request_sync(&app, account.id, true);
     Ok(account)
+}
+
+fn sending_failed(err: Error) -> Error {
+    match err {
+        Error::Auth(why) => Error::Auth(format!(
+            "receiving works, but the sending server refused the sign-in: {why}"
+        )),
+        Error::Network(why) => Error::Network(format!(
+            "receiving works, but the sending server could not be reached: {why}"
+        )),
+        other => other,
+    }
 }
 
 /// Signs an account in again: with a new password, or through the provider's
