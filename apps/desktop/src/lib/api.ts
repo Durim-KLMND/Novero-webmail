@@ -32,6 +32,8 @@ export interface Account {
   auth: AuthMethod;
   /** Added below new messages, replies and forwards. */
   signature: string;
+  /** The signature with formatting; empty when it has none. */
+  signatureHtml: string;
 }
 
 export type FolderRole =
@@ -42,6 +44,34 @@ export type FolderRole =
   | "junk"
   | "archive"
   | "other";
+
+export type RuleField = "from" | "to" | "subject";
+
+export interface RuleCondition {
+  field: RuleField;
+  /** Holds when the field contains this, ignoring case. */
+  text: string;
+}
+
+export type RuleAction =
+  | { kind: "markRead" }
+  | { kind: "flag" }
+  | { kind: "move"; folder: number }
+  | { kind: "archive" }
+  | { kind: "delete" };
+
+/** A filter run on new mail as it arrives in an account's inbox. */
+export interface Rule {
+  /** 0 until saved. */
+  id: number;
+  account: number;
+  name: string;
+  enabled: boolean;
+  /** Every condition must hold, rather than any one. */
+  matchAll: boolean;
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+}
 
 export interface Folder {
   id: number;
@@ -195,6 +225,12 @@ export interface Draft extends DraftFields {
   replyingTo: number | null;
 }
 
+/** A known address, suggested while typing one. */
+export interface Contact {
+  email: string;
+  name: string | null;
+}
+
 export type OutboxState = "queued" | "failed" | "sent";
 
 export interface OutboxItem {
@@ -264,8 +300,13 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) =>
     invoke<Settings>("save_settings", { settings }),
-  setSignature: (account: number, signature: string) =>
-    invoke<void>("set_signature", { account, signature }),
+  listRules: (account: number) => invoke<Rule[]>("list_rules", { account }),
+  saveRule: (rule: Rule) => invoke<Rule>("save_rule", { rule }),
+  deleteRule: (id: number) => invoke<void>("delete_rule", { id }),
+  orderRules: (account: number, ids: number[]) =>
+    invoke<void>("order_rules", { account, ids }),
+  setSignature: (account: number, signature: string, html: string) =>
+    invoke<void>("set_signature", { account, signature, html }),
   openMessage: (id: number, allowRemote: boolean) =>
     invoke<ParsedMessage>("open_message", { id, allowRemote }),
   syncAccount: (account: number) => invoke<void>("sync_account", { account }),
@@ -286,11 +327,19 @@ export const api = {
   saveDraft: (id: number, fields: DraftFields, upload: boolean) =>
     invoke<Draft>("save_draft", { id, fields, upload }),
   attachFiles: (id: number) => invoke<Draft>("attach_files", { id }),
+  attachDropped: (id: number, drop: number, only: number[] | null) =>
+    invoke<Draft>("attach_dropped", { id, drop, only }),
+  droppedPicture: (drop: number, index: number) =>
+    invoke<string>("dropped_picture", { drop, index }),
+  pickPicture: () => invoke<string | null>("pick_picture"),
   removeAttachment: (id: number, index: number) =>
     invoke<Draft>("remove_attachment", { id, index }),
   discardDraft: (id: number) => invoke<void>("discard_draft", { id }),
   sendDraft: (id: number, fields: DraftFields) =>
     invoke<void>("send_draft", { id, fields }),
+  suggestContacts: (query: string) =>
+    invoke<Contact[]>("suggest_contacts", { query }),
+  hideContact: (email: string) => invoke<void>("hide_contact", { email }),
   listOutbox: (account: number) =>
     invoke<OutboxItem[]>("list_outbox", { account }),
   outboxStatus: (account: number) =>
@@ -312,6 +361,16 @@ export const api = {
   readyUpdate: () => invoke<UpdateInfo | null>("ready_update"),
   installUpdate: () => invoke<void>("install_update"),
 };
+
+/** Files dragged over the window (positions in CSS pixels), and dropped. */
+export type FileDrop =
+  | { kind: "over"; x: number; y: number }
+  | { kind: "leave" }
+  | { kind: "drop"; id: number; x: number; y: number; files: { name: string; picture: boolean }[] };
+
+export function onFileDrop(handler: (event: FileDrop) => void): Promise<UnlistenFn> {
+  return listen<FileDrop>("file-drop", (e) => handler(e.payload));
+}
 
 /** A downloaded update is ready to install. */
 export function onUpdateReady(handler: (update: UpdateInfo) => void): Promise<UnlistenFn> {

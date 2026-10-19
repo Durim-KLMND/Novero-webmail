@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mail_core::{AccountId, Draft, DraftAttachment, DraftFields, Error, FlagKind, Op, Result};
 use mail_mime::{Prefill, ReplyMode, Sender};
-use mail_store::{NewDraft, OutboxItem, OutboxState};
+use mail_store::{Contact, NewDraft, OutboxItem, OutboxState};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -162,7 +162,11 @@ pub async fn attach_files(app: AppHandle, state: State<'_, AppState>, id: i64) -
         .into_iter()
         .filter_map(|p| p.into_path().ok())
         .collect();
+    attach_paths(&state, id, paths)
+}
 
+/// Attaches files the person picked or dropped.
+pub fn attach_paths(state: &AppState, id: i64, paths: Vec<PathBuf>) -> Result<Draft> {
     let mut draft = state
         .store
         .lock()
@@ -244,6 +248,11 @@ pub fn send_draft(
         &built.copy,
         &built.recipients,
     )?;
+    let mut recipients = mail_core::address::parse_lenient(&draft.fields.to);
+    recipients.extend(mail_core::address::parse_lenient(&draft.fields.cc));
+    recipients.extend(mail_core::address::parse_lenient(&draft.fields.bcc));
+    // Only for suggestions; sending doesn't depend on it.
+    let _ = state.store.lock().unwrap().note_sent(&recipients, now());
     if let Some(original) = draft.replying_to {
         // The original may have been moved or deleted meanwhile; then there
         // is nothing to mark.
@@ -258,6 +267,18 @@ pub fn send_draft(
     report_outbox(&app, account.id, None);
     push_now(&app, account.id);
     Ok(())
+}
+
+/// Known addresses matching what is being typed, for the To, Cc and Bcc fields.
+#[tauri::command]
+pub fn suggest_contacts(state: State<'_, AppState>, query: String) -> Result<Vec<Contact>> {
+    state.store.lock().unwrap().suggest_contacts(&query, 8)
+}
+
+/// Stops suggesting an address.
+#[tauri::command]
+pub fn hide_contact(state: State<'_, AppState>, email: String) -> Result<()> {
+    state.store.lock().unwrap().hide_contact(&email)
 }
 
 /// Messages waiting to send or refused by the server.

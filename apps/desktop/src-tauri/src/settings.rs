@@ -87,19 +87,25 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<S
 }
 
 /// Sets the signature added to the account's new messages.
+/// Sets an account's signature: the plain text, and the formatted version
+/// when it has formatting (empty otherwise).
 #[tauri::command]
 pub fn set_signature(
     state: State<'_, AppState>,
     account: AccountId,
     signature: String,
+    html: Option<String>,
 ) -> Result<()> {
     // Trailing blank lines would only push the quote further down.
     let signature = signature.trim_end().replace("\r\n", "\n");
+    let html = html
+        .map(|h| mail_mime::clean_compose_html(&h))
+        .unwrap_or_default();
     state
         .store
         .lock()
         .unwrap()
-        .set_signature(account, &signature)
+        .set_signature(account, &signature, html.trim())
 }
 
 #[cfg(test)]

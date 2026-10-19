@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod address;
+pub mod rules;
+
 /// Local identifier of a configured account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(pub i64);
@@ -188,6 +191,9 @@ pub struct Account {
     /// Plain-text signature for new messages, replies and forwards.
     #[serde(default)]
     pub signature: String,
+    /// The same signature with formatting, or empty when it has none.
+    #[serde(default)]
+    pub signature_html: String,
 }
 
 /// What is needed to create an account.

@@ -380,13 +380,23 @@ pub fn move_messages(
     ids: Vec<i64>,
     folder: FolderId,
 ) -> Result<()> {
+    move_to(&app, &state, &ids, folder)
+}
+
+/// Moves messages to `folder`, which must be in their own account.
+pub(crate) fn move_to(
+    app: &AppHandle,
+    state: &AppState,
+    ids: &[i64],
+    folder: FolderId,
+) -> Result<()> {
     let target = state
         .store
         .lock()
         .unwrap()
         .folder(folder)?
         .ok_or_else(|| Error::Storage("that folder no longer exists".into()))?;
-    let located = state.store.lock().unwrap().locate(&ids)?;
+    let located = state.store.lock().unwrap().locate(ids)?;
     if located.iter().any(|m| m.account_id != target.account_id) {
         return Err(Error::Storage(
             "messages can only move within their own account".into(),
@@ -397,7 +407,7 @@ pub fn move_messages(
         .filter(|m| m.folder_id != target.id)
         .map(|m| m.id)
         .collect();
-    change(&app, &state, &ids, |m| Op::Move {
+    change(app, state, &ids, |m| Op::Move {
         folder: m.folder_name.clone(),
         uid_validity: m.uid_validity,
         uids: Vec::new(),
@@ -420,7 +430,12 @@ pub fn delete_messages(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>
 
 /// Moves messages to the folder with `role` in their account. For Trash,
 /// messages already there (or with no Trash to go to) are deleted for good.
-fn to_role(app: &AppHandle, state: &AppState, ids: &[i64], role: FolderRole) -> Result<()> {
+pub(crate) fn to_role(
+    app: &AppHandle,
+    state: &AppState,
+    ids: &[i64],
+    role: FolderRole,
+) -> Result<()> {
     let located = state.store.lock().unwrap().locate(ids)?;
     let mut targets = BTreeMap::new();
     for m in &located {

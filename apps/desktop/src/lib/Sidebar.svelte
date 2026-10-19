@@ -43,6 +43,8 @@
     /** The search box changed; an empty query ends the search. */
     onSearch: (query: string) => void;
     onSettings: () => void;
+    /** Open an account's rules. */
+    onRules: (account: number) => void;
     onHelp: () => void;
     onAddAccount: () => void;
     onSync: (account: number) => void;
@@ -65,6 +67,7 @@
     onAllInboxes,
     onSearch,
     onSettings,
+    onRules,
     onHelp,
     onAddAccount,
     onSync,
@@ -88,6 +91,7 @@
   function accountMenu(account: Account): MenuItem[] {
     return items(
       { label: "Check for mail", icon: "refresh", run: () => onSync(account.id) },
+      { label: "Rules…", icon: "rules", run: () => onRules(account.id) },
       { label: "Sign in again", icon: "sign-in", run: () => onSignInAgain(account) },
       "separator",
       { label: "Remove account", icon: "remove-account", danger: true, run: () => onRemove(account) },

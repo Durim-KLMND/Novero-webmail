@@ -20,6 +20,7 @@ mail-mime = { path = "../../../crates/mail-mime" }
 mail-send = { path = "../../../crates/mail-send" }
 mail-store = { path = "../../../crates/mail-store" }
 mail-sync = { path = "../../../crates/mail-sync" }
+base64 = "0.22"
 mime_guess = "2"
 serde.workspace = true
 serde_json.workspace = true

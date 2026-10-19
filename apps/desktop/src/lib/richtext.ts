@@ -42,6 +42,9 @@ export function htmlToText(root: Node): string {
       const tag = el.tagName;
       if (tag === "BR") {
         out += "\n";
+      } else if (tag === "IMG") {
+        const alt = el.getAttribute("alt")?.trim();
+        out += alt ? `[${alt}]` : "[picture]";
       } else if (tag === "BLOCKQUOTE") {
         newline();
         const inner = htmlToText(el);
@@ -80,5 +83,41 @@ export function htmlToText(root: Node): string {
 /** Whether the text uses anything plain text can't carry. Quotes don't count:
  *  "> " lines carry them. */
 export function hasFormatting(root: Element): boolean {
-  return root.querySelector("b, strong, i, em, u, s, strike, a, ul, ol") !== null;
+  return root.querySelector("b, strong, i, em, u, s, strike, a, ul, ol, img") !== null;
+}
+
+/** Pictures wider than this, or heavier than `KEEP_BYTES`, are made smaller
+ *  before they go into a message. */
+const MAX_WIDTH = 1600;
+const KEEP_BYTES = 1_000_000;
+
+/** A picture (`data:` URL) ready for a message: large photos are scaled down
+ *  and saved as JPEG; small ones are kept as they are. */
+export async function fitPicture(url: string): Promise<string> {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const bytes = (url.length - url.indexOf(",") - 1) * 0.75;
+  if (img.naturalWidth <= MAX_WIDTH && bytes <= KEEP_BYTES) return url;
+  const scale = Math.min(1, MAX_WIDTH / img.naturalWidth);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return url;
+  // PNGs may be see-through; JPEG has no transparency, so they get white.
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+/** Reads a pasted or dropped file as a `data:` URL. */
+export function readFile(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }

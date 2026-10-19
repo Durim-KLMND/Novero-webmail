@@ -3,7 +3,9 @@
 mod commands;
 mod compose;
 mod crash;
+mod files;
 mod links;
+mod rules;
 mod settings;
 mod state;
 mod updates;
@@ -41,6 +43,7 @@ pub fn run() {
             let state = state::AppState::open(&dir)?;
             app.manage(state);
             app.manage(links::PendingLink::default());
+            app.manage(files::Drops::default());
             if let Some(link) = links::from_args(std::env::args()) {
                 links::opened(app.handle(), link);
             }
@@ -57,6 +60,11 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(drop) = event {
+                files::window_event(window, drop);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_version,
@@ -86,6 +94,15 @@ pub fn run() {
             compose::remove_attachment,
             compose::discard_draft,
             compose::send_draft,
+            compose::suggest_contacts,
+            files::attach_dropped,
+            files::dropped_picture,
+            files::pick_picture,
+            compose::hide_contact,
+            rules::list_rules,
+            rules::save_rule,
+            rules::delete_rule,
+            rules::order_rules,
             compose::list_outbox,
             compose::outbox_status,
             compose::retry_outbox,
