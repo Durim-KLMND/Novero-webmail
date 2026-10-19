@@ -92,10 +92,32 @@ export interface MessageSummary {
 
 export type Theme = "system" | "light" | "dark";
 
+export type UpdateChannel = "stable" | "beta";
+
 export interface Settings {
   theme: Theme;
   conversations: boolean;
   notifications: boolean;
+  /** Look for updates in the background and download them. */
+  autoUpdate: boolean;
+  updateChannel: UpdateChannel;
+  /** After a crash, offer to send a report. */
+  crashReports: boolean;
+}
+
+export const defaultSettings: Settings = {
+  theme: "system",
+  conversations: true,
+  notifications: true,
+  autoUpdate: true,
+  updateChannel: "stable",
+  crashReports: true,
+};
+
+/** A newer version, downloaded and ready to install. */
+export interface UpdateInfo {
+  version: string;
+  notes: string | null;
 }
 
 export interface MessagePage {
@@ -273,7 +295,30 @@ export const api = {
   retryOutbox: (id: number) => invoke<void>("retry_outbox", { id }),
   deleteOutbox: (id: number) => invoke<void>("delete_outbox", { id }),
   editOutbox: (id: number) => invoke<Draft>("edit_outbox", { id }),
+  appVersion: () => invoke<string>("app_version"),
+  mailtoDraft: (account: number, link: string) =>
+    invoke<Draft>("mailto_draft", { account, link }),
+  takeMailto: () => invoke<string | null>("take_mailto"),
+  openDefaultApps: () => invoke<void>("open_default_apps"),
+  crashReport: () => invoke<string | null>("crash_report"),
+  discardCrashReport: () => invoke<void>("discard_crash_report"),
+  sendCrashReport: () => invoke<void>("send_crash_report"),
+  updatesAvailable: () => invoke<boolean>("updates_available"),
+  checkForUpdate: (channel: UpdateChannel) =>
+    invoke<UpdateInfo | null>("check_for_update", { channel }),
+  readyUpdate: () => invoke<UpdateInfo | null>("ready_update"),
+  installUpdate: () => invoke<void>("install_update"),
 };
+
+/** A downloaded update is ready to install. */
+export function onUpdateReady(handler: (update: UpdateInfo) => void): Promise<UnlistenFn> {
+  return listen<UpdateInfo>("update-ready", (e) => handler(e.payload));
+}
+
+/** A mailto: link was opened; `api.takeMailto` returns it. */
+export function onMailto(handler: () => void): Promise<UnlistenFn> {
+  return listen("mailto", () => handler());
+}
 
 export function onMailEvent(
   handler: (event: MailEvent) => void,

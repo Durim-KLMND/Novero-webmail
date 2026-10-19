@@ -28,6 +28,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
+      - name: Check the app version agrees everywhere
+        working-directory: .
+        run: node scripts/check-version.mjs
       - run: npm ci
       - run: npm run check
       - run: npm run build
@@ -110,7 +113,7 @@ jobs:
       - run: cargo test --workspace --locked
       # The release build takes most of this job, so pull requests skip it;
       # pushes to main still build and upload the installers.
-      - name: Build MSI and NSIS installers (unsigned)
+      - name: Build the installer (unsigned)
         if: github.event_name != 'pull_request'
         working-directory: apps/desktop
         run: npx tauri build --ci
@@ -120,11 +123,11 @@ jobs:
           NOVERO_GOOGLE_CLIENT_ID: ${{ secrets.NOVERO_GOOGLE_CLIENT_ID }}
           NOVERO_GOOGLE_CLIENT_SECRET: ${{ secrets.NOVERO_GOOGLE_CLIENT_SECRET }}
           NOVERO_MICROSOFT_CLIENT_ID: ${{ secrets.NOVERO_MICROSOFT_CLIENT_ID }}
+          # Lets these test builds update from the releases (docs/releasing.md).
+          NOVERO_UPDATER_PUBKEY: ${{ vars.NOVERO_UPDATER_PUBKEY }}
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:
           name: windows-installers
-          path: |
-            target/release/bundle/msi/*.msi
-            target/release/bundle/nsis/*.exe
+          path: target/release/bundle/nsis/*.exe
           if-no-files-found: error

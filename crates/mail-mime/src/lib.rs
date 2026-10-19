@@ -7,6 +7,7 @@
 
 mod compose;
 mod html;
+mod mailto;
 mod parse;
 
 pub use compose::{
@@ -15,6 +16,7 @@ pub use compose::{
 };
 pub use html::{SanitizedHtml, sanitize_html};
 pub use mail_core::{Error, Result};
+pub use mailto::parse_mailto;
 pub use parse::{
     AttachmentInfo, ParsedMessage, bracketed, parse_header_fields, parse_message, search_text,
 };

@@ -2,8 +2,11 @@
 
 mod commands;
 mod compose;
+mod crash;
+mod links;
 mod settings;
 mod state;
+mod updates;
 
 use std::time::Duration;
 
@@ -15,14 +18,32 @@ const SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
+        // Starting the app again (say, from a mailto: link) focuses the open
+        // window instead, handing it the link.
+        .plugin(tauri_plugin_single_instance::init(
+            |app, args, _cwd| match links::from_args(args) {
+                Some(link) => links::opened(app, link),
+                None => links::show(app),
+            },
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+    if let Some(updater) = updates::plugin() {
+        builder = builder.plugin(updater);
+    }
+    builder
         .setup(|app| {
             let dir = app.path().app_local_data_dir()?;
+            crash::install(crash::folder(&dir));
             let state = state::AppState::open(&dir)?;
             app.manage(state);
+            app.manage(links::PendingLink::default());
+            if let Some(link) = links::from_args(std::env::args()) {
+                links::opened(app.handle(), link);
+            }
+            updates::start(app.handle());
 
             let handle = app.handle().clone();
             state::start_all(&handle);
@@ -55,6 +76,7 @@ pub fn run() {
             commands::archive_messages,
             commands::delete_messages,
             compose::new_draft,
+            compose::mailto_draft,
             compose::reply_draft,
             compose::forward_draft,
             compose::open_draft,
@@ -71,6 +93,15 @@ pub fn run() {
             settings::get_settings,
             settings::save_settings,
             settings::set_signature,
+            links::take_mailto,
+            links::open_default_apps,
+            crash::crash_report,
+            crash::discard_crash_report,
+            crash::send_crash_report,
+            updates::updates_available,
+            updates::check_for_update,
+            updates::ready_update,
+            updates::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Novero Mail");

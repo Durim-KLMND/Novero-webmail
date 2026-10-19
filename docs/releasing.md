@@ -1,0 +1,111 @@
+# Releasing Novero Mail
+
+Releases are GitHub releases built by `.github/workflows/release.yml` when a version tag is
+pushed. Each one carries the Windows installer and a `latest.json` update manifest. Installed
+copies read that manifest and offer the update ("Version x is ready · Restart to update").
+
+## Channels
+
+| Channel | Tags | Who gets it |
+| --- | --- | --- |
+| Stable | `v0.2.0` | Everyone (the default in Settings) |
+| Beta | `v0.2.0-beta.1` | People who pick **Beta** under Settings → Updates |
+
+Stable copies read the manifest of the newest stable release
+(`releases/latest/download/latest.json`). Beta copies read the manifest on the `beta-channel`
+release, which every release replaces, so beta users also get stable releases. Beta releases
+are marked as pre-releases on GitHub, so they never show as the latest release.
+
+## One-time setup
+
+### 1. Update signing key (required)
+
+Every installer is signed with a key that only the release workflow has. Installed copies hold
+the public half and refuse any update that wasn't signed with it, so a release can't be
+replaced by someone who only gets hold of the download link.
+
+On your own computer, in `apps/desktop`:
+
+```sh
+npx tauri signer generate -w novero-updater.key
+```
+
+Choose a password when asked. This writes `novero-updater.key` (private) and
+`novero-updater.key.pub` (public). Then in the repository, under **Settings → Secrets and
+variables → Actions**:
+
+- **Secrets** tab → **New repository secret**:
+  - `TAURI_SIGNING_PRIVATE_KEY`: the whole contents of `novero-updater.key`
+  - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password you chose
+- **Variables** tab → **New repository variable**:
+  - `NOVERO_UPDATER_PUBKEY`: the whole contents of `novero-updater.key.pub`
+
+Keep `novero-updater.key` and its password somewhere safe outside the repository, such as a
+password manager. If it is lost, installed copies can't be updated any more and everyone has to
+download a new installer by hand.
+
+Builds without `NOVERO_UPDATER_PUBKEY` (local builds, forks) don't look for updates; Settings
+says so.
+
+### 2. Code signing (recommended before a public release)
+
+Unsigned installers work, but Windows SmartScreen warns "Windows protected your PC" until a file
+has built up reputation. A code-signing certificate removes that. The workflow supports
+[Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/), the cheapest
+option (a monthly fee, no hardware token):
+
+1. Create a Trusted Signing account and a certificate profile in the Azure portal (the identity
+   validation takes a few days).
+2. Create an app registration in Microsoft Entra with a client secret, and give it the
+   **Trusted Signing Certificate Profile Signer** role on the signing account.
+3. Add these to the repository:
+   - Secrets: `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`
+   - Variables: `AZURE_SIGNING_ENDPOINT` (for example `https://eus.codesigning.azure.net`),
+     `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`
+
+Without them the workflow still releases, unsigned, with a warning in the run summary.
+
+## Making a release
+
+1. From an up-to-date `main`, set the version and open a pull request with it:
+
+   ```sh
+   node scripts/set-version.mjs 0.2.0-beta.2   # or 0.2.0 for stable
+   ```
+
+   This changes `Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `package.json` and
+   `package-lock.json`. CI checks they agree.
+2. Once it is merged, tag that commit and push the tag:
+
+   ```sh
+   git checkout main && git pull
+   git tag v0.2.0-beta.2
+   git push origin v0.2.0-beta.2
+   ```
+
+   Or on GitHub: **Releases → Draft a new release → Choose a tag**, type the new tag (it is
+   created on `main`), write notes if you like, tick **Set as a pre-release** for a beta, and
+   publish. The workflow adds the installer to that release.
+3. Watch the **Release** run under **Actions**. It checks the tag matches the app version,
+   builds and signs the installer, publishes the release with notes generated from the merged
+   pull requests, and updates the channel manifests.
+
+Copies that download updates automatically find the release within six hours, or straight
+away with **Check now** in Settings.
+
+## Trying an update before release
+
+`NOVERO_UPDATE_ENDPOINT` makes an installed copy read a manifest from somewhere else, such as a
+`latest.json` from a release's assets saved on a local web server. The installer it points to
+must still be signed with the update key.
+
+## Also in a release
+
+- **Crash reports.** A crash writes a short report (where the code failed, without addresses,
+  quoted text or the user's name) to the app's data folder. On the next start the app offers to
+  send it, which opens a prefilled GitHub issue in the browser; nothing is sent otherwise.
+  Settings has a switch to stop asking.
+- **Default email app.** The installer registers Novero Mail with Windows as an email app.
+  Windows doesn't let apps make themselves the default, so Settings has a button that opens
+  **Default apps**, where the person picks Novero Mail for email links. Clicked `mailto:` links
+  then open a new message from the selected account.

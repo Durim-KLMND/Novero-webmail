@@ -3,7 +3,7 @@
 //! and IDLE on the inbox.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -34,6 +34,8 @@ const RETRY_MAX: Duration = Duration::from_secs(5 * 60);
 const TOKEN_MARGIN: i64 = 5 * 60;
 
 pub struct AppState {
+    /// The app's data folder: the database, cached mail and crash reports.
+    pub data_dir: PathBuf,
     pub store: Arc<Mutex<Store>>,
     pub secrets: Arc<dyn SecretStore>,
     /// Accounts with a sync running, and the follow-up sync requested meanwhile:
@@ -57,6 +59,7 @@ struct Worker {
 impl AppState {
     pub fn open(dir: &Path) -> Result<Self> {
         Ok(Self {
+            data_dir: dir.to_owned(),
             store: Arc::new(Mutex::new(Store::open(dir)?)),
             secrets: mail_auth::platform_store(),
             syncing: Mutex::new(HashMap::new()),
