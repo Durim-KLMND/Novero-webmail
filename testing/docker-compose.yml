@@ -1,0 +1,12 @@
+# Local mail servers for integration tests:
+#   docker compose -f testing/docker-compose.yml up -d --build --wait
+services:
+  imap:
+    build: ./imap-server
+    ports:
+      - "1143:143"
+    healthcheck:
+      test: ["CMD-SHELL", "doveadm mailbox list -u alice | grep -q INBOX"]
+      interval: 2s
+      timeout: 5s
+      retries: 15

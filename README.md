@@ -43,11 +43,29 @@ cargo test --workspace   # needs apps/desktop/dist: run `npm run build` once fir
 cargo deny check         # licenses, advisories, sources (install with `cargo install cargo-deny`)
 ```
 
+## Integration tests
+
+`testing/` holds a Dovecot IMAP server with a seeded mailbox (user `alice`, password `secret`,
+150 messages in INBOX, SPECIAL-USE folders). It needs Docker.
+
+```sh
+docker compose -f testing/docker-compose.yml up -d --build --wait
+cargo test -p mail-sync -- --ignored
+docker compose -f testing/docker-compose.yml down
+```
+
+To check the TLS path against a real server (bad credentials on purpose; success is a refused login):
+
+```sh
+cargo run -p mail-sync --example tls_probe -- imap.gmail.com
+```
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
 
 - **Frontend**: `svelte-check` and a production build.
 - **Rust**: `cargo fmt --check`, `cargo clippy` with warnings as errors, and the workspace tests on Linux.
+- **Integration**: starts the Dovecot test server and runs the IMAP tests against it.
 - **Dependencies**: `cargo deny check` against `deny.toml`.
 - **Windows**: workspace tests and an unsigned MSI and NSIS installer build. Pushes to `main` upload the installers as a build artifact.
