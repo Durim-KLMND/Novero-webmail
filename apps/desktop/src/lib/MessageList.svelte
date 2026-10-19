@@ -246,7 +246,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--accent-ink);
     flex: none;
   }
   .empty {
