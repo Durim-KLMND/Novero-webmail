@@ -118,4 +118,6 @@ offers app passwords for Gmail and can't add Outlook.com or Microsoft 365 accoun
 - **Rust**: `cargo fmt --check`, `cargo clippy` with warnings as errors, and the workspace tests on Linux.
 - **Integration**: starts the Dovecot test server and runs the IMAP tests against it.
 - **Dependencies**: `cargo deny check` against `deny.toml`.
-- **Windows**: workspace tests and an unsigned MSI and NSIS installer build. Pushes to `main` upload the installers as a build artifact.
+- **Windows**: workspace tests. Pushes to `main` also build the unsigned MSI and NSIS installers and upload them as a build artifact; pull requests skip that build, since it takes most of the job. To get installers for a branch, run the workflow on it by hand (**Actions → CI → Run workflow**).
+
+Pull requests reuse the build cache from `main` but don't save their own, which saves several minutes per run.

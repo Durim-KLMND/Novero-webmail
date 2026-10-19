@@ -54,6 +54,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo test --workspace --locked
@@ -67,6 +69,8 @@ jobs:
         run: docker compose -f testing/docker-compose.yml up -d --build --wait
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test -p mail-sync --locked -- --ignored
       - run: cargo test -p mail-send --locked -- --ignored
       - run: cargo test -p mail-auth --locked -- --ignored
@@ -95,6 +99,8 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
@@ -102,7 +108,10 @@ jobs:
         working-directory: apps/desktop
         run: npm run build
       - run: cargo test --workspace --locked
+      # The release build takes most of this job, so pull requests skip it;
+      # pushes to main still build and upload the installers.
       - name: Build MSI and NSIS installers (unsigned)
+        if: github.event_name != 'pull_request'
         working-directory: apps/desktop
         run: npx tauri build --ci
         # Google and Microsoft sign-in, when the repository has these secrets
@@ -112,7 +121,7 @@ jobs:
           NOVERO_GOOGLE_CLIENT_SECRET: ${{ secrets.NOVERO_GOOGLE_CLIENT_SECRET }}
           NOVERO_MICROSOFT_CLIENT_ID: ${{ secrets.NOVERO_MICROSOFT_CLIENT_ID }}
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         with:
           name: windows-installers
           path: |

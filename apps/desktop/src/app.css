@@ -172,3 +172,29 @@ button:focus-visible {
     transform: rotate(360deg);
   }
 }
+
+progress {
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border: none;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar {
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+
+progress::-webkit-progress-value {
+  background: var(--accent-ink);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+progress::-moz-progress-bar {
+  background: var(--accent-ink);
+  border-radius: 3px;
+}

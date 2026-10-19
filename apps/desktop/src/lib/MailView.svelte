@@ -119,6 +119,7 @@
         queued: 0,
         failed: 0,
         outboxError: null,
+        progress: null,
       }
     );
   }
@@ -151,6 +152,20 @@
     }
   });
 
+  /** Downloads of fewer items than this show no progress bar. */
+  const PROGRESS_FROM = 50;
+
+  /** The progress bar over the message list: the shown account's sync, or
+   *  any account's in lists that mix them. */
+  const listProgress = $derived.by(() => {
+    const ids = mailbox?.kind === "folder" && selectedFolder ? [selectedFolder.accountId] : accounts.map((a) => a.id);
+    for (const id of ids) {
+      const s = syncState[id];
+      if (s?.running && s.progress) return s.progress;
+    }
+    return null;
+  });
+
   // Refresh at most every 700 ms while a sync streams in.
   const pending = new Set<number>();
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -170,13 +185,17 @@
   const unlisten = onMailEvent((e: MailEvent) => {
     const current = stateOf(e.account);
     if (e.type === "syncStarted") {
-      syncState[e.account] = { ...current, running: true, error: null, detail: "Checking for mail…" };
+      syncState[e.account] = { ...current, running: true, error: null, detail: "Checking for mail…", progress: null };
     } else if (e.type === "syncProgress") {
       const detail = e.total > 0 ? `${e.folder}: ${e.done.toLocaleString()} of ${e.total.toLocaleString()}` : `Checking ${e.folder}…`;
       syncState[e.account] = { ...current, running: true, detail };
       if (e.done > 0) scheduleRefresh(e.account);
+    } else if (e.type === "accountProgress") {
+      // A handful of new messages is quick; a bar is for real downloads.
+      const progress = e.total >= PROGRESS_FROM ? { stage: e.stage, done: e.done, total: e.total } : null;
+      syncState[e.account] = { ...current, progress };
     } else if (e.type === "syncFinished") {
-      syncState[e.account] = { ...current, running: false, error: e.error, detail: "" };
+      syncState[e.account] = { ...current, running: false, error: e.error, detail: "", progress: null };
       scheduleRefresh(e.account);
     } else if (e.type === "pendingChanges") {
       syncState[e.account] = { ...current, pending: e.pending, pendingError: e.error };
@@ -444,6 +463,7 @@
     title={listTitle}
     {emptyText}
     unit={settings.conversations ? "conversation" : "message"}
+    progress={listProgress}
     version={listVersion}
     {place}
     selected={selected?.id ?? null}

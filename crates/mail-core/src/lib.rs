@@ -337,6 +337,16 @@ impl Op {
     }
 }
 
+/// The parts of an account sync that report progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncStage {
+    /// Downloading the message list (headers) of every folder.
+    Messages,
+    /// Downloading recent messages in full so search covers their text.
+    Bodies,
+}
+
 /// Events the core sends to the UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -348,6 +358,14 @@ pub enum Event {
     SyncProgress {
         account: AccountId,
         folder: String,
+        done: u32,
+        total: u32,
+    },
+    /// The whole account's progress during a sync: `done` of `total` items in
+    /// the current stage. Sent only when the stage has work to do.
+    AccountProgress {
+        account: AccountId,
+        stage: SyncStage,
         done: u32,
         total: u32,
     },
