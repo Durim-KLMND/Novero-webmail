@@ -1,13 +1,15 @@
-//! A thin IMAP session over `async-imap`: connect, log in, list, select, fetch.
+//! A thin IMAP session over `async-imap`: connect, log in, list, select, fetch,
+//! change flags, move, delete and IDLE.
 
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_imap::types::{Fetch, Flag, NameAttribute};
+use async_imap::extensions::idle::IdleResponse;
+use async_imap::types::{Capabilities, Fetch, Flag, NameAttribute};
 use futures::TryStreamExt;
 use mail_core::{
-    Endpoint, Error, Flags, FolderRole, MessageHeader, RemoteFolder, Result, Security,
+    Endpoint, Error, FlagKind, Flags, FolderRole, MessageHeader, RemoteFolder, Result, Security,
 };
 use rustls::pki_types::ServerName;
 use rustls_platform_verifier::BuilderVerifierExt;
@@ -29,6 +31,7 @@ type Stream = Box<dyn Transport>;
 /// A logged-in IMAP session.
 pub struct ImapSession {
     session: async_imap::Session<Stream>,
+    caps: Capabilities,
 }
 
 /// Sync state of a selected folder.
@@ -67,11 +70,17 @@ impl ImapSession {
             }
         };
 
-        let session = client
+        let mut session = client
             .login(username, password)
             .await
             .map_err(|(e, _)| Error::Auth(e.to_string()))?;
-        Ok(Self { session })
+        let caps = session.capabilities().await.map_err(protocol)?;
+        Ok(Self { session, caps })
+    }
+
+    /// Whether the server advertised a capability, e.g. `CONDSTORE` or `MOVE`.
+    pub fn has(&self, capability: &str) -> bool {
+        self.caps.has_str(capability)
     }
 
     /// Lists every folder, with its role from SPECIAL-USE when the server reports one.
@@ -95,9 +104,15 @@ impl ImapSession {
             .collect())
     }
 
-    /// Selects `folder` and returns its sync state.
+    /// Selects `folder` and returns its sync state. With CONDSTORE the status
+    /// carries HIGHESTMODSEQ, so flag changes can be fetched incrementally.
     pub async fn select(&mut self, folder: &str) -> Result<FolderStatus> {
-        let mailbox = self.session.select(folder).await.map_err(protocol)?;
+        let mailbox = if self.has("CONDSTORE") {
+            self.session.select_condstore(folder).await
+        } else {
+            self.session.select(folder).await
+        }
+        .map_err(protocol)?;
         Ok(FolderStatus {
             exists: mailbox.exists,
             uid_validity: mailbox.uid_validity,
@@ -154,6 +169,119 @@ impl ImapSession {
         let mut headers: Vec<_> = fetched.iter().filter_map(header).collect();
         headers.sort_by_key(|h| std::cmp::Reverse(h.uid));
         Ok(headers)
+    }
+
+    /// Flags of messages in the selected folder. With `changed_since` (CONDSTORE)
+    /// only messages whose flags changed after that mod-sequence are returned.
+    pub async fn fetch_flags(
+        &mut self,
+        uid_set: &str,
+        changed_since: Option<u64>,
+    ) -> Result<Vec<(u32, Flags)>> {
+        let query = match changed_since {
+            Some(modseq) => format!("(UID FLAGS) (CHANGEDSINCE {modseq})"),
+            None => "(UID FLAGS)".to_owned(),
+        };
+        let fetched: Vec<Fetch> = self
+            .session
+            .uid_fetch(uid_set, query)
+            .await
+            .map_err(protocol)?
+            .try_collect()
+            .await
+            .map_err(protocol)?;
+        Ok(fetched
+            .iter()
+            .filter_map(|f| Some((f.uid?, flags(f.flags()))))
+            .collect())
+    }
+
+    /// Sets or clears a flag on messages in the selected folder.
+    pub async fn set_flag(&mut self, uid_set: &str, flag: FlagKind, value: bool) -> Result<()> {
+        let sign = if value { '+' } else { '-' };
+        self.store(
+            uid_set,
+            &format!("{sign}FLAGS.SILENT ({})", flag.imap_name()),
+        )
+        .await
+    }
+
+    /// Moves messages from the selected folder to `to`. Uses MOVE (RFC 6851)
+    /// when offered, otherwise COPY, flag deleted and expunge.
+    pub async fn move_uids(&mut self, uid_set: &str, to: &str) -> Result<()> {
+        if self.has("MOVE") {
+            return self.session.uid_mv(uid_set, to).await.map_err(protocol);
+        }
+        self.session.uid_copy(uid_set, to).await.map_err(protocol)?;
+        self.expunge_uids(uid_set).await
+    }
+
+    /// Deletes messages in the selected folder permanently. Without UIDPLUS a
+    /// plain EXPUNGE also removes other messages already flagged deleted.
+    pub async fn expunge_uids(&mut self, uid_set: &str) -> Result<()> {
+        self.store(uid_set, "+FLAGS.SILENT (\\Deleted)").await?;
+        if self.has("UIDPLUS") {
+            let _: Vec<_> = self
+                .session
+                .uid_expunge(uid_set)
+                .await
+                .map_err(protocol)?
+                .try_collect()
+                .await
+                .map_err(protocol)?;
+        } else {
+            let _: Vec<_> = self
+                .session
+                .expunge()
+                .await
+                .map_err(protocol)?
+                .try_collect()
+                .await
+                .map_err(protocol)?;
+        }
+        Ok(())
+    }
+
+    /// Adds a message to `folder`, e.g. a sent copy or a draft.
+    pub async fn append(&mut self, folder: &str, flags: Option<&str>, raw: &[u8]) -> Result<()> {
+        self.session
+            .append(folder, flags, None, raw)
+            .await
+            .map_err(protocol)
+    }
+
+    pub async fn create_folder(&mut self, name: &str) -> Result<()> {
+        self.session.create(name).await.map_err(protocol)
+    }
+
+    pub async fn delete_folder(&mut self, name: &str) -> Result<()> {
+        self.session.delete(name).await.map_err(protocol)
+    }
+
+    /// Waits in IDLE (RFC 2177) on the selected folder until the server reports
+    /// a change or `wait` passes. Returns the session and whether something changed.
+    pub async fn idle(self, wait: Duration) -> Result<(Self, bool)> {
+        let caps = self.caps;
+        let mut handle = self.session.idle();
+        handle.init().await.map_err(protocol)?;
+        let changed = {
+            let (event, _stop) = handle.wait_with_timeout(wait);
+            matches!(event.await.map_err(protocol)?, IdleResponse::NewData(_))
+        };
+        let session = handle.done().await.map_err(protocol)?;
+        Ok((Self { session, caps }, changed))
+    }
+
+    async fn store(&mut self, uid_set: &str, query: &str) -> Result<()> {
+        let _: Vec<Fetch> = self
+            .session
+            .uid_store(uid_set, query)
+            .await
+            .map_err(protocol)?
+            .try_collect()
+            .await
+            .map_err(protocol)?;
+        Ok(())
     }
 
     /// The full raw message. Uses BODY.PEEK so the server does not mark it read.
@@ -214,8 +342,43 @@ async fn tls(host: &str, tcp: TcpStream) -> Result<tokio_rustls::client::TlsStre
         .map_err(|e| Error::Network(format!("secure connection to {host} failed: {e}")))
 }
 
+/// Sorts IMAP errors into the kinds callers act on: a lost connection is
+/// retried later, a refusal is final.
 fn protocol(err: async_imap::error::Error) -> Error {
-    Error::Protocol(err.to_string())
+    use async_imap::error::Error as E;
+    match err {
+        E::Io(e) => Error::Network(e.to_string()),
+        E::ConnectionLost => Error::Network("connection lost".into()),
+        E::No(reason) => Error::Rejected(reason),
+        other => Error::Protocol(other.to_string()),
+    }
+}
+
+/// Writes UIDs as a compact IMAP set, e.g. `[1, 2, 3, 7]` as `1:3,7`.
+pub fn uid_set(uids: &[u32]) -> String {
+    let mut sorted = uids.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let start = sorted[i];
+        let mut end = start;
+        while i + 1 < sorted.len() && sorted[i + 1] == end + 1 {
+            i += 1;
+            end = sorted[i];
+        }
+        if !out.is_empty() {
+            out.push(',');
+        }
+        if start == end {
+            out.push_str(&start.to_string());
+        } else {
+            out.push_str(&format!("{start}:{end}"));
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Maps a LIST response to a folder role. INBOX is matched by name (RFC 3501 says it is
@@ -287,6 +450,13 @@ mod tests {
             FolderRole::Trash
         );
         assert_eq!(folder_role("Projects", &[]), FolderRole::Other);
+    }
+
+    #[test]
+    fn uid_sets_collapse_runs() {
+        assert_eq!(uid_set(&[7, 1, 2, 3, 3, 10, 11]), "1:3,7,10:11");
+        assert_eq!(uid_set(&[5]), "5");
+        assert_eq!(uid_set(&[]), "");
     }
 
     #[test]

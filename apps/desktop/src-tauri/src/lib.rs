@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use tauri::Manager;
 
-/// How often every account is synced in the background. IDLE push replaces this in phase 2.
+/// How often every folder of every account is synced. The inbox also gets
+/// new mail right away through IDLE when the server supports it.
 const SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -21,8 +22,10 @@ pub fn run() {
             app.manage(state);
 
             let handle = app.handle().clone();
+            state::start_all(&handle);
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(SYNC_INTERVAL);
+                ticker.tick().await;
                 loop {
                     ticker.tick().await;
                     state::sync_all(&handle);
@@ -40,6 +43,11 @@ pub fn run() {
             commands::list_messages,
             commands::open_message,
             commands::sync_account,
+            commands::pending_changes,
+            commands::set_flag,
+            commands::move_messages,
+            commands::archive_messages,
+            commands::delete_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Novero Mail");

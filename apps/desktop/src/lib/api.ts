@@ -89,10 +89,14 @@ export interface NewAccountInput {
   smtp: Endpoint;
 }
 
+export type FlagKind = "seen" | "flagged";
+
 export type MailEvent =
   | { type: "syncStarted"; account: number }
   | { type: "syncProgress"; account: number; folder: string; done: number; total: number }
-  | { type: "syncFinished"; account: number; error: string | null };
+  | { type: "syncFinished"; account: number; error: string | null }
+  | { type: "pendingChanges"; account: number; pending: number; error: string | null }
+  | { type: "mailboxChanged"; account: number };
 
 export const api = {
   providerPreset: (email: string) => invoke<ProviderPreset | null>("provider_preset", { email }),
@@ -105,6 +109,11 @@ export const api = {
   openMessage: (id: number, allowRemote: boolean) =>
     invoke<ParsedMessage>("open_message", { id, allowRemote }),
   syncAccount: (account: number) => invoke<void>("sync_account", { account }),
+  pendingChanges: (account: number) => invoke<number>("pending_changes", { account }),
+  setFlag: (ids: number[], flag: FlagKind, value: boolean) => invoke<void>("set_flag", { ids, flag, value }),
+  moveMessages: (ids: number[], folder: number) => invoke<void>("move_messages", { ids, folder }),
+  archiveMessages: (ids: number[]) => invoke<void>("archive_messages", { ids }),
+  deleteMessages: (ids: number[]) => invoke<void>("delete_messages", { ids }),
 };
 
 export function onMailEvent(handler: (event: MailEvent) => void): Promise<UnlistenFn> {

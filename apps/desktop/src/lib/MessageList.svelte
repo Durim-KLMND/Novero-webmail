@@ -7,9 +7,11 @@
     /** Bumped when the folder's contents may have changed. */
     version: number;
     selected: number | null;
-    onSelect: (id: number) => void;
+    onSelect: (item: MessageSummary) => void;
+    /** The Delete key on the selected message. */
+    onDelete: () => void;
   }
-  let { folder, version, selected, onSelect }: Props = $props();
+  let { folder, version, selected, onSelect, onDelete }: Props = $props();
 
   const ROW = 64;
   const PAGE = 100;
@@ -91,14 +93,30 @@
     return -1;
   }
 
+  /** The message to select once `id` leaves the list: the next one, else the previous. */
+  export function neighbour(id: number): MessageSummary | null {
+    for (const [page, items] of Object.entries(pages)) {
+      const i = items.findIndex((m) => m.id === id);
+      if (i < 0) continue;
+      const index = Number(page) * PAGE + i;
+      return itemAt(index + 1) ?? itemAt(index - 1) ?? null;
+    }
+    return null;
+  }
+
   function onKey(event: KeyboardEvent) {
+    if (event.key === "Delete" && selected != null) {
+      event.preventDefault();
+      onDelete();
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     const current = indexOfSelected();
     const next = Math.min(total - 1, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
     const item = itemAt(next);
     if (!item || !listEl) return;
-    onSelect(item.id);
+    onSelect(item);
     const top = next * ROW;
     if (top < listEl.scrollTop) listEl.scrollTop = top;
     else if (top + ROW > listEl.scrollTop + listEl.clientHeight) listEl.scrollTop = top + ROW - listEl.clientHeight;
@@ -138,7 +156,7 @@
                 class:active={item.id === selected}
                 role="option"
                 aria-selected={item.id === selected}
-                onclick={() => onSelect(item.id)}
+                onclick={() => onSelect(item)}
                 tabindex="-1"
               >
                 <span class="line1">
@@ -248,6 +266,9 @@
     border-radius: 50%;
     background: var(--accent-ink);
     flex: none;
+  }
+  .flag {
+    color: var(--accent-ink);
   }
   .empty {
     padding: 24px 16px;

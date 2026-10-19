@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use mail_core::{Endpoint, Event, FolderRole, NewAccount, Security};
 use mail_store::Store;
-use mail_sync::{ImapSession, fetch_message, sync_account};
+use mail_sync::{ImapSession, Scope, fetch_message, sync_account};
 
 fn endpoint() -> Endpoint {
     Endpoint {
@@ -107,7 +107,7 @@ async fn full_sync_fills_every_folder_and_a_second_sync_adds_nothing() {
     let (store, account) = store_with_alice(dir.path());
 
     let events = Mutex::new(Vec::new());
-    sync_account(&store, &account, "secret", |e| {
+    sync_account(&store, &account, "secret", Scope::All, |e| {
         events.lock().unwrap().push(e)
     })
     .await
@@ -129,7 +129,7 @@ async fn full_sync_fills_every_folder_and_a_second_sync_adds_nothing() {
     }));
 
     let again = Mutex::new(Vec::new());
-    sync_account(&store, &account, "secret", |e| {
+    sync_account(&store, &account, "secret", Scope::All, |e| {
         again.lock().unwrap().push(e)
     })
     .await
@@ -167,7 +167,7 @@ async fn interrupted_sync_is_completed_next_time() {
         inbox
     };
 
-    sync_account(&store, &account, "secret", |_| {})
+    sync_account(&store, &account, "secret", Scope::All, |_| {})
         .await
         .unwrap();
     assert_eq!(
@@ -181,7 +181,7 @@ async fn interrupted_sync_is_completed_next_time() {
 async fn opening_a_message_fetches_and_caches_its_body() {
     let dir = tempfile::tempdir().unwrap();
     let (store, account) = store_with_alice(dir.path());
-    sync_account(&store, &account, "secret", |_| {})
+    sync_account(&store, &account, "secret", Scope::All, |_| {})
         .await
         .unwrap();
 

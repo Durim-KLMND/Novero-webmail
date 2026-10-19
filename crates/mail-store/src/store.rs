@@ -3,9 +3,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use std::collections::HashSet;
+
 use mail_core::{
     Account, AccountId, Endpoint, Error, Flags, FolderId, FolderRole, MessageHeader, NewAccount,
-    RemoteFolder, Result, Security,
+    Op, RemoteFolder, Result, Security,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::Serialize;
@@ -35,9 +37,32 @@ pub struct Folder {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FolderState {
     pub uid_validity: Option<u32>,
+    pub uid_next: Option<u32>,
+    pub highest_modseq: Option<u64>,
     pub min_uid: u32,
     pub max_uid: u32,
     pub count: u32,
+}
+
+/// Where a message lives, as the operation queue needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageLocation {
+    pub id: i64,
+    pub account_id: AccountId,
+    pub folder_id: FolderId,
+    pub folder_name: String,
+    pub folder_role: FolderRole,
+    pub uid_validity: Option<u32>,
+    pub uid: u32,
+    pub flags: Flags,
+}
+
+/// A queued operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedOp {
+    pub id: i64,
+    pub op: Op,
+    pub attempts: u32,
 }
 
 /// One row in the message list.
@@ -240,25 +265,82 @@ impl Store {
     pub fn folder_state(&self, folder: FolderId) -> Result<FolderState> {
         self.conn
             .query_row(
-                "SELECT f.uidvalidity, coalesce(min(m.uid), 0), coalesce(max(m.uid), 0), count(m.id) \
+                "SELECT f.uidvalidity, f.uidnext, f.highestmodseq, coalesce(min(m.uid), 0), \
+                 coalesce(max(m.uid), 0), count(m.id) \
                  FROM folders f LEFT JOIN messages m ON m.folder_id = f.id WHERE f.id = ?1",
                 [folder.0],
                 |r| {
                     Ok(FolderState {
                         uid_validity: r.get(0)?,
-                        min_uid: r.get(1)?,
-                        max_uid: r.get(2)?,
-                        count: r.get(3)?,
+                        uid_next: r.get(1)?,
+                        highest_modseq: r.get::<_, Option<i64>>(2)?.map(|m| m as u64),
+                        min_uid: r.get(3)?,
+                        max_uid: r.get(4)?,
+                        count: r.get(5)?,
                     })
                 },
             )
             .map_err(storage)
     }
 
-    /// Discards a folder's cached messages, for when the server's UIDVALIDITY changed.
+    /// One folder with its counts.
+    pub fn folder(&self, id: FolderId) -> Result<Option<Folder>> {
+        let account: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT account_id FROM folders WHERE id = ?1",
+                [id.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?;
+        Ok(match account {
+            Some(account) => self
+                .list_folders(AccountId(account))?
+                .into_iter()
+                .find(|f| f.id == id),
+            None => None,
+        })
+    }
+
+    /// Looks up a folder of an account by its server name.
+    pub fn folder_id(&self, account: AccountId, name: &str) -> Result<Option<FolderId>> {
+        self.conn
+            .query_row(
+                "SELECT id FROM folders WHERE account_id = ?1 AND name = ?2",
+                params![account.0, name],
+                |r| r.get(0).map(FolderId),
+            )
+            .optional()
+            .map_err(storage)
+    }
+
+    /// The server name of the account's folder with `role`, if it has one.
+    pub fn folder_with_role(&self, account: AccountId, role: FolderRole) -> Result<Option<String>> {
+        let Some(role) = role.as_str() else {
+            return Ok(None);
+        };
+        self.conn
+            .query_row(
+                "SELECT name FROM folders WHERE account_id = ?1 AND role = ?2 ORDER BY id LIMIT 1",
+                params![account.0, role],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)
+    }
+
+    /// Discards a folder's cached messages and sync state, for when the server's
+    /// UIDVALIDITY changed.
     pub fn reset_folder(&self, account: AccountId, folder: FolderId) -> Result<()> {
         self.conn
             .execute("DELETE FROM messages WHERE folder_id = ?1", [folder.0])
+            .map_err(storage)?;
+        self.conn
+            .execute(
+                "UPDATE folders SET uidnext = NULL, highestmodseq = NULL WHERE id = ?1",
+                [folder.0],
+            )
             .map_err(storage)?;
         remove_dir(&self.folder_dir(account, folder))
     }
@@ -268,14 +350,75 @@ impl Store {
         folder: FolderId,
         uid_validity: Option<u32>,
         uid_next: Option<u32>,
+        highest_modseq: Option<u64>,
     ) -> Result<()> {
         self.conn
             .execute(
-                "UPDATE folders SET uidvalidity = ?2, uidnext = ?3, last_sync = unixepoch() WHERE id = ?1",
-                params![folder.0, uid_validity, uid_next],
+                "UPDATE folders SET uidvalidity = ?2, uidnext = ?3, highestmodseq = ?4, \
+                 last_sync = unixepoch() WHERE id = ?1",
+                params![
+                    folder.0,
+                    uid_validity,
+                    uid_next,
+                    highest_modseq.map(|m| m as i64)
+                ],
             )
             .map_err(storage)?;
         Ok(())
+    }
+
+    /// UIDs cached for a folder, ascending.
+    pub fn local_uids(&self, folder: FolderId) -> Result<Vec<u32>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT uid FROM messages WHERE folder_id = ?1 ORDER BY uid")
+            .map_err(storage)?;
+        stmt.query_map([folder.0], |r| r.get(0))
+            .map_err(storage)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(storage)
+    }
+
+    /// Drops messages the server no longer has, with their files.
+    pub fn remove_uids(
+        &mut self,
+        account: AccountId,
+        folder: FolderId,
+        uids: &[u32],
+    ) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.transaction().map_err(storage)?;
+        {
+            let mut stmt = tx
+                .prepare("DELETE FROM messages WHERE folder_id = ?1 AND uid = ?2")
+                .map_err(storage)?;
+            for uid in uids {
+                stmt.execute(params![folder.0, uid]).map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)?;
+        let dir = self.folder_dir(account, folder);
+        for uid in uids {
+            let _ = fs::remove_file(dir.join(format!("{uid}.eml")));
+        }
+        Ok(())
+    }
+
+    /// Replaces the flags of cached messages, as the server reported them.
+    pub fn update_flags(&mut self, folder: FolderId, flags: &[(u32, Flags)]) -> Result<()> {
+        let tx = self.conn.transaction().map_err(storage)?;
+        {
+            let mut stmt = tx
+                .prepare("UPDATE messages SET flags = ?3 WHERE folder_id = ?1 AND uid = ?2")
+                .map_err(storage)?;
+            for (uid, f) in flags {
+                stmt.execute(params![folder.0, uid, f.to_bits()])
+                    .map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)
     }
 
     // Messages
@@ -403,12 +546,139 @@ impl Store {
         Ok(path)
     }
 
-    /// Marks a message read locally. Telling the server is phase 2.
-    pub fn mark_seen(&self, message: i64) -> Result<()> {
+    /// Where each message lives, for building operations. Unknown ids are skipped.
+    pub fn locate(&self, messages: &[i64]) -> Result<Vec<MessageLocation>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT m.id, f.account_id, f.id, f.name, f.role, f.uidvalidity, m.uid, m.flags \
+                 FROM messages m JOIN folders f ON f.id = m.folder_id WHERE m.id = ?1",
+            )
+            .map_err(storage)?;
+        let mut out = Vec::with_capacity(messages.len());
+        for id in messages {
+            let found = stmt
+                .query_row([id], |r| {
+                    Ok(MessageLocation {
+                        id: r.get(0)?,
+                        account_id: AccountId(r.get(1)?),
+                        folder_id: FolderId(r.get(2)?),
+                        folder_name: r.get(3)?,
+                        folder_role: FolderRole::parse(r.get::<_, Option<String>>(4)?.as_deref()),
+                        uid_validity: r.get(5)?,
+                        uid: r.get(6)?,
+                        flags: Flags::from_bits(r.get(7)?),
+                    })
+                })
+                .optional()
+                .map_err(storage)?;
+            out.extend(found);
+        }
+        Ok(out)
+    }
+
+    /// Applies `op` to the cache right away and queues it for the server.
+    /// Moved and deleted messages leave the cache; a move shows up in the
+    /// target folder after the server has done it and that folder syncs.
+    pub fn apply_op(&mut self, account: AccountId, op: &Op) -> Result<i64> {
+        let folder = self
+            .folder_id(account, op.folder())?
+            .ok_or_else(|| Error::Storage(format!("folder {} is not cached", op.folder())))?;
+        let payload = serde_json::to_string(op).map_err(|e| Error::Storage(e.to_string()))?;
+        let tx = self.conn.transaction().map_err(storage)?;
+        {
+            let mut stmt = match op {
+                Op::SetFlag { flag, value, .. } => {
+                    let sql = if *value {
+                        format!("UPDATE messages SET flags = flags | {} WHERE folder_id = ?1 AND uid = ?2", flag.bit())
+                    } else {
+                        format!("UPDATE messages SET flags = flags & ~{} WHERE folder_id = ?1 AND uid = ?2", flag.bit())
+                    };
+                    tx.prepare(&sql)
+                }
+                Op::Move { .. } | Op::Expunge { .. } => {
+                    tx.prepare("DELETE FROM messages WHERE folder_id = ?1 AND uid = ?2")
+                }
+            }
+            .map_err(storage)?;
+            for uid in op.uids() {
+                stmt.execute(params![folder.0, uid]).map_err(storage)?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO op_queue (account_id, kind, payload) VALUES (?1, ?2, ?3)",
+            params![account.0, op.kind(), payload],
+        )
+        .map_err(storage)?;
+        let id = tx.last_insert_rowid();
+        tx.commit().map_err(storage)?;
+        if matches!(op, Op::Move { .. } | Op::Expunge { .. }) {
+            let dir = self.folder_dir(account, folder);
+            for uid in op.uids() {
+                let _ = fs::remove_file(dir.join(format!("{uid}.eml")));
+            }
+        }
+        Ok(id)
+    }
+
+    /// Operations still waiting for the server, oldest first.
+    pub fn pending_ops(&self, account: AccountId) -> Result<Vec<QueuedOp>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT id, payload, attempts FROM op_queue WHERE account_id = ?1 ORDER BY id",
+            )
+            .map_err(storage)?;
+        let rows: Vec<(i64, String, u32)> = stmt
+            .query_map([account.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(storage)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(storage)?;
+        rows.into_iter()
+            .map(|(id, payload, attempts)| {
+                let op = serde_json::from_str(&payload).map_err(|e| {
+                    Error::Storage(format!("queued change {id} is unreadable: {e}"))
+                })?;
+                Ok(QueuedOp { id, op, attempts })
+            })
+            .collect()
+    }
+
+    pub fn pending_count(&self, account: AccountId) -> Result<u32> {
+        self.conn
+            .query_row(
+                "SELECT count(*) FROM op_queue WHERE account_id = ?1",
+                [account.0],
+                |r| r.get(0),
+            )
+            .map_err(storage)
+    }
+
+    /// UIDs in `folder` that queued operations still refer to. Sync leaves
+    /// these alone so it does not undo a change the server has not seen yet.
+    pub fn pending_uids(&self, account: AccountId, folder: &str) -> Result<HashSet<u32>> {
+        Ok(self
+            .pending_ops(account)?
+            .into_iter()
+            .filter(|q| q.op.folder() == folder)
+            .flat_map(|q| q.op.uids().to_vec())
+            .collect())
+    }
+
+    /// Removes an operation the server has applied, or refused.
+    pub fn finish_op(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM op_queue WHERE id = ?1", [id])
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    /// Records a failed attempt that will be retried.
+    pub fn op_failed(&self, id: i64, error: &str) -> Result<()> {
         self.conn
             .execute(
-                "UPDATE messages SET flags = flags | 1 WHERE id = ?1",
-                [message],
+                "UPDATE op_queue SET attempts = attempts + 1, last_error = ?2 WHERE id = ?1",
+                params![id, error],
             )
             .map_err(storage)?;
         Ok(())
@@ -623,13 +893,6 @@ mod tests {
         assert_eq!((source.folder_name.as_str(), source.uid), ("INBOX", 7));
         assert!(path.exists());
 
-        store.mark_seen(id).unwrap();
-        assert!(
-            store.list_messages(inbox, 0, 1).unwrap().items[0]
-                .flags
-                .seen
-        );
-
         store.remove_account(acc).unwrap();
         assert!(!path.exists());
     }
@@ -647,10 +910,132 @@ mod tests {
             .unwrap()[0]
             .clone();
         store.insert_headers(inbox, &[header(1, 1, false)]).unwrap();
-        store.set_folder_synced(inbox, Some(42), Some(2)).unwrap();
+        store
+            .set_folder_synced(inbox, Some(42), Some(2), Some(9))
+            .unwrap();
+        let state = store.folder_state(inbox).unwrap();
+        assert_eq!((state.uid_next, state.highest_modseq), (Some(2), Some(9)));
         assert_eq!(store.folder_state(inbox).unwrap().uid_validity, Some(42));
         store.reset_folder(acc, inbox).unwrap();
         assert_eq!(store.folder_state(inbox).unwrap().count, 0);
+    }
+
+    #[test]
+    fn local_changes_apply_at_once_and_queue_for_the_server() {
+        use mail_core::FlagKind;
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let folders = store
+            .sync_folders(
+                acc,
+                &[
+                    folder("INBOX", FolderRole::Inbox),
+                    folder("Archive", FolderRole::Archive),
+                ],
+            )
+            .unwrap();
+        let inbox = folders[0].0;
+        store
+            .insert_headers(
+                inbox,
+                &[
+                    header(1, 1, false),
+                    header(2, 2, false),
+                    header(3, 3, false),
+                ],
+            )
+            .unwrap();
+        store
+            .set_folder_synced(inbox, Some(5), Some(4), None)
+            .unwrap();
+        let ids: Vec<i64> = store
+            .list_messages(inbox, 0, 10)
+            .unwrap()
+            .items
+            .iter()
+            .map(|m| m.id)
+            .collect();
+        let located = store.locate(&ids).unwrap();
+        assert_eq!(located.len(), 3);
+        assert_eq!(located[0].uid_validity, Some(5));
+        assert_eq!(
+            store
+                .folder_with_role(acc, FolderRole::Archive)
+                .unwrap()
+                .as_deref(),
+            Some("Archive")
+        );
+
+        store
+            .apply_op(
+                acc,
+                &Op::SetFlag {
+                    folder: "INBOX".into(),
+                    uid_validity: Some(5),
+                    uids: vec![3],
+                    flag: FlagKind::Seen,
+                    value: true,
+                },
+            )
+            .unwrap();
+        store
+            .apply_op(
+                acc,
+                &Op::Move {
+                    folder: "INBOX".into(),
+                    uid_validity: Some(5),
+                    uids: vec![1],
+                    to: "Archive".into(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(store.local_uids(inbox).unwrap(), [2, 3]);
+        assert_eq!(store.list_folders(acc).unwrap()[0].unread, 1);
+        assert_eq!(store.pending_count(acc).unwrap(), 2);
+        assert_eq!(
+            store.pending_uids(acc, "INBOX").unwrap(),
+            HashSet::from([1, 3])
+        );
+
+        let queued = store.pending_ops(acc).unwrap();
+        assert!(matches!(queued[0].op, Op::SetFlag { .. }));
+        store.op_failed(queued[0].id, "offline").unwrap();
+        assert_eq!(store.pending_ops(acc).unwrap()[0].attempts, 1);
+        store.finish_op(queued[0].id).unwrap();
+        store.finish_op(queued[1].id).unwrap();
+        assert_eq!(store.pending_count(acc).unwrap(), 0);
+    }
+
+    #[test]
+    fn server_flags_and_deletions_update_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let (inbox, _) = store
+            .sync_folders(acc, &[folder("INBOX", FolderRole::Inbox)])
+            .unwrap()[0]
+            .clone();
+        store
+            .insert_headers(inbox, &[header(1, 1, false), header(2, 2, false)])
+            .unwrap();
+        let flagged = Flags {
+            seen: true,
+            flagged: true,
+            ..Flags::default()
+        };
+        store.update_flags(inbox, &[(2, flagged)]).unwrap();
+        store.remove_uids(acc, inbox, &[1]).unwrap();
+        let page = store.list_messages(inbox, 0, 10).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].flags, flagged);
     }
 
     #[test]

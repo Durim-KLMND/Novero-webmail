@@ -9,7 +9,10 @@ use std::path::Path;
 
 pub use mail_core::{Error, Result};
 use rusqlite::Connection;
-pub use store::{Folder, FolderState, MessagePage, MessageSource, MessageSummary, Store};
+pub use store::{
+    Folder, FolderState, MessageLocation, MessagePage, MessageSource, MessageSummary, QueuedOp,
+    Store,
+};
 
 /// Migrations in order. Never edit one that has shipped; add a new file.
 const MIGRATIONS: &[&str] = &[
