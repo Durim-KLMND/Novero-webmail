@@ -170,6 +170,8 @@ pub struct Flags {
 pub enum FlagKind {
     Seen,
     Flagged,
+    /// Set on a message once a reply to it is sent.
+    Answered,
 }
 
 impl FlagKind {
@@ -178,6 +180,7 @@ impl FlagKind {
         match self {
             FlagKind::Seen => "\\Seen",
             FlagKind::Flagged => "\\Flagged",
+            FlagKind::Answered => "\\Answered",
         }
     }
 
@@ -186,6 +189,7 @@ impl FlagKind {
         match self {
             FlagKind::Seen => 1,
             FlagKind::Flagged => 2,
+            FlagKind::Answered => 4,
         }
     }
 }
@@ -281,6 +285,55 @@ pub enum Event {
     MailboxChanged {
         account: AccountId,
     },
+    /// Messages waiting to send, those the server refused, and why the last
+    /// attempt failed if it did.
+    OutboxChanged {
+        account: AccountId,
+        queued: u32,
+        failed: u32,
+        error: Option<String>,
+    },
+}
+
+/// The parts of a message being written that the user edits. Addresses are
+/// kept as typed (comma separated) and checked only when sending.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftFields {
+    pub to: String,
+    pub cc: String,
+    pub bcc: String,
+    pub subject: String,
+    pub body: String,
+}
+
+/// A file attached to a draft. The file itself is kept by the store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftAttachment {
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+}
+
+/// A message being written: saved locally as the user types, copied to the
+/// Drafts folder, and turned into outgoing mail when sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Draft {
+    pub id: i64,
+    pub account: AccountId,
+    /// Message-ID without angle brackets. It stays the same across saves, so
+    /// the copy in the Drafts folder can be found and replaced.
+    pub message_id: String,
+    #[serde(flatten)]
+    pub fields: DraftFields,
+    pub attachments: Vec<DraftAttachment>,
+    /// Threading headers of a reply, without angle brackets.
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+    /// The cached message this replies to, marked answered once sent.
+    pub replying_to: Option<i64>,
 }
 
 impl Flags {
@@ -318,6 +371,9 @@ pub enum Error {
     Rejected(String),
     #[error("storage error: {0}")]
     Storage(String),
+    /// Something the user entered cannot be used, e.g. a malformed address.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

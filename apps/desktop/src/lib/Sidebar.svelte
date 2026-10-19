@@ -6,6 +6,10 @@
     /** Local changes not yet on the server. */
     pending: number;
     pendingError: string | null;
+    /** Mail waiting to send, mail the server refused, and why the last try failed. */
+    queued: number;
+    failed: number;
+    outboxError: string | null;
   }
 </script>
 
@@ -28,8 +32,15 @@
     onAddAccount: () => void;
     onSync: (account: number) => void;
     onRemove: (account: Account) => void;
+    onCompose: () => void;
+    onOutbox: (account: number) => void;
   }
-  let { accounts, folders, syncState, selected, onSelect, onAddAccount, onSync, onRemove }: Props = $props();
+  let { accounts, folders, syncState, selected, onSelect, onAddAccount, onSync, onRemove, onCompose, onOutbox }: Props =
+    $props();
+
+  function plural(n: number, one: string): string {
+    return n === 1 ? `1 ${one}` : `${n.toLocaleString()} ${one}s`;
+  }
 
   let menuFor = $state<number | null>(null);
   let collapsed = $state<Record<number, boolean>>({});
@@ -52,6 +63,7 @@
 
 <nav class="sidebar" aria-label="Accounts and folders">
   <div class="brand">Novero Mail</div>
+  <button class="primary compose" onclick={onCompose}>New message</button>
   <div class="scroll">
     {#each accounts as account (account.id)}
       {@const sync = syncState[account.id]}
@@ -90,6 +102,20 @@
           </p>
         {:else if sync?.pendingError}
           <p class="sync-error">{errorText(sync.pendingError)}</p>
+        {/if}
+        {#if sync?.failed}
+          <button class="outbox-line failed" onclick={() => onOutbox(account.id)}>
+            {plural(sync.failed, "message")} could not be sent
+          </button>
+        {/if}
+        {#if sync?.queued}
+          <button
+            class="outbox-line quiet"
+            onclick={() => onOutbox(account.id)}
+            title={sync.outboxError ? errorText(sync.outboxError) : undefined}
+          >
+            {sync.outboxError ? `${plural(sync.queued, "message")} waiting to send` : `Sending ${plural(sync.queued, "message")}…`}
+          </button>
         {/if}
         {#if !collapsed[account.id]}
           <ul>
@@ -251,6 +277,21 @@
   .add {
     margin: 8px;
     border-style: dashed;
+  }
+  .compose {
+    margin: 4px 12px 12px;
+  }
+  .outbox-line {
+    display: block;
+    border: none;
+    background: none;
+    padding: 0;
+    text-align: left;
+    font-size: 12px;
+    margin: 0 4px 6px 20px;
+  }
+  .outbox-line.failed {
+    color: var(--danger);
   }
   .spinner.small {
     width: 12px;

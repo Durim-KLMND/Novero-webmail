@@ -13,8 +13,11 @@
     onDelete: () => void;
     onToggle: (flag: FlagKind, value: boolean) => void;
     onMove: (folder: number) => void;
+    onReply: (all: boolean) => void;
+    onForward: () => void;
   }
-  let { summary, folder, folders, onOpened, onArchive, onDelete, onToggle, onMove }: Props = $props();
+  let { summary, folder, folders, onOpened, onArchive, onDelete, onToggle, onMove, onReply, onForward }: Props =
+    $props();
 
   const messageId = $derived(summary?.id ?? null);
   const canArchive = $derived(folder?.role !== "archive" && folders.some((f) => f.role === "archive"));
@@ -87,6 +90,12 @@
     <div class="empty"><span class="spinner"></span></div>
   {:else}
     <div class="actions" role="toolbar" aria-label="Message actions">
+      {#if message}
+        <button onclick={() => onReply(false)}>Reply</button>
+        <button onclick={() => onReply(true)}>Reply all</button>
+        <button onclick={onForward}>Forward</button>
+        <span class="gap"></span>
+      {/if}
       {#if canArchive}<button onclick={onArchive}>Archive</button>{/if}
       <button onclick={onDelete}>{folder?.role === "trash" ? "Delete forever" : "Delete"}</button>
       {#if summary}
@@ -196,6 +205,9 @@
     width: auto;
     padding: 5px 10px;
     font-size: 13px;
+  }
+  .gap {
+    width: 8px;
   }
   .actions button[aria-pressed="true"] {
     color: var(--accent-ink);

@@ -1,5 +1,6 @@
 //! Integration tests for changes in both directions: local changes replayed to
-//! the server, server changes picked up by sync, offline replay, and IDLE.
+//! the server, server changes picked up by sync, offline replay, IDLE, and
+//! drafts saved to the Drafts folder.
 //!
 //! Each test works in its own scratch folders so the seeded mailbox stays as it
 //! is. Run with the test server up: `cargo test -p mail-sync -- --ignored`.
@@ -7,8 +8,10 @@
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use mail_core::{Account, Endpoint, Error, FlagKind, FolderId, NewAccount, Op, Security};
-use mail_store::Store;
+use mail_core::{
+    Account, DraftFields, Endpoint, Error, FlagKind, FolderId, FolderRole, NewAccount, Op, Security,
+};
+use mail_store::{NewDraft, Store};
 use mail_sync::{ImapSession, push_changes, sync_folder};
 
 fn endpoint() -> Endpoint {
@@ -356,6 +359,115 @@ async fn idle_wakes_when_mail_arrives() {
     deliver.await.unwrap();
     assert!(changed, "new mail ends the wait");
     session.logout().await.unwrap();
+
+    drop_folder(&folder).await;
+}
+
+/// Server copies of a draft, found by its Message-ID, with their subjects.
+async fn draft_copies(folder: &str, message_id: &str) -> Vec<String> {
+    let mut session = connect().await;
+    session.select(folder).await.unwrap();
+    let uids = session
+        .search_uids(&format!("HEADER Message-ID \"<{message_id}>\" DRAFT"))
+        .await
+        .unwrap();
+    let mut subjects = Vec::new();
+    for uid in uids {
+        let raw = session.fetch_raw(folder, uid).await.unwrap();
+        subjects.push(
+            mail_mime::parse_message(&raw, false)
+                .unwrap()
+                .subject
+                .unwrap_or_default(),
+        );
+    }
+    session.logout().await.unwrap();
+    subjects
+}
+
+#[tokio::test]
+#[ignore = "needs the test IMAP server"]
+async fn drafts_are_saved_replaced_and_removed_on_the_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, account) = setup(dir.path()).await;
+    // A scratch folder stands in for Drafts, so the seeded one stays as it is.
+    let folder = scratch_folder("drafts", 0).await;
+    let mut remote = {
+        let mut session = connect().await;
+        let remote = session.list_folders().await.unwrap();
+        session.logout().await.unwrap();
+        remote
+    };
+    for f in &mut remote {
+        f.role = match (f.name == folder, f.role) {
+            (true, _) => FolderRole::Drafts,
+            (false, FolderRole::Drafts) => FolderRole::Other,
+            (false, role) => role,
+        };
+    }
+    store
+        .lock()
+        .unwrap()
+        .sync_folders(account.id, &remote)
+        .unwrap();
+
+    let message_id = format!("{folder}@example.test");
+    let draft = store
+        .lock()
+        .unwrap()
+        .create_draft(NewDraft {
+            fields: DraftFields {
+                to: "bob@exa".into(),
+                subject: "First".into(),
+                ..DraftFields::default()
+            },
+            ..NewDraft::new(account.id, message_id.clone())
+        })
+        .unwrap();
+    let outcome = push_changes(&store, &account, "secret", |_| {})
+        .await
+        .unwrap();
+    assert_eq!(outcome.touched, std::slice::from_ref(&folder));
+    assert_eq!(draft_copies(&folder, &message_id).await, ["First"]);
+    let cached = sync(&store, &account, &folder).await;
+    assert_eq!(store.lock().unwrap().folder_state(cached).unwrap().count, 1);
+
+    // An edit replaces the copy instead of adding one.
+    store
+        .lock()
+        .unwrap()
+        .save_draft_fields(
+            draft.id,
+            &DraftFields {
+                subject: "Second".into(),
+                ..DraftFields::default()
+            },
+        )
+        .unwrap();
+    push_changes(&store, &account, "secret", |_| {})
+        .await
+        .unwrap();
+    assert_eq!(draft_copies(&folder, &message_id).await, ["Second"]);
+
+    // Nothing left to do: no connection is made.
+    let idle = push_changes(&store, &account, "secret", |_| {})
+        .await
+        .unwrap();
+    assert!(idle.touched.is_empty());
+
+    store.lock().unwrap().discard_draft(draft.id).unwrap();
+    push_changes(&store, &account, "secret", |_| {})
+        .await
+        .unwrap();
+    assert!(draft_copies(&folder, &message_id).await.is_empty());
+    assert!(
+        store
+            .lock()
+            .unwrap()
+            .drafts_to_upload(account.id)
+            .unwrap()
+            .is_empty()
+    );
 
     drop_folder(&folder).await;
 }

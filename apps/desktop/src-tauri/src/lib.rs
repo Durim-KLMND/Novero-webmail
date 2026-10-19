@@ -1,6 +1,7 @@
 //! Tauri host: registers commands and forwards core events to the UI.
 
 mod commands;
+mod compose;
 mod state;
 
 use std::time::Duration;
@@ -48,6 +49,20 @@ pub fn run() {
             commands::move_messages,
             commands::archive_messages,
             commands::delete_messages,
+            compose::new_draft,
+            compose::reply_draft,
+            compose::forward_draft,
+            compose::open_draft,
+            compose::save_draft,
+            compose::attach_files,
+            compose::remove_attachment,
+            compose::discard_draft,
+            compose::send_draft,
+            compose::list_outbox,
+            compose::outbox_status,
+            compose::retry_outbox,
+            compose::delete_outbox,
+            compose::edit_outbox,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Novero Mail");

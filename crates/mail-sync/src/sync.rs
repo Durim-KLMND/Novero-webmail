@@ -16,6 +16,7 @@ use mail_core::{Account, AccountId, Error, Event, FolderId, FolderRole, Op, Resu
 use mail_store::Store;
 
 use crate::ImapSession;
+use crate::drafts::upload_drafts;
 use crate::imap::uid_set;
 
 /// Headers fetched per round trip.
@@ -39,7 +40,8 @@ pub struct ReplayOutcome {
     /// Changes the server refused, with its reason. They are dropped and the
     /// affected folders resync, which undoes them locally.
     pub rejected: Vec<String>,
-    /// Folders whose contents changed on the server because of the replay.
+    /// Folders whose contents changed on the server because of the replay or
+    /// a draft upload.
     pub touched: Vec<String>,
 }
 
@@ -79,19 +81,27 @@ pub async fn sync_account(
     session.logout().await
 }
 
-/// Sends queued changes and syncs the folders they touched: a move's target,
-/// and the folder of a refused change so the cache shows the server's state.
+/// Sends queued changes and saved drafts, then syncs the folders they
+/// touched: a move's target, the Drafts folder, and the folder of a refused
+/// change so the cache shows the server's state.
 pub async fn push_changes(
     store: &Mutex<Store>,
     account: &Account,
     password: &str,
     on_event: impl Fn(Event),
 ) -> Result<ReplayOutcome> {
-    if store.lock().unwrap().pending_count(account.id)? == 0 {
+    let idle = {
+        let store = store.lock().unwrap();
+        store.pending_count(account.id)? == 0 && store.drafts_to_upload(account.id)?.is_empty()
+    };
+    if idle {
         return Ok(ReplayOutcome::default());
     }
     let mut session = ImapSession::connect(&account.imap, &account.username, password).await?;
-    let outcome = replay_ops(store, &mut session, account.id).await?;
+    let mut outcome = replay_ops(store, &mut session, account.id).await?;
+    if let Some(drafts) = upload_drafts(store, &mut session, account).await? {
+        touch(&mut outcome.touched, &drafts);
+    }
     for name in &outcome.touched {
         let id = store.lock().unwrap().folder_id(account.id, name)?;
         if let Some(id) = id {
