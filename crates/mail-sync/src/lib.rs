@@ -1,10 +1,11 @@
 //! IMAP sync engine.
 //!
-//! Phase 0 holds a spike: [`imap::ImapSession`] logs in, lists folders and
-//! fetches the newest envelopes. The per-account sync actor (phase 2) is
-//! built on top of it.
+//! [`ImapSession`] wraps one IMAP connection; [`sync_account`] keeps the local
+//! cache in step with the server. IDLE, flag sync and deletions are phase 2.
 
 pub mod imap;
+mod sync;
 
-pub use imap::{EnvelopeSummary, FolderInfo, FolderStatus, ImapSession};
+pub use imap::{FolderStatus, ImapSession};
 pub use mail_core::{Error, Result};
+pub use sync::{fetch_message, sync_account};

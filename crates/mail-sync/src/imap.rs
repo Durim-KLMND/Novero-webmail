@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use async_imap::types::{Fetch, Flag, NameAttribute};
 use futures::TryStreamExt;
-use mail_core::{Endpoint, Error, Flags, FolderRole, Result, Security};
+use mail_core::{
+    Endpoint, Error, Flags, FolderRole, MessageHeader, RemoteFolder, Result, Security,
+};
 use rustls::pki_types::ServerName;
 use rustls_platform_verifier::BuilderVerifierExt;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -15,8 +17,8 @@ use tokio::time::timeout;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Fields asked for when listing messages. Bodies are fetched separately.
-const ENVELOPE_QUERY: &str = "(UID FLAGS RFC822.SIZE ENVELOPE)";
+/// Fields fetched for the message list. Bodies are fetched on open.
+const HEADER_QUERY: &str = "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID CONTENT-TYPE)])";
 
 /// Any byte stream async-imap can run over (plain TCP or TLS).
 trait Transport: AsyncRead + AsyncWrite + Unpin + Send + fmt::Debug {}
@@ -29,15 +31,6 @@ pub struct ImapSession {
     session: async_imap::Session<Stream>,
 }
 
-/// A folder as the server lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FolderInfo {
-    pub name: String,
-    pub delimiter: Option<String>,
-    pub role: FolderRole,
-    pub selectable: bool,
-}
-
 /// Sync state of a selected folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FolderStatus {
@@ -45,18 +38,6 @@ pub struct FolderStatus {
     pub uid_validity: Option<u32>,
     pub uid_next: Option<u32>,
     pub highest_modseq: Option<u64>,
-}
-
-/// What the message list needs about one message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnvelopeSummary {
-    pub uid: u32,
-    pub subject: Option<String>,
-    pub from: Option<String>,
-    pub date: Option<String>,
-    pub message_id: Option<String>,
-    pub size: Option<u32>,
-    pub flags: Flags,
 }
 
 impl ImapSession {
@@ -68,22 +49,23 @@ impl ImapSession {
         )
         .await
         .map_err(|_| Error::Network(format!("timed out connecting to {}", endpoint.host)))?
-        .map_err(|e| Error::Network(e.to_string()))?;
+        .map_err(|e| Error::Network(format!("could not reach {}: {e}", endpoint.host)))?;
 
-        let stream: Stream = match endpoint.security {
-            Security::Insecure => Box::new(tcp),
-            Security::ImplicitTls => Box::new(tls(&endpoint.host, tcp).await?),
+        let client = match endpoint.security {
+            Security::Insecure => greeted(Box::new(tcp)).await?,
+            Security::ImplicitTls => greeted(Box::new(tls(&endpoint.host, tcp).await?)).await?,
             Security::StartTls => {
-                return Err(Error::Protocol("STARTTLS is not implemented yet".into()));
+                let mut plain = async_imap::Client::new(tcp);
+                read_greeting(&mut plain).await?;
+                plain
+                    .run_command_and_check_ok("STARTTLS", None)
+                    .await
+                    .map_err(|e| Error::Network(format!("STARTTLS refused: {e}")))?;
+                let stream: Stream = Box::new(tls(&endpoint.host, plain.into_inner()).await?);
+                // No second greeting after STARTTLS (RFC 3501 section 6.2.1).
+                async_imap::Client::new(stream)
             }
         };
-
-        let mut client = async_imap::Client::new(stream);
-        client
-            .read_response()
-            .await
-            .map_err(|e| Error::Network(e.to_string()))?
-            .ok_or_else(|| Error::Network("server closed the connection before greeting".into()))?;
 
         let session = client
             .login(username, password)
@@ -93,7 +75,7 @@ impl ImapSession {
     }
 
     /// Lists every folder, with its role from SPECIAL-USE when the server reports one.
-    pub async fn list_folders(&mut self) -> Result<Vec<FolderInfo>> {
+    pub async fn list_folders(&mut self) -> Result<Vec<RemoteFolder>> {
         let names: Vec<_> = self
             .session
             .list(Some(""), Some("*"))
@@ -104,7 +86,7 @@ impl ImapSession {
             .map_err(protocol)?;
         Ok(names
             .iter()
-            .map(|n| FolderInfo {
+            .map(|n| RemoteFolder {
                 name: n.name().to_owned(),
                 delimiter: n.delimiter().map(str::to_owned),
                 role: folder_role(n.name(), n.attributes()),
@@ -113,7 +95,7 @@ impl ImapSession {
             .collect())
     }
 
-    /// Selects `folder` read-write and returns its sync state.
+    /// Selects `folder` and returns its sync state.
     pub async fn select(&mut self, folder: &str) -> Result<FolderStatus> {
         let mailbox = self.session.select(folder).await.map_err(protocol)?;
         Ok(FolderStatus {
@@ -124,36 +106,97 @@ impl ImapSession {
         })
     }
 
-    /// Fetches envelopes of the newest `limit` messages in `folder`, newest first.
-    pub async fn fetch_latest_envelopes(
-        &mut self,
-        folder: &str,
-        limit: u32,
-    ) -> Result<Vec<EnvelopeSummary>> {
-        let status = self.select(folder).await?;
-        if status.exists == 0 || limit == 0 {
-            return Ok(Vec::new());
-        }
-        let first = status.exists.saturating_sub(limit - 1).max(1);
-        let range = format!("{first}:{}", status.exists);
+    /// UIDs in the selected folder matching an IMAP search, e.g. `UID 1:99` or `ALL`.
+    pub async fn search_uids(&mut self, query: &str) -> Result<Vec<u32>> {
+        let mut uids: Vec<u32> = self
+            .session
+            .uid_search(query)
+            .await
+            .map_err(protocol)?
+            .into_iter()
+            .collect();
+        uids.sort_unstable();
+        Ok(uids)
+    }
+
+    /// Headers for a UID set in the selected folder, e.g. `5,7,9` or `100:*`.
+    pub async fn fetch_headers(&mut self, uid_set: &str) -> Result<Vec<MessageHeader>> {
         let fetched: Vec<Fetch> = self
             .session
-            .fetch(range, ENVELOPE_QUERY)
+            .uid_fetch(uid_set, HEADER_QUERY)
             .await
             .map_err(protocol)?
             .try_collect()
             .await
             .map_err(protocol)?;
+        Ok(fetched.iter().filter_map(header).collect())
+    }
 
-        let mut envelopes: Vec<_> = fetched.iter().filter_map(summarize).collect();
-        envelopes.sort_by_key(|e| std::cmp::Reverse(e.uid));
-        Ok(envelopes)
+    /// Headers of the newest `limit` messages in `folder`, newest first.
+    pub async fn fetch_latest_headers(
+        &mut self,
+        folder: &str,
+        limit: u32,
+    ) -> Result<Vec<MessageHeader>> {
+        let status = self.select(folder).await?;
+        if status.exists == 0 || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let first = status.exists.saturating_sub(limit - 1).max(1);
+        let fetched: Vec<Fetch> = self
+            .session
+            .fetch(format!("{first}:{}", status.exists), HEADER_QUERY)
+            .await
+            .map_err(protocol)?
+            .try_collect()
+            .await
+            .map_err(protocol)?;
+        let mut headers: Vec<_> = fetched.iter().filter_map(header).collect();
+        headers.sort_by_key(|h| std::cmp::Reverse(h.uid));
+        Ok(headers)
+    }
+
+    /// The full raw message. Uses BODY.PEEK so the server does not mark it read.
+    pub async fn fetch_raw(&mut self, folder: &str, uid: u32) -> Result<Vec<u8>> {
+        self.select(folder).await?;
+        let fetched: Vec<Fetch> = self
+            .session
+            .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
+            .await
+            .map_err(protocol)?
+            .try_collect()
+            .await
+            .map_err(protocol)?;
+        fetched
+            .iter()
+            .find(|f| f.uid == Some(uid))
+            .and_then(|f| f.body())
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| Error::Protocol(format!("message {uid} is no longer on the server")))
     }
 
     /// Ends the session politely.
     pub async fn logout(mut self) -> Result<()> {
         self.session.logout().await.map_err(protocol)
     }
+}
+
+async fn greeted(stream: Stream) -> Result<async_imap::Client<Stream>> {
+    let mut client = async_imap::Client::new(stream);
+    read_greeting(&mut client).await?;
+    Ok(client)
+}
+
+async fn read_greeting<T>(client: &mut async_imap::Client<T>) -> Result<()>
+where
+    T: AsyncRead + AsyncWrite + Unpin + Send + fmt::Debug,
+{
+    client
+        .read_response()
+        .await
+        .map_err(|e| Error::Network(e.to_string()))?
+        .ok_or_else(|| Error::Network("server closed the connection before greeting".into()))?;
+    Ok(())
 }
 
 async fn tls(host: &str, tcp: TcpStream) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
@@ -168,7 +211,7 @@ async fn tls(host: &str, tcp: TcpStream) -> Result<tokio_rustls::client::TlsStre
     tokio_rustls::TlsConnector::from(Arc::new(config))
         .connect(name, tcp)
         .await
-        .map_err(|e| Error::Network(e.to_string()))
+        .map_err(|e| Error::Network(format!("secure connection to {host} failed: {e}")))
 }
 
 fn protocol(err: async_imap::error::Error) -> Error {
@@ -195,31 +238,18 @@ fn folder_role(name: &str, attributes: &[NameAttribute<'_>]) -> FolderRole {
     FolderRole::Other
 }
 
-/// Turns a FETCH response into a summary. Header words stay as sent: decoding
-/// RFC 2047 encoded words belongs to `mail-mime`.
-fn summarize(fetch: &Fetch) -> Option<EnvelopeSummary> {
+/// Turns a FETCH response into a header row; fields are decoded by `mail-mime`.
+fn header(fetch: &Fetch) -> Option<MessageHeader> {
     let uid = fetch.uid?;
-    let envelope = fetch.envelope();
-    let text = |bytes: Option<&[u8]>| bytes.map(|b| String::from_utf8_lossy(b).into_owned());
-    let from = envelope
-        .and_then(|e| e.from.as_ref())
-        .and_then(|list| list.first())
-        .map(|a| {
-            let mailbox = text(a.mailbox.as_deref()).unwrap_or_default();
-            let host = text(a.host.as_deref()).unwrap_or_default();
-            match text(a.name.as_deref()) {
-                Some(name) => format!("{name} <{mailbox}@{host}>"),
-                None => format!("{mailbox}@{host}"),
-            }
-        });
-    Some(EnvelopeSummary {
+    let parsed = fetch
+        .header()
+        .map(mail_mime::parse_header_fields)
+        .unwrap_or_default();
+    Some(MessageHeader {
         uid,
-        subject: text(envelope.and_then(|e| e.subject.as_deref())),
-        from,
-        date: text(envelope.and_then(|e| e.date.as_deref())),
-        message_id: text(envelope.and_then(|e| e.message_id.as_deref())),
         size: fetch.size,
         flags: flags(fetch.flags()),
+        ..parsed
     })
 }
 

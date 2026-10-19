@@ -1,0 +1,665 @@
+//! Typed access to the local cache.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use mail_core::{
+    Account, AccountId, Endpoint, Error, Flags, FolderId, FolderRole, MessageHeader, NewAccount,
+    RemoteFolder, Result, Security,
+};
+use rusqlite::{Connection, OptionalExtension, Row, params};
+use serde::Serialize;
+
+use crate::storage;
+
+/// The local cache: one SQLite database plus raw messages as `.eml` files.
+pub struct Store {
+    conn: Connection,
+    files: PathBuf,
+}
+
+/// A folder in the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: FolderId,
+    pub account_id: AccountId,
+    pub name: String,
+    pub delimiter: Option<String>,
+    pub role: FolderRole,
+    pub total: u32,
+    pub unread: u32,
+}
+
+/// What the sync engine needs to know about a folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FolderState {
+    pub uid_validity: Option<u32>,
+    pub min_uid: u32,
+    pub max_uid: u32,
+    pub count: u32,
+}
+
+/// One row in the message list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSummary {
+    pub id: i64,
+    pub uid: u32,
+    pub from: Option<String>,
+    pub subject: Option<String>,
+    pub date: Option<i64>,
+    pub flags: Flags,
+    pub has_attachments: bool,
+}
+
+/// A window of the message list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagePage {
+    pub total: u32,
+    pub offset: u32,
+    pub items: Vec<MessageSummary>,
+}
+
+/// Where a message lives on the server and on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageSource {
+    pub account_id: AccountId,
+    pub folder_name: String,
+    pub uid: u32,
+    pub raw_path: Option<PathBuf>,
+}
+
+impl Store {
+    /// Opens the cache in `dir`, creating it if needed.
+    pub fn open(dir: &Path) -> Result<Self> {
+        fs::create_dir_all(dir).map_err(io)?;
+        Ok(Self {
+            conn: crate::open(&dir.join("mail.db"))?,
+            files: dir.join("messages"),
+        })
+    }
+
+    /// An in-memory database that writes message files under `files`. For tests.
+    pub fn open_in_memory(files: &Path) -> Result<Self> {
+        Ok(Self {
+            conn: crate::open_in_memory()?,
+            files: files.to_path_buf(),
+        })
+    }
+
+    // Accounts
+
+    pub fn add_account(&self, new: &NewAccount) -> Result<Account> {
+        self.conn
+            .execute(
+                "INSERT INTO accounts (display_name, email, username, imap_host, imap_port, \
+                 imap_security, smtp_host, smtp_port, smtp_security, auth_kind) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'password')",
+                params![
+                    new.display_name,
+                    new.email,
+                    new.username,
+                    new.imap.host,
+                    new.imap.port,
+                    new.imap.security.as_str(),
+                    new.smtp.host,
+                    new.smtp.port,
+                    new.smtp.security.as_str(),
+                ],
+            )
+            .map_err(storage)?;
+        let id = AccountId(self.conn.last_insert_rowid());
+        self.account(id)?
+            .ok_or_else(|| Error::Storage("account vanished after insert".into()))
+    }
+
+    pub fn list_accounts(&self) -> Result<Vec<Account>> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{ACCOUNT_SELECT} ORDER BY id"))
+            .map_err(storage)?;
+        stmt.query_map([], account_row)
+            .map_err(storage)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(storage)
+    }
+
+    pub fn account(&self, id: AccountId) -> Result<Option<Account>> {
+        self.conn
+            .query_row(
+                &format!("{ACCOUNT_SELECT} WHERE id = ?1"),
+                [id.0],
+                account_row,
+            )
+            .optional()
+            .map_err(storage)
+    }
+
+    /// Deletes the account, its folders and messages, and its message files.
+    pub fn remove_account(&self, id: AccountId) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM accounts WHERE id = ?1", [id.0])
+            .map_err(storage)?;
+        remove_dir(&self.files.join(id.0.to_string()))
+    }
+
+    // Folders
+
+    /// Makes the local folder list match the server's and returns the folder ids.
+    /// Local folders the server no longer lists are deleted with their messages.
+    pub fn sync_folders(
+        &mut self,
+        account: AccountId,
+        remote: &[RemoteFolder],
+    ) -> Result<Vec<(FolderId, RemoteFolder)>> {
+        let tx = self.conn.transaction().map_err(storage)?;
+        let mut ids = Vec::with_capacity(remote.len());
+        for folder in remote {
+            tx.execute(
+                "INSERT INTO folders (account_id, name, delimiter, role) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT (account_id, name) DO UPDATE SET delimiter = ?3, role = ?4",
+                params![
+                    account.0,
+                    folder.name,
+                    folder.delimiter,
+                    folder.role.as_str()
+                ],
+            )
+            .map_err(storage)?;
+            let id: i64 = tx
+                .query_row(
+                    "SELECT id FROM folders WHERE account_id = ?1 AND name = ?2",
+                    params![account.0, folder.name],
+                    |r| r.get(0),
+                )
+                .map_err(storage)?;
+            ids.push((FolderId(id), folder.clone()));
+        }
+        let keep: Vec<i64> = ids.iter().map(|(id, _)| id.0).collect();
+        let mut gone = Vec::new();
+        {
+            let mut stmt = tx
+                .prepare("SELECT id FROM folders WHERE account_id = ?1")
+                .map_err(storage)?;
+            for id in stmt
+                .query_map([account.0], |r| r.get::<_, i64>(0))
+                .map_err(storage)?
+            {
+                let id = id.map_err(storage)?;
+                if !keep.contains(&id) {
+                    gone.push(id);
+                }
+            }
+        }
+        for id in &gone {
+            tx.execute("DELETE FROM folders WHERE id = ?1", [id])
+                .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)?;
+        for id in gone {
+            remove_dir(&self.folder_dir(account, FolderId(id)))?;
+        }
+        Ok(ids)
+    }
+
+    /// Folders of an account in sidebar order, with message counts.
+    pub fn list_folders(&self, account: AccountId) -> Result<Vec<Folder>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT f.id, f.account_id, f.name, f.delimiter, f.role, \
+                 count(m.id), coalesce(sum(m.flags & 1 = 0), 0) \
+                 FROM folders f LEFT JOIN messages m ON m.folder_id = f.id \
+                 WHERE f.account_id = ?1 GROUP BY f.id",
+            )
+            .map_err(storage)?;
+        let mut folders: Vec<Folder> = stmt
+            .query_map([account.0], |r| {
+                Ok(Folder {
+                    id: FolderId(r.get(0)?),
+                    account_id: AccountId(r.get(1)?),
+                    name: r.get(2)?,
+                    delimiter: r.get(3)?,
+                    role: FolderRole::parse(r.get::<_, Option<String>>(4)?.as_deref()),
+                    total: r.get(5)?,
+                    unread: r.get(6)?,
+                })
+            })
+            .map_err(storage)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(storage)?;
+        folders.sort_by(|a, b| {
+            (a.role.sort_rank(), a.name.to_lowercase())
+                .cmp(&(b.role.sort_rank(), b.name.to_lowercase()))
+        });
+        Ok(folders)
+    }
+
+    pub fn folder_state(&self, folder: FolderId) -> Result<FolderState> {
+        self.conn
+            .query_row(
+                "SELECT f.uidvalidity, coalesce(min(m.uid), 0), coalesce(max(m.uid), 0), count(m.id) \
+                 FROM folders f LEFT JOIN messages m ON m.folder_id = f.id WHERE f.id = ?1",
+                [folder.0],
+                |r| {
+                    Ok(FolderState {
+                        uid_validity: r.get(0)?,
+                        min_uid: r.get(1)?,
+                        max_uid: r.get(2)?,
+                        count: r.get(3)?,
+                    })
+                },
+            )
+            .map_err(storage)
+    }
+
+    /// Discards a folder's cached messages, for when the server's UIDVALIDITY changed.
+    pub fn reset_folder(&self, account: AccountId, folder: FolderId) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM messages WHERE folder_id = ?1", [folder.0])
+            .map_err(storage)?;
+        remove_dir(&self.folder_dir(account, folder))
+    }
+
+    pub fn set_folder_synced(
+        &self,
+        folder: FolderId,
+        uid_validity: Option<u32>,
+        uid_next: Option<u32>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE folders SET uidvalidity = ?2, uidnext = ?3, last_sync = unixepoch() WHERE id = ?1",
+                params![folder.0, uid_validity, uid_next],
+            )
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    // Messages
+
+    /// Inserts headers, or updates flags of messages already cached.
+    pub fn insert_headers(&mut self, folder: FolderId, headers: &[MessageHeader]) -> Result<()> {
+        let tx = self.conn.transaction().map_err(storage)?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO messages (folder_id, uid, message_id, from_addr, to_addrs, cc_addrs, \
+                     subject, date, size, flags, has_attachments) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+                     ON CONFLICT (folder_id, uid) DO UPDATE SET flags = ?10",
+                )
+                .map_err(storage)?;
+            for h in headers {
+                stmt.execute(params![
+                    folder.0,
+                    h.uid,
+                    h.message_id,
+                    h.from,
+                    h.to,
+                    h.cc,
+                    h.subject,
+                    h.date,
+                    h.size,
+                    h.flags.to_bits(),
+                    h.has_attachments,
+                ])
+                .map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
+    /// Messages in a folder, newest first.
+    pub fn list_messages(&self, folder: FolderId, offset: u32, limit: u32) -> Result<MessagePage> {
+        let total: u32 = self
+            .conn
+            .query_row(
+                "SELECT count(*) FROM messages WHERE folder_id = ?1",
+                [folder.0],
+                |r| r.get(0),
+            )
+            .map_err(storage)?;
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT id, uid, from_addr, subject, date, flags, has_attachments FROM messages \
+                 WHERE folder_id = ?1 ORDER BY date DESC, uid DESC LIMIT ?2 OFFSET ?3",
+            )
+            .map_err(storage)?;
+        let items = stmt
+            .query_map(params![folder.0, limit, offset], |r| {
+                Ok(MessageSummary {
+                    id: r.get(0)?,
+                    uid: r.get(1)?,
+                    from: r.get(2)?,
+                    subject: r.get(3)?,
+                    date: r.get(4)?,
+                    flags: Flags::from_bits(r.get(5)?),
+                    has_attachments: r.get(6)?,
+                })
+            })
+            .map_err(storage)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(storage)?;
+        Ok(MessagePage {
+            total,
+            offset,
+            items,
+        })
+    }
+
+    pub fn message_source(&self, message: i64) -> Result<MessageSource> {
+        self.conn
+            .query_row(
+                "SELECT f.account_id, f.name, m.uid, b.raw_path FROM messages m \
+                 JOIN folders f ON f.id = m.folder_id \
+                 LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?1",
+                [message],
+                |r| {
+                    Ok(MessageSource {
+                        account_id: AccountId(r.get(0)?),
+                        folder_name: r.get(1)?,
+                        uid: r.get(2)?,
+                        raw_path: r.get::<_, Option<String>>(3)?.map(PathBuf::from),
+                    })
+                },
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or_else(|| Error::Storage(format!("message {message} not found")))
+    }
+
+    /// Saves a fetched message to disk and records where it is.
+    pub fn save_raw(&self, message: i64, raw: &[u8]) -> Result<PathBuf> {
+        let (account, folder, uid): (i64, i64, u32) = self
+            .conn
+            .query_row(
+                "SELECT f.account_id, m.folder_id, m.uid FROM messages m \
+                 JOIN folders f ON f.id = m.folder_id WHERE m.id = ?1",
+                [message],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(storage)?;
+        let dir = self.folder_dir(AccountId(account), FolderId(folder));
+        fs::create_dir_all(&dir).map_err(io)?;
+        let path = dir.join(format!("{uid}.eml"));
+        fs::write(&path, raw).map_err(io)?;
+        self.conn
+            .execute(
+                "INSERT INTO message_bodies (message_id, raw_path) VALUES (?1, ?2) \
+                 ON CONFLICT (message_id) DO UPDATE SET raw_path = ?2",
+                params![message, path.to_string_lossy()],
+            )
+            .map_err(storage)?;
+        self.conn
+            .execute(
+                "UPDATE messages SET body_state = 'fetched' WHERE id = ?1",
+                [message],
+            )
+            .map_err(storage)?;
+        Ok(path)
+    }
+
+    /// Marks a message read locally. Telling the server is phase 2.
+    pub fn mark_seen(&self, message: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE messages SET flags = flags | 1 WHERE id = ?1",
+                [message],
+            )
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    fn folder_dir(&self, account: AccountId, folder: FolderId) -> PathBuf {
+        self.files
+            .join(account.0.to_string())
+            .join(folder.0.to_string())
+    }
+}
+
+const ACCOUNT_SELECT: &str = "SELECT id, display_name, email, username, imap_host, imap_port, \
+     imap_security, smtp_host, smtp_port, smtp_security FROM accounts";
+
+fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
+    let security = |i: usize| -> rusqlite::Result<Security> {
+        let value: String = r.get(i)?;
+        Security::parse(&value).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                i,
+                rusqlite::types::Type::Text,
+                format!("unknown security {value}").into(),
+            )
+        })
+    };
+    Ok(Account {
+        id: AccountId(r.get(0)?),
+        display_name: r.get(1)?,
+        email: r.get(2)?,
+        username: r.get(3)?,
+        imap: Endpoint {
+            host: r.get(4)?,
+            port: r.get(5)?,
+            security: security(6)?,
+        },
+        smtp: Endpoint {
+            host: r.get(7)?,
+            port: r.get(8)?,
+            security: security(9)?,
+        },
+    })
+}
+
+fn remove_dir(path: &Path) -> Result<()> {
+    match fs::remove_dir_all(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(e)),
+        _ => Ok(()),
+    }
+}
+
+fn io(err: std::io::Error) -> Error {
+    Error::Storage(err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn endpoint(host: &str, port: u16) -> Endpoint {
+        Endpoint {
+            host: host.into(),
+            port,
+            security: Security::ImplicitTls,
+        }
+    }
+
+    fn new_account(email: &str) -> NewAccount {
+        NewAccount {
+            display_name: "Alice".into(),
+            email: email.into(),
+            username: email.into(),
+            imap: endpoint("imap.example.test", 993),
+            smtp: endpoint("smtp.example.test", 465),
+        }
+    }
+
+    fn folder(name: &str, role: FolderRole) -> RemoteFolder {
+        RemoteFolder {
+            name: name.into(),
+            delimiter: Some("/".into()),
+            role,
+            selectable: true,
+        }
+    }
+
+    fn header(uid: u32, date: i64, seen: bool) -> MessageHeader {
+        MessageHeader {
+            uid,
+            subject: Some(format!("Message {uid}")),
+            date: Some(date),
+            flags: Flags {
+                seen,
+                ..Flags::default()
+            },
+            ..MessageHeader::default()
+        }
+    }
+
+    #[test]
+    fn accounts_round_trip_and_several_can_coexist() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory(dir.path()).unwrap();
+        let a = store.add_account(&new_account("a@example.test")).unwrap();
+        let b = store.add_account(&new_account("b@example.test")).unwrap();
+        assert_ne!(a.id, b.id);
+        assert_eq!(a.imap.port, 993);
+        assert_eq!(a.smtp.security, Security::ImplicitTls);
+        let all = store.list_accounts().unwrap();
+        assert_eq!(all, vec![a.clone(), b]);
+        store.remove_account(a.id).unwrap();
+        assert_eq!(store.list_accounts().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn folders_follow_the_server_and_sort_by_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        store
+            .sync_folders(
+                acc,
+                &[
+                    folder("Zeta", FolderRole::Other),
+                    folder("Trash", FolderRole::Trash),
+                    folder("INBOX", FolderRole::Inbox),
+                    folder("Old", FolderRole::Other),
+                ],
+            )
+            .unwrap();
+        let ids = store
+            .sync_folders(
+                acc,
+                &[
+                    folder("Zeta", FolderRole::Other),
+                    folder("Trash", FolderRole::Trash),
+                    folder("INBOX", FolderRole::Inbox),
+                ],
+            )
+            .unwrap();
+        assert_eq!(ids.len(), 3);
+        let names: Vec<_> = store
+            .list_folders(acc)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(names, ["INBOX", "Trash", "Zeta"]);
+    }
+
+    #[test]
+    fn headers_list_newest_first_with_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let (inbox, _) = store
+            .sync_folders(acc, &[folder("INBOX", FolderRole::Inbox)])
+            .unwrap()[0]
+            .clone();
+        store
+            .insert_headers(
+                inbox,
+                &[
+                    header(1, 100, true),
+                    header(2, 300, false),
+                    header(3, 200, false),
+                ],
+            )
+            .unwrap();
+        // Re-inserting updates flags instead of duplicating.
+        store
+            .insert_headers(inbox, &[header(2, 300, true)])
+            .unwrap();
+
+        let page = store.list_messages(inbox, 0, 2).unwrap();
+        assert_eq!(page.total, 3);
+        let uids: Vec<_> = page.items.iter().map(|m| m.uid).collect();
+        assert_eq!(uids, [2, 3]);
+        assert!(page.items[0].flags.seen);
+
+        let state = store.folder_state(inbox).unwrap();
+        assert_eq!((state.min_uid, state.max_uid, state.count), (1, 3, 3));
+        let folders = store.list_folders(acc).unwrap();
+        assert_eq!((folders[0].total, folders[0].unread), (3, 1));
+    }
+
+    #[test]
+    fn raw_messages_are_saved_to_disk_and_removed_with_the_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let (inbox, _) = store
+            .sync_folders(acc, &[folder("INBOX", FolderRole::Inbox)])
+            .unwrap()[0]
+            .clone();
+        store.insert_headers(inbox, &[header(7, 1, false)]).unwrap();
+        let id = store.list_messages(inbox, 0, 1).unwrap().items[0].id;
+
+        assert_eq!(store.message_source(id).unwrap().raw_path, None);
+        let path = store.save_raw(id, b"Subject: hi\r\n\r\nbody").unwrap();
+        let source = store.message_source(id).unwrap();
+        assert_eq!(source.raw_path.as_deref(), Some(path.as_path()));
+        assert_eq!((source.folder_name.as_str(), source.uid), ("INBOX", 7));
+        assert!(path.exists());
+
+        store.mark_seen(id).unwrap();
+        assert!(
+            store.list_messages(inbox, 0, 1).unwrap().items[0]
+                .flags
+                .seen
+        );
+
+        store.remove_account(acc).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn reset_folder_drops_cached_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let (inbox, _) = store
+            .sync_folders(acc, &[folder("INBOX", FolderRole::Inbox)])
+            .unwrap()[0]
+            .clone();
+        store.insert_headers(inbox, &[header(1, 1, false)]).unwrap();
+        store.set_folder_synced(inbox, Some(42), Some(2)).unwrap();
+        assert_eq!(store.folder_state(inbox).unwrap().uid_validity, Some(42));
+        store.reset_folder(acc, inbox).unwrap();
+        assert_eq!(store.folder_state(inbox).unwrap().count, 0);
+    }
+
+    #[test]
+    fn opening_on_disk_creates_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("cache")).unwrap();
+        store.add_account(&new_account("a@example.test")).unwrap();
+        drop(store);
+        let store = Store::open(&dir.path().join("cache")).unwrap();
+        assert_eq!(store.list_accounts().unwrap().len(), 1);
+    }
+}

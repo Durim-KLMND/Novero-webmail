@@ -1,0 +1,46 @@
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const dayFmt = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+const yearFmt = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+const fullFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
+
+/** Short date for the message list: time today, day this year, full date otherwise. */
+export function listDate(seconds: number | null): string {
+  if (seconds == null) return "";
+  const d = new Date(seconds * 1000);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return timeFmt.format(d);
+  if (d.getFullYear() === now.getFullYear()) return dayFmt.format(d);
+  return yearFmt.format(d);
+}
+
+export function fullDate(seconds: number | null): string {
+  return seconds == null ? "" : fullFmt.format(new Date(seconds * 1000));
+}
+
+/** "Jane Doe <jane@x.test>" becomes "Jane Doe"; a bare address stays as it is. */
+export function senderName(from: string | null): string {
+  if (!from) return "(no sender)";
+  const match = from.match(/^\s*"?([^"<]*?)"?\s*<[^>]+>\s*$/);
+  return match && match[1] ? match[1] : from;
+}
+
+export function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const folderNames: Record<string, string> = {
+  inbox: "Inbox",
+  sent: "Sent",
+  drafts: "Drafts",
+  trash: "Trash",
+  junk: "Junk",
+  archive: "Archive",
+};
+
+/** Display name of a folder: friendly names for special folders, the last path part otherwise. */
+export function folderLabel(name: string, role: string, delimiter: string | null): string {
+  if (folderNames[role]) return folderNames[role];
+  return delimiter ? name.split(delimiter).pop() || name : name;
+}

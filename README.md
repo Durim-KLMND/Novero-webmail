@@ -53,6 +53,14 @@ cargo test -p mail-sync -- --ignored
 docker compose -f testing/docker-compose.yml down
 ```
 
+To try the app against the test server, start it with `npm run tauri dev`, enter any address
+and the password `secret`, open **Server settings** and use IMAP host `127.0.0.1`, port `1143`,
+security **None (unsafe)**, username `alice`. Any SMTP host works for now; sending is not built yet.
+Add the same login again under a second address to try multiple accounts.
+
+On Windows the password is kept in Windows Credential Manager. Elsewhere it is held in memory only,
+so on Linux or macOS an account stops checking mail after the app restarts; remove and add it again.
+
 To check the TLS path against a real server (bad credentials on purpose; success is a refused login):
 
 ```sh

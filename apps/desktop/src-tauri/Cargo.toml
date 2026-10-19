@@ -14,10 +14,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
+mail-auth = { path = "../../../crates/mail-auth" }
 mail-core.workspace = true
+mail-mime = { path = "../../../crates/mail-mime" }
+mail-store = { path = "../../../crates/mail-store" }
+mail-sync = { path = "../../../crates/mail-sync" }
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tokio = { workspace = true, features = ["time"] }
 
 [lints]
 workspace = true
