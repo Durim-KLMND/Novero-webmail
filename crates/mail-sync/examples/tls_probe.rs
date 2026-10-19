@@ -13,7 +13,13 @@ async fn main() {
         port: 993,
         security: Security::ImplicitTls,
     };
-    match mail_sync::ImapSession::connect(&endpoint, "probe@example.invalid", "x").await {
+    match mail_sync::ImapSession::connect(
+        &endpoint,
+        "probe@example.invalid",
+        &mail_core::Secret::password("x"),
+    )
+    .await
+    {
         Err(mail_core::Error::Auth(e)) => println!("TLS ok, login refused as expected: {e}"),
         other => println!("unexpected: {:?}", other.map(|_| ())),
     }

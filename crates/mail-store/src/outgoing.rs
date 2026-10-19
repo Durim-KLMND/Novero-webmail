@@ -551,6 +551,7 @@ mod tests {
         };
         let account = store
             .add_account(&NewAccount {
+                auth: Default::default(),
                 display_name: "Alice".into(),
                 email: "alice@example.test".into(),
                 username: "alice".into(),

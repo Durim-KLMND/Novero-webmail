@@ -9,7 +9,8 @@ use async_imap::extensions::idle::IdleResponse;
 use async_imap::types::{Capabilities, Fetch, Flag, NameAttribute};
 use futures::TryStreamExt;
 use mail_core::{
-    Endpoint, Error, FlagKind, Flags, FolderRole, MessageHeader, RemoteFolder, Result, Security,
+    Endpoint, Error, FlagKind, Flags, FolderRole, MessageHeader, RemoteFolder, Result, Secret,
+    Security,
 };
 use rustls::pki_types::ServerName;
 use rustls_platform_verifier::BuilderVerifierExt;
@@ -44,8 +45,9 @@ pub struct FolderStatus {
 }
 
 impl ImapSession {
-    /// Connects to `endpoint` and logs in with a password.
-    pub async fn connect(endpoint: &Endpoint, username: &str, password: &str) -> Result<Self> {
+    /// Connects to `endpoint` and logs in with a password, or with an OAuth2
+    /// access token (SASL XOAUTH2).
+    pub async fn connect(endpoint: &Endpoint, username: &str, secret: &Secret) -> Result<Self> {
         let tcp = timeout(
             CONNECT_TIMEOUT,
             TcpStream::connect((endpoint.host.as_str(), endpoint.port)),
@@ -70,10 +72,16 @@ impl ImapSession {
             }
         };
 
-        let mut session = client
-            .login(username, password)
-            .await
-            .map_err(|(e, _)| Error::Auth(e.to_string()))?;
+        let mut session = match secret {
+            Secret::Password(password) => client
+                .login(username, password)
+                .await
+                .map_err(|(e, _)| refused(e))?,
+            Secret::AccessToken(token) => client
+                .authenticate("XOAUTH2", XOAuth2::new(username, token))
+                .await
+                .map_err(|(e, _)| refused(e))?,
+        };
         let caps = session.capabilities().await.map_err(protocol)?;
         Ok(Self { session, caps })
     }
@@ -325,6 +333,53 @@ where
         .map_err(|e| Error::Network(e.to_string()))?
         .ok_or_else(|| Error::Network("server closed the connection before greeting".into()))?;
     Ok(())
+}
+
+/// A refused login, with the server's own words when it gave any.
+fn refused(err: async_imap::error::Error) -> Error {
+    use async_imap::error::Error::{Bad, No};
+    let reason = match &err {
+        // The text looks like `code: None, info: Some("[AUTHENTICATIONFAILED] Bad password")`.
+        No(text) | Bad(text) => text
+            .split_once("info: Some(\"")
+            .and_then(|(_, rest)| rest.rsplit_once("\")"))
+            .map(|(info, _)| info.trim())
+            .map(|info| match info.strip_prefix('[') {
+                Some(rest) => rest.split_once(']').map_or(info, |(_, t)| t.trim()),
+                None => info,
+            })
+            .filter(|info| !info.is_empty())
+            .map(|info| format!("the server said “{info}”")),
+        _ => None,
+    };
+    Error::Auth(reason.unwrap_or_else(|| err.to_string()))
+}
+
+/// SASL XOAUTH2, as Gmail and Outlook define it. When the token is refused
+/// the server sends an error challenge, answered with an empty response.
+struct XOAuth2 {
+    initial: Option<String>,
+}
+
+impl XOAuth2 {
+    fn new(username: &str, token: &str) -> Self {
+        Self {
+            initial: Some(xoauth2(username, token)),
+        }
+    }
+}
+
+impl async_imap::Authenticator for XOAuth2 {
+    type Response = String;
+
+    fn process(&mut self, _challenge: &[u8]) -> String {
+        self.initial.take().unwrap_or_default()
+    }
+}
+
+/// The XOAUTH2 initial response, before base64.
+pub fn xoauth2(username: &str, token: &str) -> String {
+    format!("user={username}\x01auth=Bearer {token}\x01\x01")
 }
 
 async fn tls(host: &str, tcp: TcpStream) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {

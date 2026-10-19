@@ -21,6 +21,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_initial.sql"),
     include_str!("../migrations/0002_account_username.sql"),
     include_str!("../migrations/0003_drafts_and_outbox.sql"),
+    include_str!("../migrations/0004_oauth_provider.sql"),
 ];
 
 /// Schema version a fully migrated database has.

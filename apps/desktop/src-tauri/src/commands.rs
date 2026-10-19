@@ -1,20 +1,23 @@
 //! Commands the UI calls through `invoke`.
 
-use mail_auth::providers::{ProviderPreset, preset_for};
 use std::collections::BTreeMap;
 
+use mail_auth::discover::{Discovered, Discoverer};
+use mail_auth::oauth::{self, OAuthClient, Tokens};
 use mail_core::{
-    Account, AccountId, Endpoint, Error, Event, FlagKind, FolderId, FolderRole, NewAccount, Op,
-    Result,
+    Account, AccountId, AuthMethod, Endpoint, Error, Event, FlagKind, FolderId, FolderRole,
+    NewAccount, OAuthProvider, Op, Result, Secret,
 };
 use mail_mime::ParsedMessage;
 use mail_store::{Folder, MessageLocation, MessagePage};
 use mail_sync::ImapSession;
-use serde::Deserialize;
-use tauri::{AppHandle, State};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::state::{
-    AppState, emit, push_now, report_pending, request_sync, secret_key, start_account, stop_account,
+    AppState, emit, oauth_client, push_now, report_pending, request_sync, secret_key,
+    start_account, stop_account,
 };
 
 /// Version of the Rust core.
@@ -23,10 +26,27 @@ pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// Suggested server settings for an email address.
+/// Server settings found for an email address.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupInfo {
+    #[serde(flatten)]
+    settings: Discovered,
+    /// Whether this build can open the provider's sign-in page.
+    oauth_available: bool,
+}
+
+/// Looks up server settings for an email address (see `mail_auth::discover`).
 #[tauri::command]
-pub fn provider_preset(email: String) -> Option<ProviderPreset> {
-    preset_for(&email)
+pub async fn discover_settings(email: String) -> Option<SetupInfo> {
+    let settings = Discoverer::new().discover(&email).await?;
+    let oauth_available = settings
+        .oauth
+        .is_some_and(|p| OAuthClient::for_provider(p).is_some());
+    Some(SetupInfo {
+        settings,
+        oauth_available,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,26 +54,50 @@ pub fn provider_preset(email: String) -> Option<ProviderPreset> {
 pub struct AddAccountInput {
     display_name: String,
     email: String,
+    #[serde(default)]
     username: String,
+    #[serde(default)]
     password: String,
     imap: Endpoint,
     smtp: Endpoint,
+    #[serde(default)]
+    auth: AuthMethod,
 }
 
-/// Checks the login against the IMAP server, saves the account and starts its first sync.
+/// Signs in (with the password, or through the provider's page in the
+/// browser), checks the login against the IMAP server, saves the account and
+/// starts its first sync.
 #[tauri::command]
 pub async fn add_account(
     app: AppHandle,
     state: State<'_, AppState>,
     input: AddAccountInput,
 ) -> Result<Account> {
-    let email = input.email.trim().to_owned();
+    let mut email = input.email.trim().to_owned();
     if !email.contains('@') {
-        return Err(Error::Auth("enter a full email address".into()));
+        return Err(Error::Invalid("enter a full email address".into()));
     }
-    let username = match input.username.trim() {
+    let mut username = match input.username.trim() {
         "" => email.clone(),
         name => name.to_owned(),
+    };
+    let mut tokens = None;
+    let secret = match input.auth {
+        AuthMethod::Password if input.password.is_empty() => {
+            return Err(Error::Invalid("enter your password".into()));
+        }
+        AuthMethod::Password => Secret::Password(input.password),
+        AuthMethod::OAuth2 { provider } => {
+            let signed_in = browser_sign_in(&app, &state, provider, &email).await?;
+            // The account is whichever one was chosen on the sign-in page.
+            if let Some(address) = &signed_in.email {
+                email = address.clone();
+            }
+            username = email.clone();
+            let secret = Secret::AccessToken(signed_in.access_token.clone());
+            tokens = Some(signed_in);
+            secret
+        }
     };
     let duplicate = state
         .store
@@ -63,10 +107,10 @@ pub async fn add_account(
         .into_iter()
         .any(|a| a.email.eq_ignore_ascii_case(&email) && a.imap.host == input.imap.host);
     if duplicate {
-        return Err(Error::Auth(format!("{email} is already added")));
+        return Err(Error::Invalid(format!("{email} is already added")));
     }
 
-    let session = ImapSession::connect(&input.imap, &username, &input.password).await?;
+    let session = ImapSession::connect(&input.imap, &username, &secret).await?;
     let _ = session.logout().await;
 
     let account = state.store.lock().unwrap().add_account(&NewAccount {
@@ -78,8 +122,14 @@ pub async fn add_account(
         username,
         imap: input.imap,
         smtp: input.smtp,
+        auth: input.auth,
     })?;
-    if let Err(err) = state.secrets.set(&secret_key(account.id), &input.password) {
+    let saved = match (&secret, &tokens) {
+        (_, Some(tokens)) => state.keep_tokens(account.id, tokens),
+        (Secret::Password(password), None) => state.secrets.set(&secret_key(account.id), password),
+        (Secret::AccessToken(_), None) => unreachable!("tokens come with an access token"),
+    };
+    if let Err(err) = saved {
         let _ = state.store.lock().unwrap().remove_account(account.id);
         return Err(err);
     }
@@ -88,16 +138,104 @@ pub async fn add_account(
     Ok(account)
 }
 
+/// Signs an account in again: with a new password, or through the provider's
+/// page when its sign-in expired or was revoked. Then syncs it.
+#[tauri::command]
+pub async fn sign_in_again(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: AccountId,
+    password: Option<String>,
+) -> Result<Account> {
+    let account = state.account(id)?;
+    let (secret, tokens) = match account.auth {
+        AuthMethod::Password => match password.filter(|p| !p.is_empty()) {
+            Some(password) => (Secret::Password(password), None),
+            None => return Err(Error::Invalid("enter your password".into())),
+        },
+        AuthMethod::OAuth2 { provider } => {
+            let tokens = browser_sign_in(&app, &state, provider, &account.email).await?;
+            if let Some(other) = tokens
+                .email
+                .as_ref()
+                .filter(|e| !e.eq_ignore_ascii_case(&account.email))
+            {
+                return Err(Error::Auth(format!(
+                    "you signed in as {other}; choose {} on the sign-in page",
+                    account.email
+                )));
+            }
+            (
+                Secret::AccessToken(tokens.access_token.clone()),
+                Some(tokens),
+            )
+        }
+    };
+    let session = ImapSession::connect(&account.imap, &account.username, &secret).await?;
+    let _ = session.logout().await;
+    match (&secret, &tokens) {
+        (_, Some(tokens)) => state.keep_tokens(id, tokens)?,
+        (Secret::Password(password), None) => state.secrets.set(&secret_key(id), password)?,
+        (Secret::AccessToken(_), None) => unreachable!("tokens come with an access token"),
+    }
+    // Work that stopped on the old sign-in starts over.
+    stop_account(&app, id);
+    start_account(&app, id);
+    request_sync(&app, id, true);
+    Ok(account)
+}
+
+/// Stops waiting for the browser sign-in.
+#[tauri::command]
+pub fn cancel_sign_in(state: State<'_, AppState>) {
+    if let Some(cancel) = state.sign_in.lock().unwrap().take() {
+        let _ = cancel.send(());
+    }
+}
+
+/// Opens the provider's sign-in page in the browser and waits for it, unless
+/// the person cancels.
+async fn browser_sign_in(
+    app: &AppHandle,
+    state: &AppState,
+    provider: OAuthProvider,
+    login_hint: &str,
+) -> Result<Tokens> {
+    let client = oauth_client(provider)?;
+    let (cancel, cancelled) = tokio::sync::oneshot::channel();
+    if let Some(earlier) = state.sign_in.lock().unwrap().replace(cancel) {
+        // Only one sign-in page at a time; the newest one wins.
+        let _ = earlier.send(());
+    }
+    let opener = app.clone();
+    let flow = oauth::sign_in(&client, login_hint, move |url| {
+        opener
+            .opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| Error::Auth(format!("could not open the browser: {e}")))
+    });
+    let result = tokio::select! {
+        result = flow => result,
+        _ = cancelled => Err(Error::Auth("sign-in was cancelled".into())),
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        // The browser had the focus; bring the app back.
+        let _ = window.set_focus();
+    }
+    result
+}
+
 #[tauri::command]
 pub fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>> {
     state.store.lock().unwrap().list_accounts()
 }
 
-/// Removes an account, its saved password and everything cached for it.
+/// Removes an account, its saved password or sign-in and everything cached for it.
 /// Changes still waiting for the server are dropped with it.
 #[tauri::command]
 pub fn remove_account(app: AppHandle, state: State<'_, AppState>, id: AccountId) -> Result<()> {
     stop_account(&app, id);
+    state.forget_tokens(id);
     state.secrets.delete(&secret_key(id))?;
     state.store.lock().unwrap().remove_account(id)
 }
@@ -160,12 +298,13 @@ pub async fn open_message(
 pub(crate) async fn raw_message(state: &AppState, id: i64) -> Result<(Account, Vec<u8>)> {
     let source = state.store.lock().unwrap().message_source(id)?;
     let account = state.account(source.account_id)?;
-    let password = if source.raw_path.is_some() {
-        String::new()
+    let secret = if source.raw_path.is_some() {
+        // Cached: read from disk without signing in.
+        Secret::password("")
     } else {
-        state.password(account.id)?
+        state.secret(&account).await?
     };
-    let raw = mail_sync::fetch_message(&state.store, &account, &password, id).await?;
+    let raw = mail_sync::fetch_message(&state.store, &account, &secret, id).await?;
     Ok((account, raw))
 }
 

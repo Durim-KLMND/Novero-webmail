@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mail_auth::SecretStore;
-use mail_core::{Account, AccountId, Error, Event, Result};
+use mail_auth::oauth::{self, OAuthClient};
+use mail_core::{Account, AccountId, AuthMethod, Error, Event, OAuthProvider, Result, Secret};
 use mail_store::{OutboxState, Store};
 use mail_sync::{ImapSession, Scope};
 use tauri::async_runtime::JoinHandle;
@@ -25,6 +26,10 @@ const IDLE_WAIT: Duration = Duration::from_secs(25 * 60);
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_MAX: Duration = Duration::from_secs(5 * 60);
 
+/// An access token this close to expiring is replaced before use, so it
+/// cannot run out in the middle of a sync.
+const TOKEN_MARGIN: i64 = 5 * 60;
+
 pub struct AppState {
     pub store: Arc<Mutex<Store>>,
     pub secrets: Arc<dyn SecretStore>,
@@ -32,6 +37,11 @@ pub struct AppState {
     /// `Some(true)` for a full one, `Some(false)` for the inbox only.
     syncing: Mutex<HashMap<AccountId, Option<bool>>>,
     workers: Mutex<HashMap<AccountId, Worker>>,
+    /// Current OAuth2 access tokens and when they expire. Kept in memory
+    /// only; the refresh token in the credential store gets new ones.
+    tokens: Mutex<HashMap<AccountId, (String, i64)>>,
+    /// Ends the browser sign-in that is waiting, when the person cancels.
+    pub sign_in: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 /// Background tasks of one account.
@@ -48,6 +58,8 @@ impl AppState {
             secrets: mail_auth::platform_store(),
             syncing: Mutex::new(HashMap::new()),
             workers: Mutex::new(HashMap::new()),
+            tokens: Mutex::new(HashMap::new()),
+            sign_in: Mutex::new(None),
         })
     }
 
@@ -59,14 +71,59 @@ impl AppState {
             .ok_or_else(|| Error::Storage("that account no longer exists".into()))
     }
 
-    pub fn password(&self, id: AccountId) -> Result<String> {
-        self.secrets.get(&secret_key(id))?.ok_or_else(|| {
-            Error::Auth("the saved password is missing; remove the account and add it again".into())
-        })
+    /// What the account signs in with now: its password, or a current
+    /// access token, refreshed when the last one is about to expire.
+    pub async fn secret(&self, account: &Account) -> Result<Secret> {
+        let saved = self.secrets.get(&secret_key(account.id))?;
+        let provider = match account.auth {
+            AuthMethod::Password => {
+                return saved
+                    .map(Secret::Password)
+                    .ok_or_else(|| Error::Auth("the saved password is missing".into()));
+            }
+            AuthMethod::OAuth2 { provider } => provider,
+        };
+        if let Some((token, expires_at)) = self.tokens.lock().unwrap().get(&account.id)
+            && *expires_at > oauth::now() + TOKEN_MARGIN
+        {
+            return Ok(Secret::AccessToken(token.clone()));
+        }
+        let refresh_token = saved
+            .ok_or_else(|| Error::Auth(format!("the {} sign-in is missing", provider.label())))?;
+        let tokens = oauth::refresh(&oauth_client(provider)?, &refresh_token).await?;
+        self.keep_tokens(account.id, &tokens)?;
+        Ok(Secret::AccessToken(tokens.access_token))
+    }
+
+    /// Saves the refresh token, if a new one came, and caches the access token.
+    pub fn keep_tokens(&self, id: AccountId, tokens: &oauth::Tokens) -> Result<()> {
+        if let Some(refresh_token) = &tokens.refresh_token {
+            self.secrets.set(&secret_key(id), refresh_token)?;
+        }
+        self.tokens
+            .lock()
+            .unwrap()
+            .insert(id, (tokens.access_token.clone(), tokens.expires_at));
+        Ok(())
+    }
+
+    /// Forgets an account's cached access token, e.g. when it is removed.
+    pub fn forget_tokens(&self, id: AccountId) {
+        self.tokens.lock().unwrap().remove(&id);
     }
 }
 
-/// Credential store key for an account's password.
+/// The app registered with `provider`, if this build has its client id.
+pub fn oauth_client(provider: OAuthProvider) -> Result<OAuthClient> {
+    OAuthClient::for_provider(provider).ok_or_else(|| {
+        Error::Auth(format!(
+            "this version of Novero Mail cannot sign in with {}",
+            provider.label()
+        ))
+    })
+}
+
+/// Credential store key for an account's password or refresh token.
 pub fn secret_key(id: AccountId) -> String {
     format!("account-{}", id.0)
 }
@@ -169,20 +226,33 @@ async fn push_loop(app: AppHandle, id: AccountId, wake: Arc<Notify>) {
         let mut delay = RETRY_FIRST;
         loop {
             let state = app.state::<AppState>();
-            let login = state.account(id).and_then(|a| Ok((a, state.password(id)?)));
-            let (account, password) = match login {
+            let login = match state.account(id) {
+                Ok(account) => state.secret(&account).await.map(|s| (account, s)),
+                Err(e) => Err(e),
+            };
+            let (account, secret) = match login {
                 Ok(login) => login,
+                Err(Error::Network(e)) => {
+                    // The sign-in provider is out of reach: retry like any connection.
+                    report_pending(&app, id, Some(format!("offline, will retry ({e})")));
+                    tokio::select! {
+                        _ = tokio::time::sleep(delay) => {}
+                        _ = wake.notified() => {}
+                    }
+                    delay = (delay * 2).min(RETRY_MAX);
+                    continue;
+                }
                 Err(e) => {
-                    // A removed account or a missing password: nothing to retry.
+                    // A removed account or a missing or refused sign-in: nothing to retry.
                     report_pending(&app, id, Some(e.to_string()));
                     report_outbox(&app, id, Some(e.to_string()));
                     break;
                 }
             };
             let changes =
-                mail_sync::push_changes(&state.store, &account, &password, |e| emit(&app, e)).await;
+                mail_sync::push_changes(&state.store, &account, &secret, |e| emit(&app, e)).await;
             let outbox =
-                mail_send::flush_outbox(&state.store, &account, &password, |e| emit(&app, e)).await;
+                mail_send::flush_outbox(&state.store, &account, &secret, |e| emit(&app, e)).await;
 
             let offline = matches!(changes, Err(Error::Network(_)))
                 || matches!(outbox, Err(Error::Network(_)));
@@ -239,9 +309,9 @@ async fn idle_loop(app: AppHandle, id: AccountId) {
         let state = app.state::<AppState>();
         let result: Result<()> = async {
             let account = state.account(id)?;
-            let password = state.password(id)?;
+            let secret = state.secret(&account).await?;
             let mut session =
-                ImapSession::connect(&account.imap, &account.username, &password).await?;
+                ImapSession::connect(&account.imap, &account.username, &secret).await?;
             if !session.has("IDLE") {
                 return Err(Error::Protocol("the server does not support IDLE".into()));
             }
@@ -310,13 +380,13 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
     emit(app, Event::SyncStarted { account: id });
     let result = async {
         let account = state.account(id)?;
-        let password = state.password(id)?;
+        let secret = state.secret(&account).await?;
         let scope = if full {
             Scope::All
         } else {
             Scope::Folder("INBOX")
         };
-        mail_sync::sync_account(&state.store, &account, &password, scope, |e| emit(app, e)).await
+        mail_sync::sync_account(&state.store, &account, &secret, scope, |e| emit(app, e)).await
     }
     .await;
     if result.is_ok() && has_outgoing(app, id) {

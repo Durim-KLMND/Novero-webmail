@@ -1,10 +1,12 @@
-# Local mail servers for integration tests (Dovecot IMAP, Mailpit SMTP):
+# Local mail servers for integration tests (Dovecot IMAP with a fake OAuth2
+# provider on 18080, Mailpit SMTP):
 #   docker compose -f testing/docker-compose.yml up -d --build --wait
 services:
   imap:
     build: ./imap-server
     ports:
       - "1143:143"
+      - "18080:8080"
     healthcheck:
       test: ["CMD-SHELL", "doveadm mailbox list -u alice | grep -q INBOX"]
       interval: 2s

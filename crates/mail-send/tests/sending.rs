@@ -10,13 +10,19 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mail_core::{
-    Account, AccountId, Draft, DraftFields, Endpoint, Error, FolderRole, NewAccount, Security,
+    Account, AccountId, Draft, DraftFields, Endpoint, Error, FolderRole, NewAccount, Secret,
+    Security,
 };
 use mail_mime::{Sender, build_message};
 use mail_send::{flush_outbox, send_raw};
 use mail_store::{NewDraft, OutboxState, Store};
 use mail_sync::ImapSession;
 use serde_json::Value;
+
+/// Alice's password on the test servers.
+fn secret() -> Secret {
+    Secret::password("secret")
+}
 
 fn env(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.into())
@@ -116,7 +122,7 @@ async fn mail_is_sent_with_bcc_hidden_from_the_headers() {
     send_raw(
         &smtp(),
         "alice",
-        "secret",
+        &secret(),
         "alice@example.test",
         &built.recipients,
         &built.raw,
@@ -137,7 +143,7 @@ async fn a_wrong_password_is_a_login_error() {
     let err = send_raw(
         &smtp(),
         "alice",
-        "wrong",
+        &Secret::password("wrong"),
         "alice@example.test",
         &["bob@example.test".into()],
         b"Subject: x\r\n\r\nx\r\n",
@@ -152,6 +158,7 @@ async fn setup(dir: &std::path::Path, smtp: Endpoint) -> (Mutex<Store>, Account,
     let mut store = Store::open_in_memory(dir).unwrap();
     let account = store
         .add_account(&NewAccount {
+            auth: Default::default(),
             display_name: "Alice".into(),
             email: "alice@example.test".into(),
             username: "alice".into(),
@@ -160,7 +167,7 @@ async fn setup(dir: &std::path::Path, smtp: Endpoint) -> (Mutex<Store>, Account,
         })
         .unwrap();
     let sent = unique("Test-Sent");
-    let mut session = ImapSession::connect(&imap(), "alice", "secret")
+    let mut session = ImapSession::connect(&imap(), "alice", &secret())
         .await
         .unwrap();
     session.create_folder(&sent).await.unwrap();
@@ -179,7 +186,7 @@ async fn setup(dir: &std::path::Path, smtp: Endpoint) -> (Mutex<Store>, Account,
 }
 
 async fn drop_folder(name: &str) {
-    let mut session = ImapSession::connect(&imap(), "alice", "secret")
+    let mut session = ImapSession::connect(&imap(), "alice", &secret())
         .await
         .unwrap();
     let _ = session.delete_folder(name).await;
@@ -215,7 +222,7 @@ async fn mail_queued_offline_sends_after_reconnecting_and_lands_in_sent() {
     let id = format!("{}@example.test", unique("outbox"));
     let item = queue(&store, &account, &id, "bob@example.test");
 
-    let err = flush_outbox(&store, &account, "secret", |_| {})
+    let err = flush_outbox(&store, &account, &secret(), |_| {})
         .await
         .unwrap_err();
     assert!(matches!(err, Error::Network(_)), "{err}");
@@ -225,7 +232,7 @@ async fn mail_queued_offline_sends_after_reconnecting_and_lands_in_sent() {
     assert!(received(&id).is_none());
 
     account.smtp = smtp();
-    let outcome = flush_outbox(&store, &account, "secret", |_| {})
+    let outcome = flush_outbox(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(outcome.sent, 1);
@@ -234,7 +241,7 @@ async fn mail_queued_offline_sends_after_reconnecting_and_lands_in_sent() {
     assert!(store.lock().unwrap().outbox(account.id).unwrap().is_empty());
 
     // The copy is on the server, read, and already in the cache.
-    let mut session = ImapSession::connect(&imap(), "alice", "secret")
+    let mut session = ImapSession::connect(&imap(), "alice", &secret())
         .await
         .unwrap();
     session.select(&sent).await.unwrap();
@@ -264,7 +271,7 @@ async fn a_refused_message_waits_and_the_rest_still_send() {
     let refused = queue(&store, &account, &refused_id, "someone@elsewhere.invalid");
     queue(&store, &account, &ok_id, "bob@example.test");
 
-    let outcome = flush_outbox(&store, &account, "secret", |_| {})
+    let outcome = flush_outbox(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(outcome.sent, 1);
@@ -281,7 +288,7 @@ async fn a_refused_message_waits_and_the_rest_still_send() {
     );
 
     // It stays put on the next pass until the user retries it.
-    let again = flush_outbox(&store, &account, "secret", |_| {})
+    let again = flush_outbox(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!((again.sent, again.refused.len()), (0, 0));
