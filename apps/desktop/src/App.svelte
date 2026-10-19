@@ -9,7 +9,7 @@
 </script>
 
 <main>
-  <h1>Mail</h1>
+  <h1>Novero Mail</h1>
   <p>Core version: {version}</p>
 </main>
 
