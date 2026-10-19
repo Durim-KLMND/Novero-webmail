@@ -18,6 +18,16 @@ pub enum Theme {
     Dark,
 }
 
+/// Which releases updates come from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Channel {
+    #[default]
+    Stable,
+    /// Test versions before they are released, and stable releases too.
+    Beta,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -26,6 +36,11 @@ pub struct Settings {
     pub conversations: bool,
     /// Show a Windows notification when new mail arrives.
     pub notifications: bool,
+    /// Look for updates in the background and download them.
+    pub auto_update: bool,
+    pub update_channel: Channel,
+    /// After a crash, offer to send a report. Nothing is sent without asking.
+    pub crash_reports: bool,
 }
 
 impl Default for Settings {
@@ -34,6 +49,9 @@ impl Default for Settings {
             theme: Theme::System,
             conversations: true,
             notifications: true,
+            auto_update: true,
+            update_channel: Channel::Stable,
+            crash_reports: true,
         }
     }
 }
@@ -99,7 +117,8 @@ mod tests {
             .unwrap();
         let loaded = Settings::load(&store);
         assert_eq!(loaded.theme, Theme::Dark);
-        assert!(loaded.conversations && loaded.notifications);
+        assert!(loaded.conversations && loaded.notifications && loaded.auto_update);
+        assert_eq!(loaded.update_channel, Channel::Stable);
         let off = Settings {
             notifications: false,
             ..loaded

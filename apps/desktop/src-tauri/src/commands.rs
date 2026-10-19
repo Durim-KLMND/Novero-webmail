@@ -519,7 +519,10 @@ pub(crate) fn change(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn version_matches_the_package() {
-        assert_eq!(super::app_version(), "0.1.0");
+    fn version_matches_the_installer() {
+        // The updater compares installers by the version in tauri.conf.json.
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(super::app_version(), config["version"]);
     }
 }

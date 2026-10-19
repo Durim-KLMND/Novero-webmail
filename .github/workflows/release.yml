@@ -1,0 +1,113 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 (stable) or v0.2.0-beta.1 (beta) builds the
+# Windows installer, signs it, and publishes it with its update manifest.
+# One-time setup and the steps for a release are in docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build and publish
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      # Code signing with Azure Trusted Signing, once it is set up.
+      SIGN: ${{ secrets.AZURE_CLIENT_ID != '' && vars.AZURE_SIGNING_ACCOUNT != '' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Check the tag matches the app version
+        run: node scripts/check-version.mjs "$TAG"
+      - name: Check the update key is set up
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBKEY: ${{ vars.NOVERO_UPDATER_PUBKEY }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$PUBKEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY secret and the NOVERO_UPDATER_PUBKEY variable (docs/releasing.md)."
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Install the signing tool
+        if: env.SIGN == 'true'
+        run: cargo install trusted-signing-cli --locked
+      - name: Build the installer
+        working-directory: apps/desktop
+        env:
+          NOVERO_GOOGLE_CLIENT_ID: ${{ secrets.NOVERO_GOOGLE_CLIENT_ID }}
+          NOVERO_GOOGLE_CLIENT_SECRET: ${{ secrets.NOVERO_GOOGLE_CLIENT_SECRET }}
+          NOVERO_MICROSOFT_CLIENT_ID: ${{ secrets.NOVERO_MICROSOFT_CLIENT_ID }}
+          NOVERO_UPDATER_PUBKEY: ${{ vars.NOVERO_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          config=$(node -e '
+            const config = { bundle: { createUpdaterArtifacts: true } };
+            if (process.env.SIGN === "true") {
+              const e = process.env;
+              config.bundle.windows = {
+                signCommand: `trusted-signing-cli -e ${e.AZURE_SIGNING_ENDPOINT} -a ${e.AZURE_SIGNING_ACCOUNT} -c ${e.AZURE_SIGNING_PROFILE} -d NoveroMail %1`,
+              };
+            }
+            console.log(JSON.stringify(config));
+          ')
+          [ "$SIGN" = true ] || echo "::warning::The installer is not code signed; Windows SmartScreen will warn about it."
+          npx tauri build --ci --config "$config"
+      - name: Publish the release
+        run: |
+          version="${TAG#v}"
+          case "$version" in *-*) kind=--prerelease ;; *) kind=--latest ;; esac
+          cd target/release/bundle/nsis
+          # GitHub turns spaces in asset names into dots, which would break the links.
+          name="Novero-Mail_${version}_x64-setup.exe"
+          mv ./*-setup.exe "$name"
+          mv ./*-setup.exe.sig "$name.sig"
+          # A release published on GitHub's Releases page keeps its title and notes.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$name" "$name.sig" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false $kind
+          else
+            gh release create "$TAG" "$name" "$name.sig" --repo "$GITHUB_REPOSITORY" \
+              --title "Novero Mail $version" --generate-notes $kind
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
+          node "$GITHUB_WORKSPACE/scripts/update-manifest.mjs" "$version" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name" "$name.sig" notes.md
+          # Stable users read the newest stable release's manifest.
+          gh release upload "$TAG" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          # Beta users read this copy, which every release replaces.
+          if ! gh release view beta-channel --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create beta-channel --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+              --title "Beta channel" --notes "Update manifest for the beta channel. Download installers from the releases themselves."
+          fi
+          gh release upload beta-channel latest.json --clobber --repo "$GITHUB_REPOSITORY"

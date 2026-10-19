@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorText, type Account, type Settings, type Theme } from "./api";
+  import { api, errorText, type Account, type Settings, type Theme, type UpdateChannel, type UpdateInfo } from "./api";
   import { applyTheme } from "./theme";
 
   interface Props {
@@ -8,8 +8,10 @@
     settings: Settings;
     /** Closed; `saved` holds the new settings when anything was saved. */
     onClose: (saved: Settings | null, signaturesChanged: boolean) => void;
+    /** An update was found with Check now. */
+    onUpdate: (update: UpdateInfo) => void;
   }
-  let { accounts, settings, onClose }: Props = $props();
+  let { accounts, settings, onClose, onUpdate }: Props = $props();
 
   // svelte-ignore state_referenced_locally
   let draft = $state<Settings>({ ...settings });
@@ -25,7 +27,50 @@
     { value: "dark", label: "Dark" },
   ];
 
-  onMount(() => dialog?.querySelector<HTMLElement>("input, textarea, button")?.focus());
+  const channels: { value: UpdateChannel; label: string; hint: string }[] = [
+    { value: "stable", label: "Stable", hint: "Tested releases" },
+    { value: "beta", label: "Beta", hint: "New versions first, before they are released to everyone" },
+  ];
+
+  let version = $state("");
+  let canUpdate = $state(false);
+  let checking = $state(false);
+  let checkResult = $state("");
+
+  onMount(async () => {
+    dialog?.querySelector<HTMLElement>("input, textarea, button")?.focus();
+    try {
+      [version, canUpdate] = await Promise.all([api.appVersion(), api.updatesAvailable()]);
+    } catch {
+      // The section just shows less.
+    }
+  });
+
+  async function checkNow() {
+    checking = true;
+    checkResult = "";
+    try {
+      const found = await api.checkForUpdate(draft.updateChannel);
+      if (found) {
+        checkResult = `Version ${found.version} is ready to install.`;
+        onUpdate(found);
+      } else {
+        checkResult = "You have the newest version.";
+      }
+    } catch (err) {
+      checkResult = `Couldn't check for updates. ${errorText(err)}`;
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function defaultApp() {
+    try {
+      await api.openDefaultApps();
+    } catch (err) {
+      error = errorText(err);
+    }
+  }
 
   // Show the theme as soon as it is picked; Cancel puts the old one back.
   $effect(() => applyTheme(draft.theme));
@@ -105,6 +150,50 @@
           <textarea rows="3" bind:value={signatures[a.id]} placeholder="Added below new messages and replies"></textarea>
         </label>
       {/each}
+    </fieldset>
+
+    <fieldset>
+      <legend>Updates</legend>
+      {#if canUpdate}
+        <label class="check">
+          <input type="checkbox" bind:checked={draft.autoUpdate} />
+          <span>
+            Download updates automatically
+            <small class="quiet">You choose when to restart and install them.</small>
+          </span>
+        </label>
+        <div class="choices channel">
+          {#each channels as c (c.value)}
+            <label class="choice" title={c.hint}>
+              <input type="radio" name="channel" value={c.value} bind:group={draft.updateChannel} />
+              {c.label}
+            </label>
+          {/each}
+        </div>
+        <small class="quiet">{channels.find((c) => c.value === draft.updateChannel)?.hint}</small>
+        <div class="row">
+          <button onclick={checkNow} disabled={checking}>{checking ? "Checking…" : "Check now"}</button>
+          <span class="quiet" role="status">{checkResult}</span>
+        </div>
+      {:else}
+        <p class="quiet">This copy of Novero Mail can't update itself. Download new versions from the releases page.</p>
+      {/if}
+      {#if version}<small class="quiet">Novero Mail {version}</small>{/if}
+    </fieldset>
+
+    <fieldset>
+      <legend>Windows</legend>
+      <div class="row">
+        <button onclick={defaultApp}>Make Novero Mail the default email app…</button>
+      </div>
+      <small class="quiet">Opens Windows settings, where email links are set to open here.</small>
+      <label class="check crash">
+        <input type="checkbox" bind:checked={draft.crashReports} />
+        <span>
+          Offer to send a crash report after a problem
+          <small class="quiet">You see each report first. Nothing is sent without asking.</small>
+        </span>
+      </label>
     </fieldset>
 
     {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -191,6 +280,24 @@
   textarea:focus {
     outline: 2px solid var(--accent-ink);
     outline-offset: 1px;
+  }
+  .channel {
+    margin: 10px 0 2px;
+  }
+  .row button {
+    white-space: nowrap;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0 6px;
+  }
+  .check.crash {
+    margin-top: 12px;
+  }
+  fieldset > small {
+    display: block;
   }
   .buttons {
     display: flex;

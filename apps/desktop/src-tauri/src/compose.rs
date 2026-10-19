@@ -28,6 +28,21 @@ pub fn new_draft(state: State<'_, AppState>, account: AccountId) -> Result<Draft
     state.store.lock().unwrap().create_draft(draft)
 }
 
+/// A draft from `account` filled in from a `mailto:` link, as clicked on a
+/// web page or in another app.
+#[tauri::command]
+pub fn mailto_draft(state: State<'_, AppState>, account: AccountId, link: String) -> Result<Draft> {
+    let account = state.account(account)?;
+    let mut fields = mail_mime::parse_mailto(&link)
+        .ok_or_else(|| Error::Invalid("that isn't an email link".into()))?;
+    fields
+        .body
+        .push_str(&with_signature("", &account.signature));
+    let mut draft = NewDraft::new(account.id, mail_mime::new_message_id(&account.email));
+    draft.fields = fields;
+    state.store.lock().unwrap().create_draft(draft)
+}
+
 /// Puts the signature above `body` (a quote or forwarded text, which starts
 /// with blank lines for the reply), after the usual "-- " separator.
 pub fn with_signature(body: &str, signature: &str) -> String {

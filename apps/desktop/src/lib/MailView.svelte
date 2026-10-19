@@ -3,8 +3,11 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api,
+    defaultSettings,
     errorText,
     onMailEvent,
+    onMailto,
+    onUpdateReady,
     type Account,
     type Draft,
     type FlagKind,
@@ -13,6 +16,7 @@
     type MailEvent,
     type MessageSummary,
     type Settings,
+    type UpdateInfo,
   } from "./api";
   import { folderLabel } from "./format";
   import { toast } from "./toast.svelte";
@@ -26,6 +30,7 @@
   import SettingsDialog from "./SettingsDialog.svelte";
   import ShortcutHelp from "./ShortcutHelp.svelte";
   import Toasts from "./Toasts.svelte";
+  import CrashReport from "./CrashReport.svelte";
 
   interface Props {
     accounts: Account[];
@@ -46,7 +51,10 @@
   let list = $state<ReturnType<typeof MessageList>>();
   let reader = $state<ReturnType<typeof Reader>>();
   let sidebar = $state<ReturnType<typeof Sidebar>>();
-  let settings = $state<Settings>({ theme: "system", conversations: true, notifications: true });
+  let settings = $state<Settings>({ ...defaultSettings });
+  /** A downloaded update, and a crash report waiting for an answer. */
+  let update = $state<UpdateInfo | null>(null);
+  let crashReport = $state<string | null>(null);
   let showSettings = $state(false);
   let showHelp = $state(false);
   /** The right pane shows the composer, an account's outbox, or the reader. */
@@ -103,10 +111,45 @@
     try {
       settings = await api.getSettings();
       applyTheme(settings.theme);
+      update = await api.readyUpdate();
+      crashReport = await api.crashReport();
     } catch (err) {
       say(errorText(err));
     }
+    // The app may have been started by clicking an email link.
+    openMailto();
   });
+
+  const unlistenUpdate = onUpdateReady((found) => (update = found));
+  const unlistenMailto = onMailto(openMailto);
+
+  async function openMailto() {
+    const link = await api.takeMailto().catch(() => null);
+    const account = selectedFolder?.accountId ?? accounts[0]?.id;
+    if (link && account != null) openComposer(() => api.mailtoDraft(account, link));
+  }
+
+  async function installUpdate() {
+    // Nothing typed is lost: the draft is saved before the app closes.
+    await leaveComposer();
+    try {
+      await api.installUpdate();
+    } catch (err) {
+      say(`The update could not be installed. ${errorText(err)}`);
+      update = null;
+    }
+  }
+
+  async function crashClosed(never: boolean) {
+    crashReport = null;
+    if (never) {
+      try {
+        settings = await api.saveSettings({ ...settings, crashReports: false });
+      } catch (err) {
+        say(errorText(err));
+      }
+    }
+  }
 
   function stateOf(account: number): SyncState {
     return (
@@ -213,6 +256,8 @@
   });
   onDestroy(() => {
     unlisten.then((fn) => fn());
+    unlistenUpdate.then((fn) => fn());
+    unlistenMailto.then((fn) => fn());
     clearTimeout(refreshTimer);
   });
 
@@ -456,6 +501,8 @@
     onSignInAgain={(account) => (signingIn = account)}
     onCompose={compose}
     onOutbox={showOutbox}
+    {update}
+    onInstallUpdate={installUpdate}
   />
   <MessageList
     bind:this={list}
@@ -506,7 +553,10 @@
     <SignInAgain account={signingIn} onDone={signInDone} />
   {/if}
   {#if showSettings}
-    <SettingsDialog {accounts} {settings} onClose={settingsClosed} />
+    <SettingsDialog {accounts} {settings} onClose={settingsClosed} onUpdate={(found) => (update = found)} />
+  {/if}
+  {#if crashReport}
+    <CrashReport report={crashReport} onClose={crashClosed} />
   {/if}
   {#if showHelp}
     <ShortcutHelp onClose={() => (showHelp = false)} />

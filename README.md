@@ -2,6 +2,14 @@
 
 A Windows desktop email client with a Rust core and a Tauri 2 shell. IMAP and SMTP first.
 
+## Download
+
+Get the installer (`Novero-Mail_…_x64-setup.exe`) from the
+[releases page](https://github.com/Durim-KLMND/Novero-webmail/releases). It installs for the
+current user without administrator rights and keeps itself up to date. Test versions are marked
+as pre-releases; to receive them, pick **Beta** under Settings → Updates. How releases are made
+is in [docs/releasing.md](docs/releasing.md).
+
 ## Layout
 
 | Path | What it is |
@@ -30,7 +38,7 @@ The protocol crates do not depend on Tauri, so they build and test headless.
 cd apps/desktop
 npm install
 npm run tauri dev        # run the app with hot reload
-npm run tauri build      # build MSI and NSIS installers into target/release/bundle
+npm run tauri build      # build the installer into target/release/bundle/nsis
 ```
 
 From the repository root:
@@ -114,10 +122,13 @@ offers app passwords for Gmail and can't add Outlook.com or Microsoft 365 accoun
 
 `.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
 
-- **Frontend**: `svelte-check` and a production build.
+- **Frontend**: checks the app version agrees across files, then `svelte-check` and a production build.
 - **Rust**: `cargo fmt --check`, `cargo clippy` with warnings as errors, and the workspace tests on Linux.
 - **Integration**: starts the Dovecot test server and runs the IMAP tests against it.
 - **Dependencies**: `cargo deny check` against `deny.toml`.
-- **Windows**: workspace tests. Pushes to `main` also build the unsigned MSI and NSIS installers and upload them as a build artifact; pull requests skip that build, since it takes most of the job. To get installers for a branch, run the workflow on it by hand (**Actions → CI → Run workflow**).
+- **Windows**: workspace tests. Pushes to `main` also build the installer and upload it as a build artifact; pull requests skip that build, since it takes most of the job. To get an installer for a branch, run the workflow on it by hand (**Actions → CI → Run workflow**).
 
 Pull requests reuse the build cache from `main` but don't save their own, which saves several minutes per run.
+
+`.github/workflows/release.yml` runs on version tags and publishes releases; see
+[docs/releasing.md](docs/releasing.md).

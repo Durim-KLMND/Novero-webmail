@@ -18,7 +18,7 @@
 </script>
 
 <script lang="ts">
-  import type { Account, Folder } from "./api";
+  import type { Account, Folder, UpdateInfo } from "./api";
   import { errorText } from "./api";
 
   /** A dropped connection is expected and recovers by itself, so it is not shown as an error. */
@@ -46,6 +46,9 @@
     onSignInAgain: (account: Account) => void;
     onCompose: () => void;
     onOutbox: (account: number) => void;
+    /** A downloaded update, offered at the bottom. */
+    update: UpdateInfo | null;
+    onInstallUpdate: () => void;
   }
   let {
     accounts,
@@ -64,6 +67,8 @@
     onSignInAgain,
     onCompose,
     onOutbox,
+    update,
+    onInstallUpdate,
   }: Props = $props();
 
   /** A refused password or an expired sign-in: fixed by signing in again. */
@@ -248,6 +253,12 @@
       </section>
     {/each}
   </div>
+  {#if update}
+    <div class="update" title={update.notes ?? ""}>
+      <span>Version {update.version} is ready</span>
+      <button class="primary" onclick={onInstallUpdate}>Restart to update</button>
+    </div>
+  {/if}
   <div class="footer">
     <button class="add" onclick={onAddAccount}>＋ Add account</button>
     <button class="tool" onclick={onHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
@@ -390,6 +401,15 @@
   }
   .empty {
     padding: 6px 12px 6px 24px;
+    font-size: 13px;
+  }
+  .update {
+    display: grid;
+    gap: 6px;
+    margin: 8px 8px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     font-size: 13px;
   }
   .footer {
