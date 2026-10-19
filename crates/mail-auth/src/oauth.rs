@@ -124,10 +124,8 @@ pub async fn sign_in(
     login_hint: &str,
     open: impl FnOnce(&str) -> Result<()>,
 ) -> Result<Tokens> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .map_err(|e| Error::Network(format!("could not wait for the sign-in page: {e}")))?;
-    let port = listener.local_addr().map_err(io)?.port();
+    let listener = Loopback::bind().await?;
+    let port = listener.port;
     let redirect_uri = format!("http://{}:{port}", client.redirect_host);
     let verifier = random_string(32)?;
     let state = random_string(16)?;
@@ -239,10 +237,41 @@ async fn request_tokens(client: &OAuthClient, form: &[(&str, &str)]) -> Result<T
     })
 }
 
+/// Where the browser comes back to. Microsoft sends it to `localhost`, which
+/// browsers on Windows may try over IPv6 first, so the same port listens on
+/// `::1` too when the system has it.
+struct Loopback {
+    v4: TcpListener,
+    v6: Option<TcpListener>,
+    port: u16,
+}
+
+impl Loopback {
+    async fn bind() -> Result<Self> {
+        let v4 = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|e| Error::Network(format!("could not wait for the sign-in page: {e}")))?;
+        let port = v4.local_addr().map_err(io)?.port();
+        let v6 = TcpListener::bind(("::1", port)).await.ok();
+        Ok(Self { v4, v6, port })
+    }
+
+    async fn accept(&self) -> std::io::Result<TcpStream> {
+        let (stream, _) = match &self.v6 {
+            Some(v6) => tokio::select! {
+                accepted = self.v4.accept() => accepted?,
+                accepted = v6.accept() => accepted?,
+            },
+            None => self.v4.accept().await?,
+        };
+        Ok(stream)
+    }
+}
+
 /// Accepts browser requests until the one carrying the sign-in result.
-async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
+async fn wait_for_code(listener: &Loopback, state: &str) -> Result<String> {
     loop {
-        let (stream, _) = listener.accept().await.map_err(io)?;
+        let stream = listener.accept().await.map_err(io)?;
         if let Some(result) = answer_redirect(stream, state).await {
             return result;
         }
@@ -529,6 +558,32 @@ mod tests {
                 "{}/?error=access_denied&state={}",
                 q["redirect_uri"], q["state"]
             );
+            tokio::spawn(async move { crate::http::client().unwrap().get(back).send().await });
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "authentication failed: sign-in was cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_browser_can_come_back_over_ipv6() {
+        if TcpListener::bind(("::1", 0)).await.is_err() {
+            return; // No IPv6 loopback on this machine.
+        }
+        let client = OAuthClient {
+            redirect_host: "localhost".into(),
+            ..fake_client("http://127.0.0.1:9")
+        };
+        let err = sign_in(&client, "a@b.test", |url| {
+            let url = Url::parse(url).unwrap();
+            let q: std::collections::HashMap<_, _> = url.query_pairs().collect();
+            // As a browser that resolves localhost to ::1 first.
+            let back = q["redirect_uri"].replace("localhost", "[::1]");
+            let back = format!("{back}/?error=access_denied&state={}", q["state"]);
             tokio::spawn(async move { crate::http::client().unwrap().get(back).send().await });
             Ok(())
         })

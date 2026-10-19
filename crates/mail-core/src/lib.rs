@@ -402,7 +402,11 @@ pub struct DraftFields {
     pub cc: String,
     pub bcc: String,
     pub subject: String,
+    /// The text as typed. With formatting it is the plain-text copy of `html`.
     pub body: String,
+    /// The formatted text; empty for plain-text messages.
+    #[serde(default)]
+    pub html: String,
 }
 
 /// A file attached to a draft. The file itself is kept by the store.

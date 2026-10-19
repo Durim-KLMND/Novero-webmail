@@ -44,6 +44,34 @@ pub async fn send_raw(
     let envelope = Envelope::new(Some(address(from)?), to)
         .map_err(|e| Error::Invalid(format!("the message has no recipients: {e}")))?;
 
+    transport(endpoint, username, secret)?
+        .send_raw(&envelope, raw)
+        .await
+        .map(|_| ())
+        .map_err(|e| smtp_error(&endpoint.host, e))
+}
+
+/// Signs in to the SMTP server and leaves, to find out before saving an
+/// account whether it will be able to send.
+pub async fn check_login(endpoint: &Endpoint, username: &str, secret: &Secret) -> Result<()> {
+    match transport(endpoint, username, secret)?
+        .test_connection()
+        .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(Error::Network(format!(
+            "{} closed the connection",
+            endpoint.host
+        ))),
+        Err(e) => Err(smtp_error(&endpoint.host, e)),
+    }
+}
+
+fn transport(
+    endpoint: &Endpoint,
+    username: &str,
+    secret: &Secret,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>> {
     let tls = || {
         TlsParameters::builder(endpoint.host.clone())
             .build_rustls()
@@ -58,18 +86,15 @@ pub async fn send_raw(
         Secret::Password(password) => (password, vec![Mechanism::Plain, Mechanism::Login]),
         Secret::AccessToken(token) => (token, vec![Mechanism::Xoauth2]),
     };
-    let transport = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(endpoint.host.as_str())
-        .port(endpoint.port)
-        .tls(tls)
-        .credentials(Credentials::new(username.to_owned(), secret.to_owned()))
-        .authentication(mechanisms)
-        .timeout(Some(SEND_TIMEOUT))
-        .build();
-    transport
-        .send_raw(&envelope, raw)
-        .await
-        .map(|_| ())
-        .map_err(|e| smtp_error(&endpoint.host, e))
+    Ok(
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(endpoint.host.as_str())
+            .port(endpoint.port)
+            .tls(tls)
+            .credentials(Credentials::new(username.to_owned(), secret.to_owned()))
+            .authentication(mechanisms)
+            .timeout(Some(SEND_TIMEOUT))
+            .build(),
+    )
 }
 
 /// Sorts SMTP failures into what happens next: a refused message waits for
@@ -79,7 +104,9 @@ fn smtp_error(host: &str, err: lettre::transport::smtp::Error) -> Error {
     let code = err.status().map(|c| c.to_string());
     if err.is_permanent() {
         return match code.as_deref() {
-            Some(code) if is_login_code(code) => Error::Auth(err.to_string()),
+            Some(code) if is_login_code(code) => {
+                Error::Auth(format!("{err}{}", login_advice(&err.to_string())))
+            }
             _ => Error::Rejected(err.to_string()),
         };
     }
@@ -87,6 +114,18 @@ fn smtp_error(host: &str, err: lettre::transport::smtp::Error) -> Error {
         return Error::Network(format!("{host} asked to try again later: {err}"));
     }
     Error::Network(format!("could not send through {host}: {err}"))
+}
+
+/// What to do about a refused login, for the replies that say why.
+fn login_advice(reply: &str) -> &'static str {
+    if reply.contains("5.7.139") || reply.contains("SmtpClientAuthentication") {
+        ". Sending through SMTP is turned off for this mailbox; an admin can turn on \
+         Authenticated SMTP for it in the Exchange admin center"
+    } else if reply.contains("5.7.9") || reply.contains("Application-specific password") {
+        ". This account needs an app password instead of its normal password"
+    } else {
+        ""
+    }
 }
 
 /// 530, 534 and 535 are about the login, not the message.
@@ -206,6 +245,22 @@ fn saves_sent_itself(account: &Account) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refused_logins_say_what_to_do() {
+        assert!(
+            login_advice("535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant.")
+                .contains("Authenticated SMTP")
+        );
+        assert!(
+            login_advice("534 5.7.9 Application-specific password required.")
+                .contains("app password")
+        );
+        assert_eq!(
+            login_advice("535 5.7.8 Username and Password not accepted."),
+            ""
+        );
+    }
 
     #[test]
     fn providers_that_file_sent_mail_are_recognised_by_imap_host() {

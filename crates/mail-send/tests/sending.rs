@@ -14,7 +14,7 @@ use mail_core::{
     Security,
 };
 use mail_mime::{Sender, build_message};
-use mail_send::{flush_outbox, send_raw};
+use mail_send::{check_login, flush_outbox, send_raw};
 use mail_store::{NewDraft, OutboxState, Store};
 use mail_sync::ImapSession;
 use serde_json::Value;
@@ -151,6 +151,19 @@ async fn a_wrong_password_is_a_login_error() {
     .await
     .unwrap_err();
     assert!(matches!(err, Error::Auth(_)), "{err}");
+}
+
+#[tokio::test]
+#[ignore = "needs the test mail servers: docker compose -f testing/docker-compose.yml up -d"]
+async fn the_login_is_checked_without_sending() {
+    check_login(&smtp(), "alice", &secret()).await.unwrap();
+    let err = check_login(&smtp(), "alice", &Secret::password("wrong"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Auth(_)), "{err}");
+    let nowhere = Endpoint { port: 9, ..smtp() };
+    let err = check_login(&nowhere, "alice", &secret()).await.unwrap_err();
+    assert!(matches!(err, Error::Network(_)), "{err}");
 }
 
 /// A store with Alice's account. A scratch folder stands in for Sent.

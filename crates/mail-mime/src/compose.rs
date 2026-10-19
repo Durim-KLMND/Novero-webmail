@@ -163,6 +163,12 @@ pub fn build_message(
             .message_id(draft.message_id.as_str())
             .date(Date::new(date))
             .text_body(crlf(&draft.fields.body));
+        if !draft.fields.html.trim().is_empty() {
+            message = message.html_body(format!(
+                "<!DOCTYPE html><html><body>{}</body></html>",
+                crate::clean_compose_html(&draft.fields.html)
+            ));
+        }
         if !to.is_empty() {
             message = message.to(address_list(&to));
         }
@@ -303,6 +309,7 @@ pub fn reply(raw: &[u8], mode: ReplyMode, own: &[&str]) -> Result<Prefill> {
             bcc: String::new(),
             subject: prefixed("Re:", message.subject()),
             body,
+            html: String::new(),
         },
         in_reply_to: message_id,
         references,
@@ -346,11 +353,32 @@ pub fn reopen(raw: &[u8]) -> Result<Prefill> {
             bcc: list(message.bcc()),
             subject: message.subject().unwrap_or_default().to_owned(),
             body: body_text(&message).replace("\r\n", "\n"),
+            // Formatting is kept when the draft was written with it.
+            html: message
+                .html_part(0)
+                .filter(|p| p.is_text_html())
+                .and_then(|p| p.text_contents())
+                .map(|html| crate::clean_compose_html(body_of(html)))
+                .unwrap_or_default(),
         },
         in_reply_to: ids(message.in_reply_to()).into_iter().next(),
         references: ids(message.references()),
         attachments: attachments(&message),
     })
+}
+
+/// The part of an HTML document inside `<body>`, or all of it.
+fn body_of(html: &str) -> &str {
+    let lower = html.to_ascii_lowercase();
+    let start = lower
+        .find("<body")
+        .and_then(|i| lower[i..].find('>').map(|j| i + j + 1))
+        .unwrap_or(0);
+    let end = lower
+        .rfind("</body>")
+        .filter(|&e| e >= start)
+        .unwrap_or(html.len());
+    &html[start..end]
 }
 
 /// A new Message-ID (without angle brackets) in the sender's domain. The
@@ -557,6 +585,7 @@ mod tests {
             bcc: "dave@example.test".into(),
             subject: "Grüße".into(),
             body: "Hi Bob,\nsee attached.".into(),
+            ..DraftFields::default()
         });
         d.in_reply_to = Some("orig@example.test".into());
         d.references = vec!["root@example.test".into(), "orig@example.test".into()];
@@ -597,6 +626,55 @@ mod tests {
             copy.bcc().unwrap().first().unwrap().address(),
             Some("dave@example.test")
         );
+    }
+
+    #[test]
+    fn formatted_mail_carries_both_versions_and_reopens_formatted() {
+        let d = draft(DraftFields {
+            to: "bob@example.test".into(),
+            subject: "Plan".into(),
+            body: "Hi Bob,\n- one\n- two".into(),
+            html: r#"<div>Hi <b>Bob</b>,</div><ul><li>one</li><li><a href="https://example.test" onclick="x()">two</a></li></ul><script>alert(1)</script><img src="https://track.example/p.gif">"#.into(),
+            ..DraftFields::default()
+        });
+        let built = build_message(ME, &d, &[], 1_792_400_400, true).unwrap();
+        let sent = MessageParser::default().parse(&built.raw).unwrap();
+        assert_eq!(
+            sent.body_text(0).unwrap().trim_end(),
+            "Hi Bob,\r\n- one\r\n- two"
+        );
+        let html = sent.body_html(0).unwrap();
+        assert!(html.contains("Hi <b>Bob</b>,"), "{html}");
+        assert!(
+            html.contains(r#"<a href="https://example.test" rel="noopener noreferrer">two</a>"#),
+            "{html}"
+        );
+        assert!(
+            !html.contains("script") && !html.contains("onclick") && !html.contains("img"),
+            "{html}"
+        );
+
+        let reopened = reopen(&built.copy).unwrap();
+        assert_eq!(reopened.fields.body, "Hi Bob,\n- one\n- two");
+        assert!(
+            reopened
+                .fields
+                .html
+                .starts_with("<div>Hi <b>Bob</b>,</div><ul>"),
+            "{}",
+            reopened.fields.html
+        );
+
+        // Plain-text drafts stay plain.
+        let plain = draft(DraftFields {
+            to: "bob@example.test".into(),
+            body: "Just text".into(),
+            ..DraftFields::default()
+        });
+        let built = build_message(ME, &plain, &[], 1_792_400_400, true).unwrap();
+        let sent = MessageParser::default().parse(&built.raw).unwrap();
+        assert!(sent.html_part(0).is_none_or(|p| !p.is_text_html()));
+        assert_eq!(reopen(&built.raw).unwrap().fields.html, "");
     }
 
     #[test]

@@ -14,7 +14,7 @@ pub use compose::{
     BuiltMessage, Mailbox, Prefill, ReplyMode, Sender, build_message, forward, message_id_of,
     new_message_id, parse_addresses, reopen, reply,
 };
-pub use html::{SanitizedHtml, sanitize_html};
+pub use html::{SanitizedHtml, clean_compose_html, sanitize_html};
 pub use mail_core::{Error, Result};
 pub use mailto::parse_mailto;
 pub use parse::{
