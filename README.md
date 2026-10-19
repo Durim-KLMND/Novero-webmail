@@ -1,7 +1,6 @@
-# Mail
+# Novero Mail
 
 A Windows desktop email client with a Rust core and a Tauri 2 shell. IMAP and SMTP first.
-"Mail" is a working name until the product is named.
 
 ## Layout
 

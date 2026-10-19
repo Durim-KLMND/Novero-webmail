@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-description = "Windows desktop shell for the mail client."
+description = "Windows desktop shell for Novero Mail."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
