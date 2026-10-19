@@ -15,7 +15,7 @@
     type Settings,
   } from "./api";
   import { folderLabel } from "./format";
-  import { toast } from "./toasts.svelte";
+  import { toast } from "./toast.svelte";
   import { applyTheme } from "./theme";
   import Sidebar, { type SyncState } from "./Sidebar.svelte";
   import MessageList from "./MessageList.svelte";
