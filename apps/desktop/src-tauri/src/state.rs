@@ -1,5 +1,6 @@
 //! Shared state behind the commands, and the background work for each account:
-//! syncing, pushing local changes to the server, and IDLE on the inbox.
+//! syncing, pushing local changes, drafts and outgoing mail to the servers,
+//! and IDLE on the inbox.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -8,7 +9,7 @@ use std::time::Duration;
 
 use mail_auth::SecretStore;
 use mail_core::{Account, AccountId, Error, Event, Result};
-use mail_store::Store;
+use mail_store::{OutboxState, Store};
 use mail_sync::{ImapSession, Scope};
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
@@ -128,48 +129,103 @@ pub fn report_pending(app: &AppHandle, id: AccountId, error: Option<String>) {
     );
 }
 
-/// Sends queued changes whenever woken, retrying with backoff while offline.
-/// This is the only task that sends an account's changes, so none goes twice.
+/// Tells the UI how many messages wait to send or were refused.
+pub fn report_outbox(app: &AppHandle, id: AccountId, error: Option<String>) {
+    let (queued, failed) = app
+        .state::<AppState>()
+        .store
+        .lock()
+        .unwrap()
+        .outbox_counts(id)
+        .unwrap_or_default();
+    emit(
+        app,
+        Event::OutboxChanged {
+            account: id,
+            queued,
+            failed,
+            error,
+        },
+    );
+}
+
+/// Whether the account has changes, drafts or mail still to send.
+fn has_outgoing(app: &AppHandle, id: AccountId) -> bool {
+    let state = app.state::<AppState>();
+    let store = state.store.lock().unwrap();
+    store.pending_count(id).unwrap_or(0) > 0
+        || store.drafts_to_upload(id).is_ok_and(|d| !d.is_empty())
+        || store
+            .outbox(id)
+            .is_ok_and(|o| o.iter().any(|i| i.state != OutboxState::Failed))
+}
+
+/// Sends queued changes, drafts and mail whenever woken, retrying with backoff
+/// while offline. This is the only task that sends an account's changes and
+/// mail, so nothing goes twice.
 async fn push_loop(app: AppHandle, id: AccountId, wake: Arc<Notify>) {
     loop {
         wake.notified().await;
         let mut delay = RETRY_FIRST;
         loop {
             let state = app.state::<AppState>();
-            let result = async {
-                let account = state.account(id)?;
-                let password = state.password(id)?;
-                mail_sync::push_changes(&state.store, &account, &password, |e| emit(&app, e)).await
-            }
-            .await;
-            match result {
+            let login = state.account(id).and_then(|a| Ok((a, state.password(id)?)));
+            let (account, password) = match login {
+                Ok(login) => login,
+                Err(e) => {
+                    // A removed account or a missing password: nothing to retry.
+                    report_pending(&app, id, Some(e.to_string()));
+                    report_outbox(&app, id, Some(e.to_string()));
+                    break;
+                }
+            };
+            let changes =
+                mail_sync::push_changes(&state.store, &account, &password, |e| emit(&app, e)).await;
+            let outbox =
+                mail_send::flush_outbox(&state.store, &account, &password, |e| emit(&app, e)).await;
+
+            let offline = matches!(changes, Err(Error::Network(_)))
+                || matches!(outbox, Err(Error::Network(_)));
+            let mut changed = false;
+            let changes_error = match changes {
                 Ok(outcome) => {
-                    if outcome.applied > 0 || !outcome.rejected.is_empty() {
-                        emit(&app, Event::MailboxChanged { account: id });
-                    }
-                    let error = (!outcome.rejected.is_empty()).then(|| {
+                    changed |= outcome.applied > 0
+                        || !outcome.rejected.is_empty()
+                        || !outcome.touched.is_empty();
+                    (!outcome.rejected.is_empty()).then(|| {
                         format!(
                             "the server refused a change, so it was undone: {}",
                             outcome.rejected.join("; ")
                         )
-                    });
-                    report_pending(&app, id, error);
-                    break;
+                    })
                 }
-                Err(Error::Network(e)) => {
-                    report_pending(&app, id, Some(format!("offline, will retry ({e})")));
-                    // Retry later, or sooner if the user acts again.
-                    tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
-                        _ = wake.notified() => {}
-                    }
-                    delay = (delay * 2).min(RETRY_MAX);
+                Err(Error::Network(e)) => Some(format!("offline, will retry ({e})")),
+                Err(e) => Some(e.to_string()),
+            };
+            let outbox_error = match outbox {
+                Ok(outcome) => {
+                    changed |= outcome.saved_to.is_some();
+                    (!outcome.refused.is_empty()).then(|| {
+                        format!("the server refused to send: {}", outcome.refused.join("; "))
+                    })
                 }
-                Err(e) => {
-                    report_pending(&app, id, Some(e.to_string()));
-                    break;
-                }
+                Err(Error::Network(e)) => Some(format!("offline, will retry ({e})")),
+                Err(e) => Some(e.to_string()),
+            };
+            if changed {
+                emit(&app, Event::MailboxChanged { account: id });
             }
+            report_pending(&app, id, changes_error);
+            report_outbox(&app, id, outbox_error);
+            if !offline {
+                break;
+            }
+            // Retry later, or sooner if the user acts again.
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                _ = wake.notified() => {}
+            }
+            delay = (delay * 2).min(RETRY_MAX);
         }
     }
 }
@@ -263,8 +319,8 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
         mail_sync::sync_account(&state.store, &account, &password, scope, |e| emit(app, e)).await
     }
     .await;
-    if result.is_ok() && state.store.lock().unwrap().pending_count(id).unwrap_or(0) > 0 {
-        // Reachable again with changes still waiting: send them.
+    if result.is_ok() && has_outgoing(app, id) {
+        // Reachable again with changes or mail still waiting: send them.
         push_now(app, id);
     }
     emit(

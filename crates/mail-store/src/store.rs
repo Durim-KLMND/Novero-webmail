@@ -16,8 +16,8 @@ use crate::storage;
 
 /// The local cache: one SQLite database plus raw messages as `.eml` files.
 pub struct Store {
-    conn: Connection,
-    files: PathBuf,
+    pub(crate) conn: Connection,
+    pub(crate) files: PathBuf,
 }
 
 /// A folder in the sidebar.
@@ -72,6 +72,8 @@ pub struct MessageSummary {
     pub id: i64,
     pub uid: u32,
     pub from: Option<String>,
+    /// Shown instead of the sender in Sent and Drafts.
+    pub to: Option<String>,
     pub subject: Option<String>,
     pub date: Option<i64>,
     pub flags: Flags,
@@ -468,8 +470,8 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare_cached(
-                "SELECT id, uid, from_addr, subject, date, flags, has_attachments FROM messages \
-                 WHERE folder_id = ?1 ORDER BY date DESC, uid DESC LIMIT ?2 OFFSET ?3",
+                "SELECT id, uid, from_addr, to_addrs, subject, date, flags, has_attachments \
+                 FROM messages WHERE folder_id = ?1 ORDER BY date DESC, uid DESC LIMIT ?2 OFFSET ?3",
             )
             .map_err(storage)?;
         let items = stmt
@@ -478,10 +480,11 @@ impl Store {
                     id: r.get(0)?,
                     uid: r.get(1)?,
                     from: r.get(2)?,
-                    subject: r.get(3)?,
-                    date: r.get(4)?,
-                    flags: Flags::from_bits(r.get(5)?),
-                    has_attachments: r.get(6)?,
+                    to: r.get(3)?,
+                    subject: r.get(4)?,
+                    date: r.get(5)?,
+                    flags: Flags::from_bits(r.get(6)?),
+                    has_attachments: r.get(7)?,
                 })
             })
             .map_err(storage)?
@@ -723,14 +726,14 @@ fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
     })
 }
 
-fn remove_dir(path: &Path) -> Result<()> {
+pub(crate) fn remove_dir(path: &Path) -> Result<()> {
     match fs::remove_dir_all(path) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(e)),
         _ => Ok(()),
     }
 }
 
-fn io(err: std::io::Error) -> Error {
+pub(crate) fn io(err: std::io::Error) -> Error {
     Error::Storage(err.to_string())
 }
 

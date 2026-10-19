@@ -75,7 +75,7 @@
 
 <form onsubmit={submit}>
   <h1>Add an email account</h1>
-  <p class="lead">Novero Mail signs in with IMAP to read your mail.</p>
+  <p class="lead">Novero Mail reads your mail with IMAP and sends it with SMTP.</p>
 
   <label>
     <span>Your name</span>

@@ -130,14 +130,7 @@ pub async fn open_message(
     id: i64,
     allow_remote: bool,
 ) -> Result<ParsedMessage> {
-    let source = state.store.lock().unwrap().message_source(id)?;
-    let account = state.account(source.account_id)?;
-    let password = if source.raw_path.is_some() {
-        String::new()
-    } else {
-        state.password(account.id)?
-    };
-    let raw = mail_sync::fetch_message(&state.store, &account, &password, id).await?;
+    let (_, raw) = raw_message(&state, id).await?;
     let parsed =
         tauri::async_runtime::spawn_blocking(move || mail_mime::parse_message(&raw, allow_remote))
             .await
@@ -161,6 +154,19 @@ pub async fn open_message(
         })?;
     }
     Ok(parsed)
+}
+
+/// A message's account and its raw bytes, from the cache or the server.
+pub(crate) async fn raw_message(state: &AppState, id: i64) -> Result<(Account, Vec<u8>)> {
+    let source = state.store.lock().unwrap().message_source(id)?;
+    let account = state.account(source.account_id)?;
+    let password = if source.raw_path.is_some() {
+        String::new()
+    } else {
+        state.password(account.id)?
+    };
+    let raw = mail_sync::fetch_message(&state.store, &account, &password, id).await?;
+    Ok((account, raw))
 }
 
 /// Starts a full sync of one account now.
@@ -284,7 +290,7 @@ fn to_role(app: &AppHandle, state: &AppState, ids: &[i64], role: FolderRole) -> 
 /// Applies a change to the cache, queues it for the server and wakes the
 /// account's push task. Messages are grouped into one operation per folder;
 /// `make` builds it from the group's first message and the UIDs are filled in.
-fn change(
+pub(crate) fn change(
     app: &AppHandle,
     state: &AppState,
     ids: &[i64],

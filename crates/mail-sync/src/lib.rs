@@ -2,11 +2,13 @@
 //!
 //! [`ImapSession`] wraps one IMAP connection. [`sync_account`] sends queued
 //! local changes and keeps the cache in step with the server; [`push_changes`]
-//! sends changes without a full sync.
+//! sends changes and saved drafts without a full sync.
 
+mod drafts;
 pub mod imap;
 mod sync;
 
+pub use drafts::upload_drafts;
 pub use imap::{FolderStatus, ImapSession};
 pub use mail_core::{Error, Result};
 pub use sync::{

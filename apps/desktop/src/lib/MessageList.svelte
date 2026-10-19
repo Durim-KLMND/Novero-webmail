@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, errorText, type Folder, type MessageSummary } from "./api";
-  import { folderLabel, listDate, senderName } from "./format";
+  import { folderLabel, listDate, recipientLabel, senderName } from "./format";
 
   interface Props {
     folder: Folder | null;
@@ -12,6 +12,9 @@
     onDelete: () => void;
   }
   let { folder, version, selected, onSelect, onDelete }: Props = $props();
+
+  /** Sent and Drafts list who a message is to, not who it is from. */
+  const outgoing = $derived(folder?.role === "sent" || folder?.role === "drafts");
 
   const ROW = 64;
   const PAGE = 100;
@@ -160,13 +163,14 @@
                 tabindex="-1"
               >
                 <span class="line1">
-                  <span class="from">{senderName(item.from)}</span>
+                  <span class="from">{outgoing ? recipientLabel(item.to) : senderName(item.from)}</span>
                   <span class="date">{listDate(item.date)}</span>
                 </span>
                 <span class="line2">
                   {#if !item.flags.seen}<span class="dot" aria-label="Unread"></span>{/if}
                   <span class="subject">{item.subject || "(no subject)"}</span>
                   {#if item.hasAttachments}<span class="clip" aria-label="Has attachments">📎</span>{/if}
+                  {#if item.flags.answered}<span class="answered" aria-label="Replied" title="Replied">↩</span>{/if}
                   {#if item.flags.flagged}<span class="flag" aria-label="Flagged">⚑</span>{/if}
                 </span>
               </button>
@@ -266,6 +270,9 @@
     border-radius: 50%;
     background: var(--accent-ink);
     flex: none;
+  }
+  .answered {
+    color: var(--text-quiet);
   }
   .flag {
     color: var(--accent-ink);

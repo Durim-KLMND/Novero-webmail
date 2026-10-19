@@ -24,6 +24,15 @@ export function senderName(from: string | null): string {
   return match && match[1] ? match[1] : from;
 }
 
+/** "To Jane Doe +2" for the first of a list of recipients. */
+export function recipientLabel(to: string | null): string {
+  if (!to) return "(no recipients)";
+  // Split on commas outside quoted names.
+  const all = to.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((s) => s.trim()).filter(Boolean);
+  const more = all.length > 1 ? ` +${all.length - 1}` : "";
+  return `To ${senderName(all[0] ?? to)}${more}`;
+}
+
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

@@ -8,6 +8,15 @@ publish.workspace = true
 
 [dependencies]
 mail-core.workspace = true
+mail-store = { path = "../mail-store" }
+mail-sync = { path = "../mail-sync" }
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "rustls-platform-verifier", "ring", "hostname"] }
+
+[dev-dependencies]
+mail-mime = { path = "../mail-mime" }
+serde_json.workspace = true
+tempfile = "3"
+tokio = { workspace = true, features = ["net", "io-util"] }
 
 [lints]
 workspace = true

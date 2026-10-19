@@ -3,11 +3,13 @@
 //! Migrations are plain SQL files applied in order and tracked with
 //! `PRAGMA user_version`, so a database records which ones it has.
 
+mod outgoing;
 mod store;
 
 use std::path::Path;
 
 pub use mail_core::{Error, Result};
+pub use outgoing::{DraftUpload, NewDraft, OutboxItem, OutboxState};
 use rusqlite::Connection;
 pub use store::{
     Folder, FolderState, MessageLocation, MessagePage, MessageSource, MessageSummary, QueuedOp,
@@ -18,6 +20,7 @@ pub use store::{
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_initial.sql"),
     include_str!("../migrations/0002_account_username.sql"),
+    include_str!("../migrations/0003_drafts_and_outbox.sql"),
 ];
 
 /// Schema version a fully migrated database has.
@@ -83,12 +86,12 @@ mod tests {
         let tables: i64 = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN \
-                 ('accounts', 'folders', 'messages', 'op_queue', 'outbox')",
+                 ('accounts', 'folders', 'messages', 'op_queue', 'outbox', 'drafts')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(tables, 5);
+        assert_eq!(tables, 6);
     }
 
     #[test]
