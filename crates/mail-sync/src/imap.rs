@@ -129,6 +129,16 @@ impl ImapSession {
         })
     }
 
+    /// How many messages `folder` holds, without selecting it.
+    pub async fn message_count(&mut self, folder: &str) -> Result<u32> {
+        let mailbox = self
+            .session
+            .status(folder, "(MESSAGES)")
+            .await
+            .map_err(protocol)?;
+        Ok(mailbox.exists)
+    }
+
     /// UIDs in the selected folder matching an IMAP search, e.g. `UID 1:99` or `ALL`.
     pub async fn search_uids(&mut self, query: &str) -> Result<Vec<u32>> {
         let mut uids: Vec<u32> = self

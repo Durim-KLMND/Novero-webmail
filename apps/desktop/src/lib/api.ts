@@ -184,12 +184,23 @@ export interface OutboxItem {
   createdAt: number;
 }
 
+/** "messages": the message lists of every folder; "bodies": recent messages
+ * downloaded in full so search covers their text. */
+export type SyncStage = "messages" | "bodies";
+
 export type MailEvent =
   | { type: "syncStarted"; account: number }
   | {
       type: "syncProgress";
       account: number;
       folder: string;
+      done: number;
+      total: number;
+    }
+  | {
+      type: "accountProgress";
+      account: number;
+      stage: SyncStage;
       done: number;
       total: number;
     }

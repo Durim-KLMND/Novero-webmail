@@ -6,7 +6,7 @@
 
 use std::sync::Mutex;
 
-use mail_core::{Endpoint, Event, FolderRole, NewAccount, Secret, Security};
+use mail_core::{Endpoint, Event, FolderRole, NewAccount, Secret, Security, SyncStage};
 use mail_store::Store;
 use mail_sync::{ImapSession, Scope, fetch_message, sync_account};
 
@@ -141,15 +141,36 @@ async fn full_sync_fills_every_folder_and_a_second_sync_adds_nothing() {
         total: 150,
     }));
 
+    // One bar for the whole account: every folder's messages, counted up
+    // from zero to the total.
+    let overall: Vec<(u32, u32)> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::AccountProgress {
+                stage: SyncStage::Messages,
+                done,
+                total,
+                ..
+            } => Some((*done, *total)),
+            _ => None,
+        })
+        .collect();
+    let all: u32 = folders.iter().map(|f| f.total).sum();
+    assert_eq!(overall.first(), Some(&(0, all)));
+    assert_eq!(overall.last(), Some(&(all, all)));
+    assert!(
+        overall.windows(2).all(|w| w[0].0 <= w[1].0),
+        "never goes back"
+    );
+
     let again = Mutex::new(Vec::new());
     sync_account(&store, &account, &secret(), Scope::All, |e| {
         again.lock().unwrap().push(e)
     })
     .await
     .unwrap();
+    let again = again.into_inner().unwrap();
     let fetched: u32 = again
-        .into_inner()
-        .unwrap()
         .iter()
         .map(|e| match e {
             Event::SyncProgress { total, .. } => *total,
@@ -157,6 +178,12 @@ async fn full_sync_fills_every_folder_and_a_second_sync_adds_nothing() {
         })
         .sum();
     assert_eq!(fetched, 0, "nothing new to fetch");
+    assert!(
+        !again
+            .iter()
+            .any(|e| matches!(e, Event::AccountProgress { .. })),
+        "no progress bar when nothing is downloaded"
+    );
 }
 
 #[tokio::test]
@@ -333,10 +360,29 @@ async fn new_mail_is_announced_threaded_and_searchable() {
         .await
         .unwrap();
 
-    let first = sync_account(&store, &account, &secret(), Scope::All, |_| {})
-        .await
-        .unwrap();
+    let events = Mutex::new(Vec::new());
+    let first = sync_account(&store, &account, &secret(), Scope::All, |e| {
+        events.lock().unwrap().push(e)
+    })
+    .await
+    .unwrap();
     assert!(first.new_mail.is_empty(), "a first sync announces nothing");
+    // Only the recent message is downloaded ahead, and the bar says so.
+    let bodies: Vec<(u32, u32)> = events
+        .into_inner()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            Event::AccountProgress {
+                stage: SyncStage::Bodies,
+                done,
+                total,
+                ..
+            } => Some((*done, *total)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bodies, [(0, 1), (1, 1)]);
     let search = |q: &str| {
         store
             .lock()

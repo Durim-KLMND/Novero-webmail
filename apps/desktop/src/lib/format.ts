@@ -53,3 +53,12 @@ export function folderLabel(name: string, role: string, delimiter: string | null
   if (folderNames[role]) return folderNames[role];
   return delimiter ? name.split(delimiter).pop() || name : name;
 }
+
+/** Progress of an account's sync, for a progress bar's caption: with counts,
+ *  or with a percentage where space is short. */
+export function progressLabel(stage: "messages" | "bodies", done: number, total: number, short = false): string {
+  const what = stage === "messages" ? "Downloading messages" : "Preparing search";
+  const percent = `${Math.floor((done / total) * 100)}%`;
+  if (short) return `${what}: ${percent}`;
+  return `${what}: ${done.toLocaleString()} of ${total.toLocaleString()} (${percent})`;
+}

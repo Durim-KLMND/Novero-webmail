@@ -11,8 +11,11 @@
 
 use std::collections::HashSet;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use mail_core::{Account, AccountId, Error, Event, FolderId, FolderRole, Op, Result, Secret};
+use mail_core::{
+    Account, AccountId, Error, Event, FolderId, FolderRole, Op, Result, Secret, SyncStage,
+};
 use mail_store::Store;
 
 use crate::ImapSession;
@@ -93,18 +96,39 @@ pub async fn sync_account(
     }
     folders.sort_by_key(|(_, f)| (f.role != FolderRole::Inbox, f.role.sort_rank()));
 
+    // Messages on the server the cache lacks, so the whole download can be
+    // shown as one progress bar. An estimate: STATUS counts every message.
+    let mut missing = 0;
+    for (folder_id, folder) in &folders {
+        let cached = store.lock().unwrap().folder_state(*folder_id)?.count;
+        if let Ok(count) = session.message_count(&folder.name).await {
+            missing += count.saturating_sub(cached);
+        }
+    }
+    let progress = Progress::new(account.id, SyncStage::Messages, missing, &on_event);
+    // Per-folder events also move the account's bar.
+    let folder_done = AtomicU32::new(0);
+    let forward = |event: Event| {
+        if let Event::SyncProgress { done, .. } = event {
+            progress.set(folder_done.load(Ordering::Relaxed) + done);
+        }
+        on_event(event);
+    };
+
     let mut report = SyncReport::default();
     let mut synced = Vec::new();
     for (folder_id, folder) in folders {
+        let before = progress.done();
         let result = sync_folder(
             store,
             &mut session,
             account.id,
             folder_id,
             &folder.name,
-            &on_event,
+            &forward,
         )
         .await;
+        folder_done.store(progress.done().max(before), Ordering::Relaxed);
         match result {
             // Deleted on the server since LIST; the next sync drops it.
             Err(Error::Rejected(_)) => continue,
@@ -113,20 +137,36 @@ pub async fn sync_account(
         }
         synced.push((folder_id, folder));
     }
+    progress.finish();
+
     // Messages show up first; their bodies follow.
     let since = now() - PREFETCH_DAYS * 24 * 60 * 60;
-    let mut fetched_any = false;
+    let mut wanted = Vec::new();
     for (folder_id, folder) in synced {
         if matches!(folder.role, FolderRole::Trash | FolderRole::Junk) {
             continue;
         }
-        match prefetch_bodies(store, &mut session, folder_id, &folder.name, since).await {
+        let bodies = store.lock().unwrap().bodies_to_prefetch(
+            folder_id,
+            since,
+            PREFETCH_MAX_SIZE,
+            PREFETCH_PER_SYNC,
+        )?;
+        if !bodies.is_empty() {
+            wanted.push((folder.name, bodies));
+        }
+    }
+    let total = wanted.iter().map(|(_, b)| b.len() as u32).sum();
+    let progress = Progress::new(account.id, SyncStage::Bodies, total, &on_event);
+    for (name, bodies) in &wanted {
+        match prefetch_bodies(store, &mut session, name, bodies, &progress).await {
             Err(Error::Rejected(_)) => continue,
-            Ok(n) => fetched_any |= n > 0,
+            Ok(()) => {}
             Err(e) => return Err(e),
         }
     }
-    if fetched_any {
+    progress.finish();
+    if total > 0 {
         // Attachments are known for sure once bodies are in.
         on_event(Event::MailboxChanged {
             account: account.id,
@@ -136,39 +176,89 @@ pub async fn sync_account(
     Ok(report)
 }
 
-/// Downloads recent bodies the cache lacks and indexes their text. Returns
-/// how many were saved.
+/// Downloads the bodies of `wanted` messages in `name` and indexes their
+/// text, advancing `progress` as batches arrive.
 async fn prefetch_bodies(
     store: &Mutex<Store>,
     session: &mut ImapSession,
-    folder_id: FolderId,
     name: &str,
-    since: i64,
-) -> Result<usize> {
-    let wanted = store.lock().unwrap().bodies_to_prefetch(
-        folder_id,
-        since,
-        PREFETCH_MAX_SIZE,
-        PREFETCH_PER_SYNC,
-    )?;
-    if wanted.is_empty() {
-        return Ok(0);
-    }
+    wanted: &[(i64, u32)],
+    progress: &Progress<'_, impl Fn(Event)>,
+) -> Result<()> {
     session.select(name).await?;
-    let mut saved = 0;
     for chunk in wanted.chunks(PREFETCH_BATCH) {
         let uids: Vec<u32> = chunk.iter().map(|(_, uid)| *uid).collect();
         let bodies = session.fetch_raw_many(&uid_set(&uids)).await?;
         for (id, uid) in chunk {
             // A message expunged meanwhile is simply missing.
-            let Some((_, raw)) = bodies.iter().find(|(u, _)| u == uid) else {
-                continue;
-            };
-            save_and_index(store, *id, raw)?;
-            saved += 1;
+            if let Some((_, raw)) = bodies.iter().find(|(u, _)| u == uid) {
+                save_and_index(store, *id, raw)?;
+            }
+        }
+        progress.add(chunk.len() as u32);
+    }
+    Ok(())
+}
+
+/// Reports one stage of an account sync as `AccountProgress` events, if the
+/// stage has any work.
+struct Progress<'a, F: Fn(Event)> {
+    account: AccountId,
+    stage: SyncStage,
+    total: u32,
+    done: AtomicU32,
+    on_event: &'a F,
+}
+
+impl<'a, F: Fn(Event)> Progress<'a, F> {
+    fn new(account: AccountId, stage: SyncStage, total: u32, on_event: &'a F) -> Self {
+        let progress = Progress {
+            account,
+            stage,
+            total,
+            done: AtomicU32::new(0),
+            on_event,
+        };
+        progress.emit();
+        progress
+    }
+
+    fn done(&self) -> u32 {
+        self.done.load(Ordering::Relaxed)
+    }
+
+    /// Sets the items done so far. The total is an estimate, so it grows if
+    /// more turn up.
+    fn set(&self, done: u32) {
+        if done != self.done.load(Ordering::Relaxed) {
+            self.done.store(done, Ordering::Relaxed);
+            self.emit();
         }
     }
-    Ok(saved)
+
+    fn add(&self, n: u32) {
+        self.set(self.done.load(Ordering::Relaxed) + n);
+    }
+
+    /// Marks the stage complete, even if the estimate was high.
+    fn finish(&self) {
+        if self.total > 0 && self.done.load(Ordering::Relaxed) < self.total {
+            self.done.store(self.total, Ordering::Relaxed);
+            self.emit();
+        }
+    }
+
+    fn emit(&self) {
+        if self.total == 0 {
+            return;
+        }
+        (self.on_event)(Event::AccountProgress {
+            account: self.account,
+            stage: self.stage,
+            done: self.done.load(Ordering::Relaxed).min(self.total),
+            total: self.total,
+        });
+    }
 }
 
 /// Caches a downloaded message and adds its text to the search index.

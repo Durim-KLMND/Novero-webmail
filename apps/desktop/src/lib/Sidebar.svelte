@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import type { SyncStage } from "./api";
+
   export interface SyncState {
     running: boolean;
     error: string | null;
@@ -10,6 +12,8 @@
     queued: number;
     failed: number;
     outboxError: string | null;
+    /** The running sync's progress, while it has a lot to download. */
+    progress: { stage: SyncStage; done: number; total: number } | null;
   }
 </script>
 
@@ -21,7 +25,7 @@
   function isOffline(error: string): boolean {
     return /^network error/i.test(error);
   }
-  import { folderLabel } from "./format";
+  import { folderLabel, progressLabel } from "./format";
 
   interface Props {
     accounts: Account[];
@@ -183,6 +187,13 @@
             </div>
           {/if}
         </div>
+        {#if sync?.running && sync.progress}
+          {@const p = sync.progress}
+          <div class="progress" title={sync.detail}>
+            <progress max={p.total} value={p.done} aria-label="Sync progress"></progress>
+            <small class="quiet">{progressLabel(p.stage, p.done, p.total, true)}</small>
+          </div>
+        {/if}
         {#if sync?.error && isOffline(sync.error)}
           <p class="pending quiet" title={errorText(sync.error)}>Offline. Showing saved mail.</p>
         {:else if sync?.error}
@@ -330,6 +341,14 @@
     color: var(--danger);
     font-size: 12px;
     margin: 0 4px 6px 20px;
+  }
+  .progress {
+    display: grid;
+    gap: 2px;
+    margin: 0 4px 6px 20px;
+  }
+  .progress small {
+    font-size: 12px;
   }
   .pending {
     font-size: 12px;
