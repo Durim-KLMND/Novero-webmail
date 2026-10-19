@@ -127,7 +127,7 @@
     margin-bottom: 16px;
   }
   .logo.ok {
-    background: #16a34a;
+    background: var(--success);
   }
   h1 {
     font-size: 22px;

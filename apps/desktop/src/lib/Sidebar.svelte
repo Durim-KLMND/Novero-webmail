@@ -211,7 +211,7 @@
   .badge {
     font-size: 12px;
     font-weight: 600;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .empty {
     padding: 6px 12px 6px 24px;

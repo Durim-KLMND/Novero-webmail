@@ -49,7 +49,7 @@
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; font-src data:">
 <base target="_blank">
-<style>body{margin:0;padding:20px;font:14px/1.5 "Segoe UI",system-ui,sans-serif;color:#1c1f24;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>
+<style>body{margin:0;padding:20px;font:14px/1.5 "Anthropic Sans","Segoe UI",system-ui,sans-serif;color:#1a1a19;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>
 </head><body>${html}</body></html>`;
   }
 
@@ -189,7 +189,7 @@
   pre {
     white-space: pre-wrap;
     word-wrap: break-word;
-    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    font: 14px/1.5 var(--font);
     margin: 0;
     padding: 20px 24px;
   }
