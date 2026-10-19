@@ -1,17 +1,29 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { api, errorText, type ParsedMessage } from "./api";
-  import { fileSize, fullDate } from "./format";
+  import { api, errorText, type FlagKind, type Folder, type MessageSummary, type ParsedMessage } from "./api";
+  import { fileSize, folderLabel, fullDate } from "./format";
 
   interface Props {
-    messageId: number | null;
+    summary: MessageSummary | null;
+    /** The folder the message is in, and the other folders of its account. */
+    folder: Folder | null;
+    folders: Folder[];
     onOpened: () => void;
+    onArchive: () => void;
+    onDelete: () => void;
+    onToggle: (flag: FlagKind, value: boolean) => void;
+    onMove: (folder: number) => void;
   }
-  let { messageId, onOpened }: Props = $props();
+  let { summary, folder, folders, onOpened, onArchive, onDelete, onToggle, onMove }: Props = $props();
+
+  const messageId = $derived(summary?.id ?? null);
+  const canArchive = $derived(folder?.role !== "archive" && folders.some((f) => f.role === "archive"));
+  const moveTargets = $derived(folders.filter((f) => f.id !== folder?.id));
 
   let message = $state<ParsedMessage | null>(null);
   let loading = $state(false);
   let error = $state("");
+  const offline = $derived(error.startsWith("Network error"));
   let allowRemote = $state(false);
   let request = 0;
 
@@ -71,11 +83,48 @@
 <article class="reader" aria-label="Message">
   {#if messageId == null}
     <div class="empty quiet">Select a message to read it.</div>
-  {:else if error}
-    <div class="pad"><p class="error">Could not open this message: {error}</p></div>
-  {:else if !message}
+  {:else if !message && !error}
     <div class="empty"><span class="spinner"></span></div>
   {:else}
+    <div class="actions" role="toolbar" aria-label="Message actions">
+      {#if canArchive}<button onclick={onArchive}>Archive</button>{/if}
+      <button onclick={onDelete}>{folder?.role === "trash" ? "Delete forever" : "Delete"}</button>
+      {#if summary}
+        <button onclick={() => onToggle("seen", !summary.flags.seen)}>
+          {summary.flags.seen ? "Mark unread" : "Mark read"}
+        </button>
+        <button aria-pressed={summary.flags.flagged} onclick={() => onToggle("flagged", !summary.flags.flagged)}>
+          {summary.flags.flagged ? "⚑ Flagged" : "⚐ Flag"}
+        </button>
+      {/if}
+      {#if moveTargets.length}
+        <select
+          aria-label="Move to folder"
+          onchange={(e) => {
+            const target = Number(e.currentTarget.value);
+            e.currentTarget.value = "";
+            if (target) onMove(target);
+          }}
+        >
+          <option value="">Move to…</option>
+          {#each moveTargets as f (f.id)}
+            <option value={f.id}>{folderLabel(f.name, f.role, f.delimiter)}</option>
+          {/each}
+        </select>
+      {/if}
+    </div>
+    {#if error || !message}
+      <div class="pad">
+        <p class="error">
+          {#if offline}
+            This message hasn't been downloaded yet and the server can't be reached. It will open once you're back online.
+          {:else}
+            Could not open this message: {error}
+          {/if}
+        </p>
+        <button onclick={() => messageId != null && load(messageId, allowRemote)} disabled={loading}>Try again</button>
+      </div>
+    {:else}
     <header>
       <h1>{message.subject || "(no subject)"}</h1>
       <dl>
@@ -114,6 +163,7 @@
         <p class="quiet pad">This message has no text.</p>
       {/if}
     </div>
+    {/if}
   {/if}
 </article>
 
@@ -129,6 +179,27 @@
   }
   .pad {
     padding: 16px;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .actions button,
+  .actions select {
+    width: auto;
+    padding: 5px 10px;
+    font-size: 13px;
+  }
+  .actions button[aria-pressed="true"] {
+    color: var(--accent-ink);
+    border-color: var(--accent-ink);
   }
   header {
     padding: 18px 24px 12px;

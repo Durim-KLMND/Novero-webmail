@@ -164,6 +164,95 @@ pub struct Flags {
     pub deleted: bool,
 }
 
+/// A flag the user can change on a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FlagKind {
+    Seen,
+    Flagged,
+}
+
+impl FlagKind {
+    /// The IMAP system flag.
+    pub fn imap_name(self) -> &'static str {
+        match self {
+            FlagKind::Seen => "\\Seen",
+            FlagKind::Flagged => "\\Flagged",
+        }
+    }
+
+    /// The bit in [`Flags::to_bits`].
+    pub fn bit(self) -> i64 {
+        match self {
+            FlagKind::Seen => 1,
+            FlagKind::Flagged => 2,
+        }
+    }
+}
+
+/// A change made locally that still has to reach the server.
+///
+/// Messages are addressed by folder name, UIDVALIDITY and UID, so an operation
+/// stays valid while offline and is dropped if the folder was rebuilt meanwhile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Op {
+    SetFlag {
+        folder: String,
+        uid_validity: Option<u32>,
+        uids: Vec<u32>,
+        flag: FlagKind,
+        value: bool,
+    },
+    /// Move to another folder of the same account.
+    Move {
+        folder: String,
+        uid_validity: Option<u32>,
+        uids: Vec<u32>,
+        to: String,
+    },
+    /// Delete permanently.
+    Expunge {
+        folder: String,
+        uid_validity: Option<u32>,
+        uids: Vec<u32>,
+    },
+}
+
+impl Op {
+    /// The folder the operation acts on.
+    pub fn folder(&self) -> &str {
+        match self {
+            Op::SetFlag { folder, .. } | Op::Move { folder, .. } | Op::Expunge { folder, .. } => {
+                folder
+            }
+        }
+    }
+
+    pub fn uid_validity(&self) -> Option<u32> {
+        match self {
+            Op::SetFlag { uid_validity, .. }
+            | Op::Move { uid_validity, .. }
+            | Op::Expunge { uid_validity, .. } => *uid_validity,
+        }
+    }
+
+    pub fn uids(&self) -> &[u32] {
+        match self {
+            Op::SetFlag { uids, .. } | Op::Move { uids, .. } | Op::Expunge { uids, .. } => uids,
+        }
+    }
+
+    /// Short name stored in the queue's `kind` column.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Op::SetFlag { .. } => "set_flag",
+            Op::Move { .. } => "move",
+            Op::Expunge { .. } => "expunge",
+        }
+    }
+}
+
 /// Events the core sends to the UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -181,6 +270,16 @@ pub enum Event {
     SyncFinished {
         account: AccountId,
         error: Option<String>,
+    },
+    /// Local changes still waiting for the server, and why the last attempt failed.
+    PendingChanges {
+        account: AccountId,
+        pending: u32,
+        error: Option<String>,
+    },
+    /// Messages changed without a full sync (a local change or a server push).
+    MailboxChanged {
+        account: AccountId,
     },
 }
 
@@ -214,6 +313,9 @@ pub enum Error {
     Auth(String),
     #[error("protocol error: {0}")]
     Protocol(String),
+    /// The server answered NO to a command, e.g. a folder that no longer exists.
+    #[error("the server refused: {0}")]
+    Rejected(String),
     #[error("storage error: {0}")]
     Storage(String),
 }
@@ -241,6 +343,29 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, r#"{"type":"syncStarted","account":1}"#);
+    }
+
+    #[test]
+    fn ops_serialize_with_a_kind_tag() {
+        let op = Op::SetFlag {
+            folder: "INBOX".into(),
+            uid_validity: Some(7),
+            uids: vec![1, 2],
+            flag: FlagKind::Seen,
+            value: true,
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.starts_with(r#"{"kind":"setFlag""#), "{json}");
+        assert_eq!(serde_json::from_str::<Op>(&json).unwrap(), op);
+        assert_eq!(op.folder(), "INBOX");
+        assert_eq!(
+            FlagKind::Flagged.bit(),
+            Flags {
+                flagged: true,
+                ..Flags::default()
+            }
+            .to_bits()
+        );
     }
 
     #[test]

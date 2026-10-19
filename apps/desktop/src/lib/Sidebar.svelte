@@ -1,12 +1,28 @@
+<script lang="ts" module>
+  export interface SyncState {
+    running: boolean;
+    error: string | null;
+    detail: string;
+    /** Local changes not yet on the server. */
+    pending: number;
+    pendingError: string | null;
+  }
+</script>
+
 <script lang="ts">
   import type { Account, Folder } from "./api";
   import { errorText } from "./api";
+
+  /** A dropped connection is expected and recovers by itself, so it is not shown as an error. */
+  function isOffline(error: string): boolean {
+    return /^network error/i.test(error);
+  }
   import { folderLabel } from "./format";
 
   interface Props {
     accounts: Account[];
     folders: Record<number, Folder[]>;
-    syncState: Record<number, { running: boolean; error: string | null; detail: string }>;
+    syncState: Record<number, SyncState>;
     selected: Folder | null;
     onSelect: (folder: Folder) => void;
     onAddAccount: () => void;
@@ -54,7 +70,7 @@
             </span>
           </button>
           {#if sync?.running}<span class="spinner small" title={sync.detail}></span>{/if}
-          {#if sync?.error}<span class="warn" title={errorText(sync.error)}>!</span>{/if}
+          {#if sync?.error && !isOffline(sync.error)}<span class="warn" title={errorText(sync.error)}>!</span>{/if}
           <button class="more" aria-label="Account options" onclick={() => (menuFor = menuFor === account.id ? null : account.id)}>⋯</button>
           {#if menuFor === account.id}
             <div class="menu" role="menu">
@@ -63,7 +79,18 @@
             </div>
           {/if}
         </div>
-        {#if sync?.error}<p class="sync-error">{errorText(sync.error)}</p>{/if}
+        {#if sync?.error && isOffline(sync.error)}
+          <p class="pending quiet" title={errorText(sync.error)}>Offline. Showing saved mail.</p>
+        {:else if sync?.error}
+          <p class="sync-error">{errorText(sync.error)}</p>
+        {/if}
+        {#if sync?.pending}
+          <p class="pending quiet" title={sync.pendingError ? errorText(sync.pendingError) : undefined}>
+            {sync.pending === 1 ? "1 change" : `${sync.pending.toLocaleString()} changes`} waiting to sync
+          </p>
+        {:else if sync?.pendingError}
+          <p class="sync-error">{errorText(sync.pendingError)}</p>
+        {/if}
         {#if !collapsed[account.id]}
           <ul>
             {#each folders[account.id] ?? [] as folder (folder.id)}
@@ -176,6 +203,10 @@
   }
   .sync-error {
     color: var(--danger);
+    font-size: 12px;
+    margin: 0 4px 6px 20px;
+  }
+  .pending {
     font-size: 12px;
     margin: 0 4px 6px 20px;
   }
