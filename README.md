@@ -50,12 +50,18 @@ cargo deny check         # licenses, advisories, sources (install with `cargo in
 ```sh
 docker compose -f testing/docker-compose.yml up -d --build --wait
 cargo test -p mail-sync -- --ignored
+cargo test -p mail-send -- --ignored
+cargo test -p mail-auth -- --ignored
 docker compose -f testing/docker-compose.yml down
 ```
 
-To try the app against the test server, start it with `npm run tauri dev`, enter any address
-and the password `secret`, open **Server settings** and use IMAP host `127.0.0.1`, port `1143`,
-security **None (unsafe)**, username `alice`. Any SMTP host works for now; sending is not built yet.
+The compose file also starts Mailpit (SMTP on `1025`, web inbox on `http://localhost:8025`) and a
+small fake OAuth server next to Dovecot that lets the `mail-auth` tests log in with XOAUTH2.
+
+To try the app against the test servers, start it with `npm run tauri dev`, enter any address that
+isn't at a known provider, and continue. Enter the password `secret`, then under **Server settings**
+use IMAP host `127.0.0.1`, port `1143`, SMTP host `127.0.0.1`, port `1025`, security
+**None (unsafe)** for both, and username `alice`.
 Add the same login again under a second address to try multiple accounts.
 
 On Windows the password is kept in Windows Credential Manager. Elsewhere it is held in memory only,
@@ -66,6 +72,12 @@ To check the TLS path against a real server (bad credentials on purpose; success
 ```sh
 cargo run -p mail-sync --example tls_probe -- imap.gmail.com
 ```
+
+## Google and Microsoft sign-in
+
+Signing in through Google's or Microsoft's own page needs app registrations whose client IDs are
+built into the app. [docs/oauth-apps.md](docs/oauth-apps.md) has the steps. Without them, the app
+offers app passwords for Gmail and can't add Outlook.com or Microsoft 365 accounts.
 
 ## CI
 

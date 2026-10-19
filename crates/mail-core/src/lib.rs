@@ -103,7 +103,78 @@ impl FolderRole {
     }
 }
 
-/// A configured mail account. The password lives in the OS credential store, not here.
+/// A provider whose own sign-in page Novero Mail opens (OAuth2), instead of
+/// asking for a password.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OAuthProvider {
+    Google,
+    Microsoft,
+}
+
+impl OAuthProvider {
+    /// Name stored in the database.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OAuthProvider::Google => "google",
+            OAuthProvider::Microsoft => "microsoft",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "google" => Some(OAuthProvider::Google),
+            "microsoft" => Some(OAuthProvider::Microsoft),
+            _ => None,
+        }
+    }
+
+    /// Name shown to people, as in "Sign in with Google".
+    pub fn label(self) -> &'static str {
+        match self {
+            OAuthProvider::Google => "Google",
+            OAuthProvider::Microsoft => "Microsoft",
+        }
+    }
+}
+
+/// How an account signs in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AuthMethod {
+    /// A password or app password, kept in the OS credential store.
+    #[default]
+    Password,
+    /// The provider's sign-in page. The credential store keeps the refresh token.
+    #[serde(rename = "oauth2")]
+    OAuth2 { provider: OAuthProvider },
+}
+
+/// What a connection signs in with: the password, or a current OAuth2 access token.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Secret {
+    Password(String),
+    AccessToken(String),
+}
+
+impl Secret {
+    pub fn password(password: impl Into<String>) -> Self {
+        Secret::Password(password.into())
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    /// Never prints the secret itself.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Secret::Password(_) => f.write_str("Password(..)"),
+            Secret::AccessToken(_) => f.write_str("AccessToken(..)"),
+        }
+    }
+}
+
+/// A configured mail account. Its password or token lives in the OS
+/// credential store, not here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
@@ -113,6 +184,7 @@ pub struct Account {
     pub username: String,
     pub imap: Endpoint,
     pub smtp: Endpoint,
+    pub auth: AuthMethod,
 }
 
 /// What is needed to create an account.
@@ -124,6 +196,8 @@ pub struct NewAccount {
     pub username: String,
     pub imap: Endpoint,
     pub smtp: Endpoint,
+    #[serde(default)]
+    pub auth: AuthMethod,
 }
 
 /// A folder as the server lists it.
@@ -447,5 +521,27 @@ mod tests {
         for r in [FolderRole::Inbox, FolderRole::Sent, FolderRole::Other] {
             assert_eq!(FolderRole::parse(r.as_str()), r);
         }
+    }
+
+    #[test]
+    fn auth_methods_serialize_for_the_ui() {
+        let json = serde_json::to_string(&AuthMethod::OAuth2 {
+            provider: OAuthProvider::Microsoft,
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"kind":"oauth2","provider":"microsoft"}"#);
+        assert_eq!(
+            serde_json::to_string(&AuthMethod::Password).unwrap(),
+            r#"{"kind":"password"}"#
+        );
+        for p in [OAuthProvider::Google, OAuthProvider::Microsoft] {
+            assert_eq!(OAuthProvider::parse(p.as_str()), Some(p));
+        }
+    }
+
+    #[test]
+    fn secrets_are_not_printed() {
+        let s = format!("{:?}", Secret::AccessToken("abc".into()));
+        assert!(!s.contains("abc"));
     }
 }

@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::collections::HashSet;
 
 use mail_core::{
-    Account, AccountId, Endpoint, Error, Flags, FolderId, FolderRole, MessageHeader, NewAccount,
-    Op, RemoteFolder, Result, Security,
+    Account, AccountId, AuthMethod, Endpoint, Error, Flags, FolderId, FolderRole, MessageHeader,
+    NewAccount, OAuthProvider, Op, RemoteFolder, Result, Security,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::Serialize;
@@ -122,8 +122,8 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO accounts (display_name, email, username, imap_host, imap_port, \
-                 imap_security, smtp_host, smtp_port, smtp_security, auth_kind) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'password')",
+                 imap_security, smtp_host, smtp_port, smtp_security, auth_kind, oauth_provider) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     new.display_name,
                     new.email,
@@ -134,6 +134,14 @@ impl Store {
                     new.smtp.host,
                     new.smtp.port,
                     new.smtp.security.as_str(),
+                    match new.auth {
+                        AuthMethod::Password => "password",
+                        AuthMethod::OAuth2 { .. } => "oauth2",
+                    },
+                    match new.auth {
+                        AuthMethod::Password => None,
+                        AuthMethod::OAuth2 { provider } => Some(provider.as_str()),
+                    },
                 ],
             )
             .map_err(storage)?;
@@ -695,7 +703,7 @@ impl Store {
 }
 
 const ACCOUNT_SELECT: &str = "SELECT id, display_name, email, username, imap_host, imap_port, \
-     imap_security, smtp_host, smtp_port, smtp_security FROM accounts";
+     imap_security, smtp_host, smtp_port, smtp_security, oauth_provider FROM accounts";
 
 fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
     let security = |i: usize| -> rusqlite::Result<Security> {
@@ -722,6 +730,18 @@ fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
             host: r.get(7)?,
             port: r.get(8)?,
             security: security(9)?,
+        },
+        auth: match r.get::<_, Option<String>>(10)? {
+            None => AuthMethod::Password,
+            Some(value) => AuthMethod::OAuth2 {
+                provider: OAuthProvider::parse(&value).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        10,
+                        rusqlite::types::Type::Text,
+                        format!("unknown sign-in provider {value}").into(),
+                    )
+                })?,
+            },
         },
     })
 }
@@ -751,6 +771,7 @@ mod tests {
 
     fn new_account(email: &str) -> NewAccount {
         NewAccount {
+            auth: Default::default(),
             display_name: "Alice".into(),
             email: email.into(),
             username: email.into(),
@@ -786,10 +807,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_in_memory(dir.path()).unwrap();
         let a = store.add_account(&new_account("a@example.test")).unwrap();
-        let b = store.add_account(&new_account("b@example.test")).unwrap();
+        let b = store
+            .add_account(&NewAccount {
+                auth: AuthMethod::OAuth2 {
+                    provider: OAuthProvider::Google,
+                },
+                ..new_account("b@example.test")
+            })
+            .unwrap();
         assert_ne!(a.id, b.id);
         assert_eq!(a.imap.port, 993);
         assert_eq!(a.smtp.security, Security::ImplicitTls);
+        assert_eq!(a.auth, AuthMethod::Password);
+        assert_eq!(
+            b.auth,
+            AuthMethod::OAuth2 {
+                provider: OAuthProvider::Google
+            }
+        );
         let all = store.list_accounts().unwrap();
         assert_eq!(all, vec![a.clone(), b]);
         store.remove_account(a.id).unwrap();

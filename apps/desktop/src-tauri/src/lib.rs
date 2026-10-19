@@ -36,8 +36,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_version,
-            commands::provider_preset,
+            commands::discover_settings,
             commands::add_account,
+            commands::sign_in_again,
+            commands::cancel_sign_in,
             commands::list_accounts,
             commands::remove_account,
             commands::list_folders,

@@ -6,9 +6,14 @@
 
 use std::sync::Mutex;
 
-use mail_core::{Endpoint, Event, FolderRole, NewAccount, Security};
+use mail_core::{Endpoint, Event, FolderRole, NewAccount, Secret, Security};
 use mail_store::Store;
 use mail_sync::{ImapSession, Scope, fetch_message, sync_account};
+
+/// Alice's password on the test servers.
+fn secret() -> Secret {
+    Secret::password("secret")
+}
 
 fn endpoint() -> Endpoint {
     Endpoint {
@@ -25,6 +30,7 @@ fn store_with_alice(dir: &std::path::Path) -> (Mutex<Store>, mail_core::Account)
     let store = Store::open_in_memory(dir).unwrap();
     let account = store
         .add_account(&NewAccount {
+            auth: Default::default(),
             display_name: "Alice".into(),
             email: "alice@example.test".into(),
             username: "alice".into(),
@@ -38,7 +44,7 @@ fn store_with_alice(dir: &std::path::Path) -> (Mutex<Store>, mail_core::Account)
 #[tokio::test]
 #[ignore = "needs the test IMAP server"]
 async fn lists_folders_with_special_use_roles() {
-    let mut session = ImapSession::connect(&endpoint(), "alice", "secret")
+    let mut session = ImapSession::connect(&endpoint(), "alice", &secret())
         .await
         .unwrap();
     let folders = session.list_folders().await.unwrap();
@@ -54,7 +60,7 @@ async fn lists_folders_with_special_use_roles() {
 #[tokio::test]
 #[ignore = "needs the test IMAP server"]
 async fn fetches_the_newest_hundred_headers() {
-    let mut session = ImapSession::connect(&endpoint(), "alice", "secret")
+    let mut session = ImapSession::connect(&endpoint(), "alice", &secret())
         .await
         .unwrap();
     let headers = session.fetch_latest_headers("INBOX", 100).await.unwrap();
@@ -83,7 +89,7 @@ async fn fetches_the_newest_hundred_headers() {
 #[tokio::test]
 #[ignore = "needs the test IMAP server"]
 async fn reports_folder_state_on_select() {
-    let mut session = ImapSession::connect(&endpoint(), "alice", "secret")
+    let mut session = ImapSession::connect(&endpoint(), "alice", &secret())
         .await
         .unwrap();
     let status = session.select("INBOX").await.unwrap();
@@ -96,8 +102,15 @@ async fn reports_folder_state_on_select() {
 #[tokio::test]
 #[ignore = "needs the test IMAP server"]
 async fn wrong_password_is_an_auth_error() {
-    let result = ImapSession::connect(&endpoint(), "alice", "wrong").await;
-    assert!(matches!(result, Err(mail_core::Error::Auth(_))));
+    let result = ImapSession::connect(&endpoint(), "alice", &Secret::password("wrong")).await;
+    match result {
+        Err(mail_core::Error::Auth(reason)) => {
+            // The server's own words, without the response code.
+            assert_eq!(reason, "the server said “Authentication failed.”");
+        }
+        Err(other) => panic!("expected a login error, got {other}"),
+        Ok(_) => panic!("a wrong password was accepted"),
+    }
 }
 
 #[tokio::test]
@@ -107,7 +120,7 @@ async fn full_sync_fills_every_folder_and_a_second_sync_adds_nothing() {
     let (store, account) = store_with_alice(dir.path());
 
     let events = Mutex::new(Vec::new());
-    sync_account(&store, &account, "secret", Scope::All, |e| {
+    sync_account(&store, &account, &secret(), Scope::All, |e| {
         events.lock().unwrap().push(e)
     })
     .await
@@ -129,7 +142,7 @@ async fn full_sync_fills_every_folder_and_a_second_sync_adds_nothing() {
     }));
 
     let again = Mutex::new(Vec::new());
-    sync_account(&store, &account, "secret", Scope::All, |e| {
+    sync_account(&store, &account, &secret(), Scope::All, |e| {
         again.lock().unwrap().push(e)
     })
     .await
@@ -153,7 +166,7 @@ async fn interrupted_sync_is_completed_next_time() {
     let (store, account) = store_with_alice(dir.path());
 
     // Pretend a first sync stopped after the newest 20 inbox messages.
-    let mut session = ImapSession::connect(&endpoint(), "alice", "secret")
+    let mut session = ImapSession::connect(&endpoint(), "alice", &secret())
         .await
         .unwrap();
     let remote = session.list_folders().await.unwrap();
@@ -167,7 +180,7 @@ async fn interrupted_sync_is_completed_next_time() {
         inbox
     };
 
-    sync_account(&store, &account, "secret", Scope::All, |_| {})
+    sync_account(&store, &account, &secret(), Scope::All, |_| {})
         .await
         .unwrap();
     assert_eq!(
@@ -181,7 +194,7 @@ async fn interrupted_sync_is_completed_next_time() {
 async fn opening_a_message_fetches_and_caches_its_body() {
     let dir = tempfile::tempdir().unwrap();
     let (store, account) = store_with_alice(dir.path());
-    sync_account(&store, &account, "secret", Scope::All, |_| {})
+    sync_account(&store, &account, &secret(), Scope::All, |_| {})
         .await
         .unwrap();
 
@@ -193,7 +206,9 @@ async fn opening_a_message_fetches_and_caches_its_body() {
         .unwrap()
         .items[0]
         .id;
-    let raw = fetch_message(&store, &account, "secret", id).await.unwrap();
+    let raw = fetch_message(&store, &account, &secret(), id)
+        .await
+        .unwrap();
     let parsed = mail_mime::parse_message(&raw, false).unwrap();
     assert_eq!(parsed.subject.as_deref(), Some("Test message 150"));
     assert_eq!(
@@ -202,6 +217,8 @@ async fn opening_a_message_fetches_and_caches_its_body() {
     );
 
     // The second open reads from disk, even with a wrong password.
-    let again = fetch_message(&store, &account, "wrong", id).await.unwrap();
+    let again = fetch_message(&store, &account, &Secret::password("wrong"), id)
+        .await
+        .unwrap();
     assert_eq!(again, raw);
 }

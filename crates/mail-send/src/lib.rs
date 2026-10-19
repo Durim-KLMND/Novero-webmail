@@ -10,10 +10,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use lettre::address::{Address, Envelope};
-use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
-use mail_core::{Account, Endpoint, Event, FolderRole, Security};
+use mail_core::{Account, Endpoint, Event, FolderRole, Secret, Security};
 use mail_store::{OutboxState, Store};
 use mail_sync::ImapSession;
 
@@ -28,7 +28,7 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(120);
 pub async fn send_raw(
     endpoint: &Endpoint,
     username: &str,
-    password: &str,
+    secret: &Secret,
     from: &str,
     recipients: &[String],
     raw: &[u8],
@@ -54,10 +54,15 @@ pub async fn send_raw(
         Security::StartTls => Tls::Required(tls()?),
         Security::Insecure => Tls::None,
     };
+    let (secret, mechanisms) = match secret {
+        Secret::Password(password) => (password, vec![Mechanism::Plain, Mechanism::Login]),
+        Secret::AccessToken(token) => (token, vec![Mechanism::Xoauth2]),
+    };
     let transport = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(endpoint.host.as_str())
         .port(endpoint.port)
         .tls(tls)
-        .credentials(Credentials::new(username.to_owned(), password.to_owned()))
+        .credentials(Credentials::new(username.to_owned(), secret.to_owned()))
+        .authentication(mechanisms)
         .timeout(Some(SEND_TIMEOUT))
         .build();
     transport
@@ -105,7 +110,7 @@ pub struct OutboxOutcome {
 pub async fn flush_outbox(
     store: &Mutex<Store>,
     account: &Account,
-    password: &str,
+    secret: &Secret,
     on_event: impl Fn(Event),
 ) -> Result<OutboxOutcome> {
     let mut outcome = OutboxOutcome::default();
@@ -115,7 +120,7 @@ pub async fn flush_outbox(
         let result = send_raw(
             &account.smtp,
             &account.username,
-            password,
+            secret,
             &account.email,
             &item.recipients,
             &raw,
@@ -137,7 +142,7 @@ pub async fn flush_outbox(
             }
         }
     }
-    outcome.saved_to = save_sent_copies(store, account, password, &on_event).await?;
+    outcome.saved_to = save_sent_copies(store, account, secret, &on_event).await?;
     Ok(outcome)
 }
 
@@ -145,7 +150,7 @@ pub async fn flush_outbox(
 async fn save_sent_copies(
     store: &Mutex<Store>,
     account: &Account,
-    password: &str,
+    secret: &Secret,
     on_event: &impl Fn(Event),
 ) -> Result<Option<String>> {
     let sent: Vec<_> = store
@@ -170,7 +175,7 @@ async fn save_sent_copies(
         return Ok(None);
     };
 
-    let mut session = ImapSession::connect(&account.imap, &account.username, password).await?;
+    let mut session = ImapSession::connect(&account.imap, &account.username, secret).await?;
     for item in &sent {
         let copy = store.lock().unwrap().outbox_file(item, true)?;
         session.append(&folder, Some("(\\Seen)"), &copy).await?;
@@ -184,11 +189,18 @@ async fn save_sent_copies(
     Ok(Some(folder))
 }
 
-/// Gmail files every message sent through its SMTP server in Sent already;
-/// a second copy would show twice.
+/// Gmail and Microsoft (Outlook.com, Microsoft 365) file every message sent
+/// through their SMTP servers in Sent already; a second copy would show twice.
 fn saves_sent_itself(account: &Account) -> bool {
     let host = account.imap.host.to_ascii_lowercase();
-    host.ends_with("gmail.com") || host.ends_with("googlemail.com")
+    [
+        "gmail.com",
+        "googlemail.com",
+        "office365.com",
+        "outlook.com",
+    ]
+    .iter()
+    .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
 
 #[cfg(test)]
@@ -196,7 +208,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gmail_is_recognised_by_its_imap_host() {
+    fn providers_that_file_sent_mail_are_recognised_by_imap_host() {
         let endpoint = |host: &str| Endpoint {
             host: host.into(),
             port: 993,
@@ -209,9 +221,11 @@ mod tests {
             username: String::new(),
             imap: endpoint(host),
             smtp: endpoint(host),
+            auth: Default::default(),
         };
         assert!(saves_sent_itself(&account("imap.gmail.com")));
         assert!(saves_sent_itself(&account("IMAP.GoogleMail.com")));
+        assert!(saves_sent_itself(&account("outlook.office365.com")));
         assert!(!saves_sent_itself(&account("imap.fastmail.com")));
     }
 

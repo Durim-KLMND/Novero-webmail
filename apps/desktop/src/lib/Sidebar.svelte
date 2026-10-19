@@ -32,11 +32,28 @@
     onAddAccount: () => void;
     onSync: (account: number) => void;
     onRemove: (account: Account) => void;
+    onSignInAgain: (account: Account) => void;
     onCompose: () => void;
     onOutbox: (account: number) => void;
   }
-  let { accounts, folders, syncState, selected, onSelect, onAddAccount, onSync, onRemove, onCompose, onOutbox }: Props =
-    $props();
+  let {
+    accounts,
+    folders,
+    syncState,
+    selected,
+    onSelect,
+    onAddAccount,
+    onSync,
+    onRemove,
+    onSignInAgain,
+    onCompose,
+    onOutbox,
+  }: Props = $props();
+
+  /** A refused password or an expired sign-in: fixed by signing in again. */
+  function isSignInError(error: string | null | undefined): boolean {
+    return !!error && /^authentication failed/i.test(error);
+  }
 
   function plural(n: number, one: string): string {
     return n === 1 ? `1 ${one}` : `${n.toLocaleString()} ${one}s`;
@@ -87,6 +104,7 @@
           {#if menuFor === account.id}
             <div class="menu" role="menu">
               <button role="menuitem" onclick={() => { menuFor = null; onSync(account.id); }}>Check for mail</button>
+              <button role="menuitem" onclick={() => { menuFor = null; onSignInAgain(account); }}>Sign in again</button>
               <button role="menuitem" class="danger" onclick={() => { menuFor = null; onRemove(account); }}>Remove account</button>
             </div>
           {/if}
@@ -95,6 +113,9 @@
           <p class="pending quiet" title={errorText(sync.error)}>Offline. Showing saved mail.</p>
         {:else if sync?.error}
           <p class="sync-error">{errorText(sync.error)}</p>
+        {/if}
+        {#if isSignInError(sync?.error) || isSignInError(sync?.pendingError)}
+          <button class="outbox-line sign-in" onclick={() => onSignInAgain(account)}>Sign in again</button>
         {/if}
         {#if sync?.pending}
           <p class="pending quiet" title={sync.pendingError ? errorText(sync.pendingError) : undefined}>
@@ -292,6 +313,10 @@
   }
   .outbox-line.failed {
     color: var(--danger);
+  }
+  .outbox-line.sign-in {
+    color: var(--accent-ink, var(--brand));
+    font-weight: 600;
   }
   .spinner.small {
     width: 12px;

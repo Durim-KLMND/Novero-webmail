@@ -10,6 +10,18 @@ export interface Endpoint {
   security: Security;
 }
 
+export type OAuthProvider = "google" | "microsoft";
+
+/** How an account signs in: a password, or the provider's own sign-in page. */
+export type AuthMethod =
+  | { kind: "password" }
+  | { kind: "oauth2"; provider: OAuthProvider };
+
+export const providerLabel: Record<OAuthProvider, string> = {
+  google: "Google",
+  microsoft: "Microsoft",
+};
+
 export interface Account {
   id: number;
   displayName: string;
@@ -17,9 +29,17 @@ export interface Account {
   username: string;
   imap: Endpoint;
   smtp: Endpoint;
+  auth: AuthMethod;
 }
 
-export type FolderRole = "inbox" | "sent" | "drafts" | "trash" | "junk" | "archive" | "other";
+export type FolderRole =
+  | "inbox"
+  | "sent"
+  | "drafts"
+  | "trash"
+  | "junk"
+  | "archive"
+  | "other";
 
 export interface Folder {
   id: number;
@@ -74,11 +94,21 @@ export interface ParsedMessage {
   attachments: Attachment[];
 }
 
-export interface ProviderPreset {
+/** Server settings found for an email address. */
+export interface SetupInfo {
+  /** The provider's name, or the domain. */
   name: string;
   imap: Endpoint;
   smtp: Endpoint;
+  /** The login name when it is not the email address. */
+  username: string | null;
+  /** The provider's own sign-in page, if it has one. */
+  oauth: OAuthProvider | null;
+  /** Whether this build can open that sign-in page. */
+  oauthAvailable: boolean;
+  /** What to know before signing in with a password. */
   note: string | null;
+  source: "known" | "autoconfig" | "dns" | "guess";
 }
 
 export interface NewAccountInput {
@@ -88,6 +118,7 @@ export interface NewAccountInput {
   password: string;
   imap: Endpoint;
   smtp: Endpoint;
+  auth: AuthMethod;
 }
 
 export type FlagKind = "seen" | "flagged" | "answered";
@@ -127,52 +158,87 @@ export interface OutboxItem {
 
 export type MailEvent =
   | { type: "syncStarted"; account: number }
-  | { type: "syncProgress"; account: number; folder: string; done: number; total: number }
+  | {
+      type: "syncProgress";
+      account: number;
+      folder: string;
+      done: number;
+      total: number;
+    }
   | { type: "syncFinished"; account: number; error: string | null }
-  | { type: "pendingChanges"; account: number; pending: number; error: string | null }
+  | {
+      type: "pendingChanges";
+      account: number;
+      pending: number;
+      error: string | null;
+    }
   | { type: "mailboxChanged"; account: number }
-  | { type: "outboxChanged"; account: number; queued: number; failed: number; error: string | null };
+  | {
+      type: "outboxChanged";
+      account: number;
+      queued: number;
+      failed: number;
+      error: string | null;
+    };
 
 export const api = {
-  providerPreset: (email: string) => invoke<ProviderPreset | null>("provider_preset", { email }),
-  addAccount: (input: NewAccountInput) => invoke<Account>("add_account", { input }),
+  discoverSettings: (email: string) =>
+    invoke<SetupInfo | null>("discover_settings", { email }),
+  addAccount: (input: NewAccountInput) =>
+    invoke<Account>("add_account", { input }),
+  signInAgain: (id: number, password: string | null) =>
+    invoke<Account>("sign_in_again", { id, password }),
+  cancelSignIn: () => invoke<void>("cancel_sign_in"),
   listAccounts: () => invoke<Account[]>("list_accounts"),
   removeAccount: (id: number) => invoke<void>("remove_account", { id }),
-  listFolders: (account: number) => invoke<Folder[]>("list_folders", { account }),
+  listFolders: (account: number) =>
+    invoke<Folder[]>("list_folders", { account }),
   listMessages: (folder: number, offset: number, limit: number) =>
     invoke<MessagePage>("list_messages", { folder, offset, limit }),
   openMessage: (id: number, allowRemote: boolean) =>
     invoke<ParsedMessage>("open_message", { id, allowRemote }),
   syncAccount: (account: number) => invoke<void>("sync_account", { account }),
-  pendingChanges: (account: number) => invoke<number>("pending_changes", { account }),
-  setFlag: (ids: number[], flag: FlagKind, value: boolean) => invoke<void>("set_flag", { ids, flag, value }),
-  moveMessages: (ids: number[], folder: number) => invoke<void>("move_messages", { ids, folder }),
+  pendingChanges: (account: number) =>
+    invoke<number>("pending_changes", { account }),
+  setFlag: (ids: number[], flag: FlagKind, value: boolean) =>
+    invoke<void>("set_flag", { ids, flag, value }),
+  moveMessages: (ids: number[], folder: number) =>
+    invoke<void>("move_messages", { ids, folder }),
   archiveMessages: (ids: number[]) => invoke<void>("archive_messages", { ids }),
   deleteMessages: (ids: number[]) => invoke<void>("delete_messages", { ids }),
   newDraft: (account: number) => invoke<Draft>("new_draft", { account }),
-  replyDraft: (message: number, all: boolean) => invoke<Draft>("reply_draft", { message, all }),
-  forwardDraft: (message: number) => invoke<Draft>("forward_draft", { message }),
+  replyDraft: (message: number, all: boolean) =>
+    invoke<Draft>("reply_draft", { message, all }),
+  forwardDraft: (message: number) =>
+    invoke<Draft>("forward_draft", { message }),
   openDraft: (message: number) => invoke<Draft>("open_draft", { message }),
   saveDraft: (id: number, fields: DraftFields, upload: boolean) =>
     invoke<Draft>("save_draft", { id, fields, upload }),
   attachFiles: (id: number) => invoke<Draft>("attach_files", { id }),
-  removeAttachment: (id: number, index: number) => invoke<Draft>("remove_attachment", { id, index }),
+  removeAttachment: (id: number, index: number) =>
+    invoke<Draft>("remove_attachment", { id, index }),
   discardDraft: (id: number) => invoke<void>("discard_draft", { id }),
-  sendDraft: (id: number, fields: DraftFields) => invoke<void>("send_draft", { id, fields }),
-  listOutbox: (account: number) => invoke<OutboxItem[]>("list_outbox", { account }),
-  outboxStatus: (account: number) => invoke<[number, number]>("outbox_status", { account }),
+  sendDraft: (id: number, fields: DraftFields) =>
+    invoke<void>("send_draft", { id, fields }),
+  listOutbox: (account: number) =>
+    invoke<OutboxItem[]>("list_outbox", { account }),
+  outboxStatus: (account: number) =>
+    invoke<[number, number]>("outbox_status", { account }),
   retryOutbox: (id: number) => invoke<void>("retry_outbox", { id }),
   deleteOutbox: (id: number) => invoke<void>("delete_outbox", { id }),
   editOutbox: (id: number) => invoke<Draft>("edit_outbox", { id }),
 };
 
-export function onMailEvent(handler: (event: MailEvent) => void): Promise<UnlistenFn> {
+export function onMailEvent(
+  handler: (event: MailEvent) => void,
+): Promise<UnlistenFn> {
   return listen<MailEvent>("mail-event", (e) => handler(e.payload));
 }
 
 /** Errors from commands arrive as plain strings. */
 export function errorText(err: unknown): string {
-  if (typeof err === "string") return err.charAt(0).toUpperCase() + err.slice(1);
+  if (typeof err === "string")
+    return err.charAt(0).toUpperCase() + err.slice(1);
   if (err instanceof Error) return err.message;
   return "Something went wrong.";
 }

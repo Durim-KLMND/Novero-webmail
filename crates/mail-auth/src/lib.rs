@@ -1,9 +1,13 @@
-//! Credentials and server settings for accounts.
+//! Signing in and finding server settings for accounts.
 //!
-//! Passwords are kept in the operating system's credential store
-//! ([`platform_store`]); [`providers`] suggests server settings from an
-//! email address. OAuth2 arrives in phase 4.
+//! Passwords and refresh tokens are kept in the operating system's
+//! credential store ([`platform_store`]). [`discover`] finds server settings
+//! from an email address, and [`oauth`] signs in through Google's and
+//! Microsoft's own pages.
 
+pub mod discover;
+mod http;
+pub mod oauth;
 pub mod providers;
 mod secrets;
 

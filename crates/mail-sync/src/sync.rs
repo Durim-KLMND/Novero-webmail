@@ -12,7 +12,7 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-use mail_core::{Account, AccountId, Error, Event, FolderId, FolderRole, Op, Result};
+use mail_core::{Account, AccountId, Error, Event, FolderId, FolderRole, Op, Result, Secret};
 use mail_store::Store;
 
 use crate::ImapSession;
@@ -49,11 +49,11 @@ pub struct ReplayOutcome {
 pub async fn sync_account(
     store: &Mutex<Store>,
     account: &Account,
-    password: &str,
+    secret: &Secret,
     scope: Scope<'_>,
     on_event: impl Fn(Event),
 ) -> Result<()> {
-    let mut session = ImapSession::connect(&account.imap, &account.username, password).await?;
+    let mut session = ImapSession::connect(&account.imap, &account.username, secret).await?;
     let remote = session.list_folders().await?;
     let mut folders = store.lock().unwrap().sync_folders(account.id, &remote)?;
     folders.retain(|(_, f)| f.selectable);
@@ -87,7 +87,7 @@ pub async fn sync_account(
 pub async fn push_changes(
     store: &Mutex<Store>,
     account: &Account,
-    password: &str,
+    secret: &Secret,
     on_event: impl Fn(Event),
 ) -> Result<ReplayOutcome> {
     let idle = {
@@ -97,7 +97,7 @@ pub async fn push_changes(
     if idle {
         return Ok(ReplayOutcome::default());
     }
-    let mut session = ImapSession::connect(&account.imap, &account.username, password).await?;
+    let mut session = ImapSession::connect(&account.imap, &account.username, secret).await?;
     let mut outcome = replay_ops(store, &mut session, account.id).await?;
     if let Some(drafts) = upload_drafts(store, &mut session, account).await? {
         touch(&mut outcome.touched, &drafts);
@@ -324,7 +324,7 @@ async fn fetch_headers(
 pub async fn fetch_message(
     store: &Mutex<Store>,
     account: &Account,
-    password: &str,
+    secret: &Secret,
     message: i64,
 ) -> Result<Vec<u8>> {
     let source = store.lock().unwrap().message_source(message)?;
@@ -333,7 +333,7 @@ pub async fn fetch_message(
     {
         return Ok(raw);
     }
-    let mut session = ImapSession::connect(&account.imap, &account.username, password).await?;
+    let mut session = ImapSession::connect(&account.imap, &account.username, secret).await?;
     let raw = session.fetch_raw(&source.folder_name, source.uid).await?;
     store.lock().unwrap().save_raw(message, &raw)?;
     let _ = session.logout().await;

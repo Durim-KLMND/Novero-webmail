@@ -17,6 +17,7 @@
   import Reader from "./Reader.svelte";
   import Composer from "./Composer.svelte";
   import Outbox from "./Outbox.svelte";
+  import SignInAgain from "./SignInAgain.svelte";
 
   interface Props {
     accounts: Account[];
@@ -236,6 +237,14 @@
     outboxAccount = account;
   }
 
+  /** The account whose sign-in is being renewed. */
+  let signingIn = $state<Account | null>(null);
+
+  function signInDone(signedIn: boolean) {
+    if (signedIn && signingIn) say(`Signed in to ${signingIn.email} again`, "info");
+    signingIn = null;
+  }
+
   async function removeAccount(account: Account) {
     const confirmed = await ask(`Remove ${account.email} from Novero Mail? Mail on the server is not touched.`, {
       title: "Remove account",
@@ -266,6 +275,7 @@
     {onAddAccount}
     onSync={(id) => api.syncAccount(id)}
     onRemove={removeAccount}
+    onSignInAgain={(account) => (signingIn = account)}
     onCompose={compose}
     onOutbox={showOutbox}
   />
@@ -307,6 +317,9 @@
     onReply={(all) => selected && openComposer(() => api.replyDraft(selected!.id, all))}
     onForward={() => selected && openComposer(() => api.forwardDraft(selected!.id))}
   />
+  {/if}
+  {#if signingIn}
+    <SignInAgain account={signingIn} onDone={signInDone} />
   {/if}
   {#if notice}
     <div class="notice" class:error={notice.kind === "error"} class:info={notice.kind === "info"} role="alert">

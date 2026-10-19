@@ -1,0 +1,6 @@
+# Tokens are checked with the fake provider (oauth_mock.py) in this container.
+introspection_mode = post
+introspection_url = http://127.0.0.1:8080/introspect
+username_attribute = username
+active_attribute = active
+active_value = true

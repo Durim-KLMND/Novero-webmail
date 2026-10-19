@@ -69,6 +69,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p mail-sync --locked -- --ignored
       - run: cargo test -p mail-send --locked -- --ignored
+      - run: cargo test -p mail-auth --locked -- --ignored
       - name: Server logs on failure
         if: failure()
         run: docker compose -f testing/docker-compose.yml logs
@@ -102,6 +103,12 @@ jobs:
       - name: Build MSI and NSIS installers (unsigned)
         working-directory: apps/desktop
         run: npx tauri build --ci
+        # Google and Microsoft sign-in, when the repository has these secrets
+        # (see docs/oauth-apps.md). Without them the installer offers passwords only.
+        env:
+          NOVERO_GOOGLE_CLIENT_ID: ${{ secrets.NOVERO_GOOGLE_CLIENT_ID }}
+          NOVERO_GOOGLE_CLIENT_SECRET: ${{ secrets.NOVERO_GOOGLE_CLIENT_SECRET }}
+          NOVERO_MICROSOFT_CLIENT_ID: ${{ secrets.NOVERO_MICROSOFT_CLIENT_ID }}
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:

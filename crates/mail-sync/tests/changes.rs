@@ -9,10 +9,16 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mail_core::{
-    Account, DraftFields, Endpoint, Error, FlagKind, FolderId, FolderRole, NewAccount, Op, Security,
+    Account, DraftFields, Endpoint, Error, FlagKind, FolderId, FolderRole, NewAccount, Op, Secret,
+    Security,
 };
 use mail_store::{NewDraft, Store};
 use mail_sync::{ImapSession, push_changes, sync_folder};
+
+/// Alice's password on the test servers.
+fn secret() -> Secret {
+    Secret::password("secret")
+}
 
 fn endpoint() -> Endpoint {
     Endpoint {
@@ -26,7 +32,7 @@ fn endpoint() -> Endpoint {
 }
 
 async fn connect() -> ImapSession {
-    ImapSession::connect(&endpoint(), "alice", "secret")
+    ImapSession::connect(&endpoint(), "alice", &secret())
         .await
         .unwrap()
 }
@@ -70,6 +76,7 @@ async fn setup(dir: &std::path::Path) -> (Mutex<Store>, Account) {
     let mut store = Store::open_in_memory(dir).unwrap();
     let account = store
         .add_account(&NewAccount {
+            auth: Default::default(),
             display_name: "Alice".into(),
             email: "alice@example.test".into(),
             username: "alice".into(),
@@ -142,7 +149,7 @@ async fn flag_changes_reach_the_server_and_come_back() {
             )
             .unwrap();
     }
-    let outcome = push_changes(&store, &account, "secret", |_| {})
+    let outcome = push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(outcome.applied, 2);
@@ -225,7 +232,7 @@ async fn moves_and_deletes_reach_the_server() {
         assert_eq!(s.local_uids(from_id).unwrap(), [3]);
     }
 
-    let outcome = push_changes(&store, &account, "secret", |_| {})
+    let outcome = push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(outcome.applied, 2);
@@ -280,13 +287,13 @@ async fn changes_made_offline_replay_after_reconnecting() {
     // Offline: nothing listens on port 1, so the connection is refused.
     let mut offline = account.clone();
     offline.imap.port = 1;
-    let result = push_changes(&store, &offline, "secret", |_| {}).await;
+    let result = push_changes(&store, &offline, &secret(), |_| {}).await;
     assert!(matches!(result, Err(Error::Network(_))), "{result:?}");
     assert_eq!(store.lock().unwrap().pending_count(account.id).unwrap(), 3);
     assert_eq!(server_flags(&from).await.len(), 3, "server untouched");
 
     // Back online: everything replays in order.
-    let outcome = push_changes(&store, &account, "secret", |_| {})
+    let outcome = push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(outcome.applied, 3);
@@ -325,7 +332,7 @@ async fn a_refused_change_is_dropped_and_undone_locally() {
         .unwrap();
     assert_eq!(store.lock().unwrap().local_uids(id).unwrap(), [2]);
 
-    let outcome = push_changes(&store, &account, "secret", |_| {})
+    let outcome = push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(outcome.applied, 0);
@@ -424,7 +431,7 @@ async fn drafts_are_saved_replaced_and_removed_on_the_server() {
             ..NewDraft::new(account.id, message_id.clone())
         })
         .unwrap();
-    let outcome = push_changes(&store, &account, "secret", |_| {})
+    let outcome = push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(outcome.touched, std::slice::from_ref(&folder));
@@ -444,19 +451,19 @@ async fn drafts_are_saved_replaced_and_removed_on_the_server() {
             },
         )
         .unwrap();
-    push_changes(&store, &account, "secret", |_| {})
+    push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert_eq!(draft_copies(&folder, &message_id).await, ["Second"]);
 
     // Nothing left to do: no connection is made.
-    let idle = push_changes(&store, &account, "secret", |_| {})
+    let idle = push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert!(idle.touched.is_empty());
 
     store.lock().unwrap().discard_draft(draft.id).unwrap();
-    push_changes(&store, &account, "secret", |_| {})
+    push_changes(&store, &account, &secret(), |_| {})
         .await
         .unwrap();
     assert!(draft_copies(&folder, &message_id).await.is_empty());
