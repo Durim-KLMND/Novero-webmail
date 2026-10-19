@@ -1,0 +1,13 @@
+[package]
+name = "mail-store"
+description = "SQLite cache, migrations, full-text index and on-disk message files."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mail-core.workspace = true
+
+[lints]
+workspace = true

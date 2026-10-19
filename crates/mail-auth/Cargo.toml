@@ -1,0 +1,13 @@
+[package]
+name = "mail-auth"
+description = "OAuth2, credential storage and server autodiscovery."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mail-core.workspace = true
+
+[lints]
+workspace = true
