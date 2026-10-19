@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { api, errorText, type Account, type Settings, type Theme, type UpdateChannel, type UpdateInfo } from "./api";
   import { applyTheme } from "./theme";
+  import RichEditor from "./RichEditor.svelte";
+  import { textToHtml } from "./richtext";
 
   interface Props {
     accounts: Account[];
@@ -10,13 +12,17 @@
     onClose: (saved: Settings | null, signaturesChanged: boolean) => void;
     /** An update was found with Check now. */
     onUpdate: (update: UpdateInfo) => void;
+    /** Open the rules, over this dialog. */
+    onRules: () => void;
   }
-  let { accounts, settings, onClose, onUpdate }: Props = $props();
+  let { accounts, settings, onClose, onUpdate, onRules }: Props = $props();
 
   // svelte-ignore state_referenced_locally
   let draft = $state<Settings>({ ...settings });
   // svelte-ignore state_referenced_locally
-  let signatures = $state<Record<number, string>>(Object.fromEntries(accounts.map((a) => [a.id, a.signature])));
+  let signatures = $state<Record<number, { text: string; html: string }>>(
+    Object.fromEntries(accounts.map((a) => [a.id, { text: a.signature, html: a.signatureHtml }])),
+  );
   let saving = $state(false);
   let error = $state("");
   let dialog = $state<HTMLDivElement>();
@@ -84,8 +90,11 @@
     saving = true;
     error = "";
     try {
-      const changed = accounts.filter((a) => (signatures[a.id] ?? "") !== a.signature);
-      for (const a of changed) await api.setSignature(a.id, signatures[a.id] ?? "");
+      const changed = accounts.filter((a) => {
+        const sig = signatures[a.id];
+        return sig && (sig.text !== a.signature || sig.html !== a.signatureHtml);
+      });
+      for (const a of changed) await api.setSignature(a.id, signatures[a.id].text, signatures[a.id].html);
       const saved = await api.saveSettings($state.snapshot(draft));
       onClose(saved, changed.length > 0);
     } catch (err) {
@@ -142,14 +151,28 @@
     <fieldset>
       <legend>Signatures</legend>
       {#each accounts as a (a.id)}
-        <label class="sig">
+        <div class="sig">
           <span>
             {a.displayName}
             {#if a.displayName !== a.email}<small class="quiet">{a.email}</small>{/if}
           </span>
-          <textarea rows="3" bind:value={signatures[a.id]} placeholder="Added below new messages and replies"></textarea>
-        </label>
+          <RichEditor
+            compact
+            label="Signature for {a.email}"
+            html={a.signatureHtml || textToHtml(a.signature)}
+            placeholder="Added below new messages and replies"
+            onChange={(text, html) => (signatures[a.id] = { text, html })}
+          />
+        </div>
       {/each}
+    </fieldset>
+
+    <fieldset>
+      <legend>Rules</legend>
+      <div class="row">
+        <button onclick={onRules}>Manage rules…</button>
+      </div>
+      <small class="quiet">Sort new mail as it arrives, such as moving newsletters to a folder.</small>
     </fieldset>
 
     <fieldset>
@@ -267,19 +290,6 @@
   }
   .sig + .sig {
     margin-top: 12px;
-  }
-  textarea {
-    font: inherit;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 10px;
-    resize: vertical;
-  }
-  textarea:focus {
-    outline: 2px solid var(--accent-ink);
-    outline-offset: 1px;
   }
   .channel {
     margin: 10px 0 2px;

@@ -3,15 +3,19 @@
 //! Migrations are plain SQL files applied in order and tracked with
 //! `PRAGMA user_version`, so a database records which ones it has.
 
+mod contacts;
 mod mailbox;
 mod outgoing;
+mod rules;
 mod store;
 
 use std::path::Path;
 
+pub use contacts::Contact;
 pub use mail_core::{Error, Result};
 pub use mailbox::{MAX_RESULTS, Mailbox, MessagePage, MessageSummary, SearchQuery};
 pub use outgoing::{DraftUpload, NewDraft, OutboxItem, OutboxState};
+pub use rules::RuleMessage;
 use rusqlite::Connection;
 pub use store::{Folder, FolderState, MessageLocation, MessageSource, QueuedOp, Store};
 
@@ -22,6 +26,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_drafts_and_outbox.sql"),
     include_str!("../migrations/0004_oauth_provider.sql"),
     include_str!("../migrations/0005_search_threads_settings.sql"),
+    include_str!("../migrations/0006_contacts_signatures.sql"),
 ];
 
 /// Schema version a fully migrated database has.

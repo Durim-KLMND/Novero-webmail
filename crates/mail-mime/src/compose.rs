@@ -4,6 +4,9 @@ use mail_builder::MessageBuilder;
 use mail_builder::headers::address::Address as BuilderAddress;
 use mail_builder::headers::date::Date;
 use mail_builder::headers::message_id::MessageId;
+use mail_builder::mime::{BodyPart, MimePart};
+pub use mail_core::address::Mailbox;
+use mail_core::address::{parse_lenient, parse_mailbox, split, valid_email};
 use mail_core::{Draft, DraftAttachment, DraftFields, Error, Result};
 use mail_parser::{Address, DateTime, HeaderValue, Message, MessageParser, MimeHeaders};
 
@@ -11,92 +14,15 @@ use mail_parser::{Address, DateTime, HeaderValue, Message, MessageParser, MimeHe
 /// the newest references, which is all mail clients use to thread.
 const MAX_REFERENCES: usize = 20;
 
-/// One address: an optional display name and the address itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mailbox {
-    pub name: Option<String>,
-    pub email: String,
-}
-
-impl Mailbox {
-    /// The address as it is shown and typed: `Name <a@b>`, or just `a@b`.
-    pub fn display(&self) -> String {
-        match &self.name {
-            Some(name) if name.contains([',', ';', '<', '>', '"', '@']) => {
-                format!("\"{}\" <{}>", name.replace('"', "'"), self.email)
-            }
-            Some(name) => format!("{name} <{}>", self.email),
-            None => self.email.clone(),
-        }
-    }
-}
-
 /// Splits a typed address list on commas and semicolons outside quotes and
 /// angle brackets. Every entry must be a valid address.
 pub fn parse_addresses(input: &str) -> Result<Vec<Mailbox>> {
-    split_addresses(input)
+    split(input)
         .map(|entry| {
             parse_mailbox(entry)
                 .ok_or_else(|| Error::Invalid(format!("“{entry}” is not a valid email address")))
         })
         .collect()
-}
-
-/// Like [`parse_addresses`] but skips entries that are not valid yet, for
-/// saving a draft the user is still typing.
-fn parse_addresses_lenient(input: &str) -> Vec<Mailbox> {
-    split_addresses(input).filter_map(parse_mailbox).collect()
-}
-
-fn split_addresses(input: &str) -> impl Iterator<Item = &str> {
-    let mut entries = Vec::new();
-    let (mut quoted, mut angle, mut start) = (false, false, 0);
-    for (i, c) in input.char_indices() {
-        match c {
-            '"' if !angle => quoted = !quoted,
-            '<' if !quoted => angle = true,
-            '>' if !quoted => angle = false,
-            ',' | ';' if !quoted && !angle => {
-                entries.push(&input[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    entries.push(&input[start..]);
-    entries.into_iter().map(str::trim).filter(|e| !e.is_empty())
-}
-
-fn parse_mailbox(entry: &str) -> Option<Mailbox> {
-    let (name, email) = match (entry.rfind('<'), entry.ends_with('>')) {
-        (Some(open), true) => {
-            let name = entry[..open].trim().trim_matches('"').trim();
-            (
-                (!name.is_empty()).then(|| name.to_owned()),
-                &entry[open + 1..entry.len() - 1],
-            )
-        }
-        _ => (None, entry),
-    };
-    let email = email.trim();
-    valid_email(email).then(|| Mailbox {
-        name,
-        email: email.to_owned(),
-    })
-}
-
-fn valid_email(email: &str) -> bool {
-    let Some((local, domain)) = email.split_once('@') else {
-        return false;
-    };
-    let allowed = |c: char| !c.is_whitespace() && !"<>()[],;:\"\\@".contains(c);
-    !local.is_empty()
-        && !domain.is_empty()
-        && local.chars().all(allowed)
-        && domain.chars().all(allowed)
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
-        && !domain.contains("..")
 }
 
 /// Who a message is from.
@@ -132,7 +58,7 @@ pub fn build_message(
         if sending {
             parse_addresses(input)
         } else {
-            Ok(parse_addresses_lenient(input))
+            Ok(parse_lenient(input))
         }
     };
     let to = parse(&draft.fields.to)?;
@@ -161,14 +87,47 @@ pub fn build_message(
             }))
             .subject(draft.fields.subject.trim())
             .message_id(draft.message_id.as_str())
-            .date(Date::new(date))
-            .text_body(crlf(&draft.fields.body));
-        if !draft.fields.html.trim().is_empty() {
-            message = message.html_body(format!(
-                "<!DOCTYPE html><html><body>{}</body></html>",
-                crate::clean_compose_html(&draft.fields.html)
-            ));
+            .date(Date::new(date));
+        // Plain text, or plain and formatted versions; formatted text with
+        // pictures carries them next to it (multipart/related).
+        let text = MimePart::new(
+            "text/plain",
+            BodyPart::Text(crlf(&draft.fields.body).into()),
+        );
+        let mut body = if draft.fields.html.trim().is_empty() {
+            text
+        } else {
+            let id_base = draft.message_id.trim_matches(['<', '>']);
+            let (html, images) =
+                crate::inline_images(&crate::clean_compose_html(&draft.fields.html), id_base);
+            let html = MimePart::new(
+                "text/html",
+                BodyPart::Text(format!("<!DOCTYPE html><html><body>{html}</body></html>").into()),
+            );
+            let html = if images.is_empty() {
+                html
+            } else {
+                let mut parts = vec![html];
+                parts.extend(images.into_iter().map(|image| {
+                    MimePart::new(image.content_type, image.data)
+                        .inline()
+                        .cid(image.content_id)
+                }));
+                MimePart::new("multipart/related", parts)
+            };
+            MimePart::new("multipart/alternative", vec![text, html])
+        };
+        if !draft.attachments.is_empty() {
+            let mut parts = vec![body];
+            for (attachment, contents) in draft.attachments.iter().zip(files) {
+                parts.push(
+                    MimePart::new(attachment.mime_type.as_str(), contents.as_slice())
+                        .attachment(attachment.name.as_str()),
+                );
+            }
+            body = MimePart::new("multipart/mixed", parts);
         }
+        message = message.body(body);
         if !to.is_empty() {
             message = message.to(address_list(&to));
         }
@@ -183,13 +142,6 @@ pub fn build_message(
         }
         if !draft.references.is_empty() {
             message = message.references(MessageId::new_list(draft.references.iter()));
-        }
-        for (attachment, contents) in draft.attachments.iter().zip(files) {
-            message = message.attachment(
-                attachment.mime_type.as_str(),
-                attachment.name.as_str(),
-                contents.as_slice(),
-            );
         }
         message
             .write_to_vec()
@@ -358,13 +310,31 @@ pub fn reopen(raw: &[u8]) -> Result<Prefill> {
                 .html_part(0)
                 .filter(|p| p.is_text_html())
                 .and_then(|p| p.text_contents())
-                .map(|html| crate::clean_compose_html(body_of(html)))
+                .map(|html| {
+                    let html = crate::restore_inline_images(body_of(html), &inline_parts(&message));
+                    crate::clean_compose_html(&html)
+                })
                 .unwrap_or_default(),
         },
         in_reply_to: ids(message.in_reply_to()).into_iter().next(),
         references: ids(message.references()),
         attachments: attachments(&message),
     })
+}
+
+/// Pictures a message carries for its HTML: content id, type and bytes.
+fn inline_parts(message: &Message<'_>) -> Vec<(String, String, Vec<u8>)> {
+    message
+        .parts
+        .iter()
+        .filter_map(|part| {
+            let id = part.content_id()?.trim_matches(['<', '>']).to_owned();
+            let ct = part.content_type()?;
+            let kind = format!("{}/{}", ct.ctype(), ct.subtype()?).to_ascii_lowercase();
+            kind.starts_with("image/")
+                .then(|| (id, kind, part.contents().to_vec()))
+        })
+        .collect()
 }
 
 /// The part of an HTML document inside `<body>`, or all of it.
@@ -454,6 +424,13 @@ fn body_text(message: &Message<'_>) -> String {
 fn attachments(message: &Message<'_>) -> Vec<(DraftAttachment, Vec<u8>)> {
     message
         .attachments()
+        // Pictures inside the formatted text come back with it, not as files.
+        .filter(|part| {
+            let image = part
+                .content_type()
+                .is_some_and(|ct| ct.ctype().eq_ignore_ascii_case("image"));
+            !(image && part.content_id().is_some())
+        })
         .filter_map(|part| {
             let name = part.attachment_name()?.to_owned();
             let mime_type = part
@@ -664,6 +641,47 @@ mod tests {
             "{}",
             reopened.fields.html
         );
+
+        // Pasted pictures travel as inline parts and come back on reopening.
+        let pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let pictured = draft(DraftFields {
+            to: "bob@example.test".into(),
+            body: "Look".into(),
+            html: format!(
+                r#"<div>Look</div><img src="data:image/png;base64,{pixel}" alt="dot"><img src="data:image/png;base64,{pixel}"><img src="data:text/html;base64,PGI+"><img src="https://track.example/p.gif">"#
+            ),
+            ..DraftFields::default()
+        });
+        let built = build_message(ME, &pictured, &[], 1_792_400_400, true).unwrap();
+        let text = String::from_utf8_lossy(&built.raw);
+        assert!(
+            text.contains("multipart/alternative") && text.contains("multipart/related"),
+            "{text}"
+        );
+        let sent = MessageParser::default().parse(&built.raw).unwrap();
+        let html = sent.body_html(0).unwrap();
+        assert_eq!(html.matches("src=\"cid:image1.").count(), 2, "{html}");
+        assert!(
+            !html.contains("data:") && !html.contains("track.example"),
+            "{html}"
+        );
+        let images: Vec<_> = sent
+            .parts
+            .iter()
+            .filter(|p| p.content_id().is_some())
+            .collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].contents().len(), 70);
+        let reopened = reopen(&built.copy).unwrap();
+        assert_eq!(
+            reopened
+                .fields
+                .html
+                .matches(&format!("data:image/png;base64,{pixel}"))
+                .count(),
+            2
+        );
+        assert!(reopened.attachments.is_empty());
 
         // Plain-text drafts stay plain.
         let plain = draft(DraftFields {

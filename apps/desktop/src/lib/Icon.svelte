@@ -3,6 +3,8 @@
   // icons (Lucide, ISC licence) drawn in the colour of the text around them,
   // which follows the light or dark theme.
   import Archive from "@lucide/svelte/icons/archive";
+  import ArrowDown from "@lucide/svelte/icons/arrow-down";
+  import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import Bold from "@lucide/svelte/icons/bold";
   import Check from "@lucide/svelte/icons/check";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -32,6 +34,8 @@
   import Mails from "@lucide/svelte/icons/mails";
   import Paperclip from "@lucide/svelte/icons/paperclip";
   import PenLine from "@lucide/svelte/icons/pen-line";
+  import Pencil from "@lucide/svelte/icons/pencil";
+  import Power from "@lucide/svelte/icons/power";
   import Plus from "@lucide/svelte/icons/plus";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import RemoveFormatting from "@lucide/svelte/icons/remove-formatting";
@@ -52,6 +56,8 @@
 
   const icons = {
     archive: Archive,
+    "move-down": ArrowDown,
+    "move-up": ArrowUp,
     bold: Bold,
     check: Check,
     "chevron-down": ChevronDown,
@@ -81,6 +87,8 @@
     "all-inboxes": Mails,
     attachment: Paperclip,
     signature: PenLine,
+    edit: Pencil,
+    power: Power,
     plus: Plus,
     refresh: RefreshCw,
     "clear-formatting": RemoveFormatting,

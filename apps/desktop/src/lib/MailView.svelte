@@ -28,6 +28,7 @@
   import Outbox from "./Outbox.svelte";
   import SignInAgain from "./SignInAgain.svelte";
   import SettingsDialog from "./SettingsDialog.svelte";
+  import RulesDialog from "./RulesDialog.svelte";
   import ShortcutHelp from "./ShortcutHelp.svelte";
   import Toasts from "./Toasts.svelte";
   import CrashReport from "./CrashReport.svelte";
@@ -57,6 +58,8 @@
   let update = $state<UpdateInfo | null>(null);
   let crashReport = $state<string | null>(null);
   let showSettings = $state(false);
+  /** The rules dialog: the account it shows, and a sender to make a rule for. */
+  let rulesFor = $state<{ account: number; from?: string } | null>(null);
   let showHelp = $state(false);
   /** The right pane shows the composer, an account's outbox, or the reader. */
   let composing = $state<Draft | null>(null);
@@ -367,6 +370,7 @@
     const target = () => (selected?.id === item.id ? reader?.replyTarget() : null) ?? item.id;
     const seen = item.flags.seen;
     const flagged = item.flags.flagged;
+    const sender = item.from?.match(/<([^<>]+@[^<>]+)>/)?.[1] ?? item.from?.match(/[^\s<>"]+@[^\s<>"]+/)?.[0];
     const targets = (folders[item.accountId] ?? []).filter((f) => f.id !== item.folderId);
     const moveTo: MenuItem[] = targets.map((f) => ({
       label: folderLabel(f.name, f.role, f.delimiter),
@@ -390,6 +394,11 @@
         !draft && { label: flagged ? "Remove flag" : "Flag", icon: flagged ? "unflag" : "flag", shortcut: "S", run: () => toggle("flagged", !flagged) },
         "separator",
         !draft && moveTo.length > 0 && { label: "Move to", icon: "move", items: moveTo },
+        !draft && item.folderRole === "inbox" && sender && {
+          label: "Make a rule for this sender…",
+          icon: "rules",
+          run: () => (rulesFor = { account: item.accountId, from: sender }),
+        },
         canArchive && { label: "Archive", icon: "archive", shortcut: "E", run: archive },
         {
           label: item.folderRole === "trash" ? "Delete forever" : "Delete",
@@ -527,7 +536,7 @@
       }
       return;
     }
-    if (showSettings || signingIn || typing(event)) return;
+    if (showSettings || rulesFor || signingIn || typing(event)) return;
     const key = event.key;
     if (key === "?") showHelp = true;
     else if (key === "/") sidebar?.focusSearch();
@@ -566,6 +575,7 @@
     onAllInboxes={selectAllInboxes}
     onSearch={search}
     onSettings={() => (showSettings = true)}
+    onRules={(account) => (rulesFor = { account })}
     onHelp={() => (showHelp = true)}
     {onAddAccount}
     onSync={(id) => api.syncAccount(id)}
@@ -626,7 +636,16 @@
     <SignInAgain account={signingIn} onDone={signInDone} />
   {/if}
   {#if showSettings}
-    <SettingsDialog {accounts} {settings} onClose={settingsClosed} onUpdate={(found) => (update = found)} />
+    <SettingsDialog
+      {accounts}
+      {settings}
+      onClose={settingsClosed}
+      onUpdate={(found) => (update = found)}
+      onRules={() => (rulesFor = { account: selectedFolder?.accountId ?? accounts[0].id })}
+    />
+  {/if}
+  {#if rulesFor && accounts.length}
+    <RulesDialog {accounts} {folders} start={rulesFor} onClose={() => (rulesFor = null)} />
   {/if}
   {#if crashReport}
     <CrashReport report={crashReport} onClose={crashClosed} />

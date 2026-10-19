@@ -396,7 +396,9 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
     }
     .await;
     if let Ok(report) = &result {
-        announce(app, id, &report.new_mail);
+        // Rules first, so mail they file away or mark read isn't announced.
+        let left = crate::rules::apply(app, id, &report.new_mail);
+        announce(app, id, &left);
     }
     if result.is_ok() && has_outgoing(app, id) {
         // Reachable again with changes or mail still waiting: send them.

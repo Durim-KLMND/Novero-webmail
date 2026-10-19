@@ -1,7 +1,10 @@
 <script lang="ts">
   import Icon, { type IconName } from "./Icon.svelte";
   import { onMount } from "svelte";
-  import { hasFormatting, htmlToText, textToHtml } from "./richtext";
+  import { fitPicture, hasFormatting, htmlToText, readFile, textToHtml } from "./richtext";
+  import { api, errorText } from "./api";
+  import { toast } from "./toast.svelte";
+  import { openMenu, type MenuItem } from "./menus.svelte";
 
   interface Props {
     /** The text to start with, as HTML. */
@@ -10,8 +13,12 @@
     /** Called on every change with the plain text and, when the text uses
      *  formatting plain text can't carry, the HTML ("" otherwise). */
     onChange: (text: string, html: string) => void;
+    /** What the text is, for screen readers. */
+    label?: string;
+    /** A few lines high, for a signature, instead of filling its pane. */
+    compact?: boolean;
   }
-  let { html, placeholder = "", onChange }: Props = $props();
+  let { html, placeholder = "", onChange, label = "Message", compact = false }: Props = $props();
 
   let editor = $state<HTMLDivElement>();
   let linkInput = $state<HTMLInputElement>();
@@ -33,31 +40,41 @@
     changed();
   }
 
-  /** Swaps the signature block ("-- " and the lines of `from`) for `to`, if
-   *  it is still there unchanged. An empty `to` removes the block. */
-  export function replaceSignature(from: string, to: string) {
+  /** Swaps the signature block ("-- " and the signature) for another one,
+   *  formatted (`toHtml`) or plain (`to`); an empty one removes the block.
+   *  The block is found by the mark it was given when put in, or else by
+   *  the lines of the plain-text signature `from`, if they are unchanged. */
+  export function replaceSignature(from: string, to: string, toHtml = "") {
     if (!editor) return;
-    const lines = (sig: string) => sig.replace(/\s+$/, "").split("\n");
-    const old = lines(from);
-    const children = Array.from(editor.children);
     const text = (el: Element | undefined) => (el?.textContent ?? "").replace(/\u00a0/g, " ");
-    for (let at = children.length - 1; at >= 0; at--) {
-      if (text(children[at]).trimEnd() !== "--") continue;
-      if (!old.every((line, i) => text(children[at + 1 + i]) === line)) continue;
-      const dash = children[at];
-      const oldLines = children.slice(at + 1, at + 1 + old.length);
-      if (to.trim()) {
-        const sig = document.createElement("template");
-        sig.innerHTML = textToHtml(lines(to).join("\n"));
-        dash.after(...Array.from(sig.content.childNodes));
-        oldLines.forEach((el) => el.remove());
-      } else {
-        const blank = at > 0 && text(children[at - 1]) === "" ? [children[at - 1]] : [];
-        [...blank, dash, ...oldLines].forEach((el) => el.remove());
+    let block: Element[] = [];
+    let before: Element | null = null;
+    const marked = editor.querySelector(":scope > [data-signature]");
+    if (marked) {
+      block = [marked];
+      before = marked.previousElementSibling;
+    } else {
+      const old = from.replace(/\s+$/, "").split("\n");
+      const children = Array.from(editor.children);
+      for (let at = children.length - 1; at >= 0 && !block.length; at--) {
+        if (text(children[at]).trimEnd() !== "--") continue;
+        if (!old.every((line, i) => text(children[at + 1 + i]) === line)) continue;
+        block = children.slice(at, at + 1 + old.length);
+        before = children[at - 1] ?? null;
       }
-      changed();
-      return;
     }
+    if (!block.length) return;
+    if (to.trim() || toHtml.trim()) {
+      const sig = document.createElement("div");
+      sig.dataset.signature = "";
+      sig.innerHTML = `<div>-- </div>${toHtml.trim() || textToHtml(to.replace(/\s+$/, ""))}`;
+      block[0].before(sig);
+    } else if (before && text(before) === "") {
+      // The blank line above the block goes with it.
+      before.remove();
+    }
+    block.forEach((el) => el.remove());
+    changed();
   }
 
   /** The current HTML, formatted or not. */
@@ -182,10 +199,94 @@
   /** Pasted text arrives without its formatting, so mail from other programs
    *  doesn't bring their fonts and colours. */
   function paste(event: ClipboardEvent) {
+    const pictures = Array.from(event.clipboardData?.files ?? []).filter((f) => PICTURE_TYPES.includes(f.type));
+    if (pictures.length) {
+      event.preventDefault();
+      const at = selection();
+      (async () => {
+        for (const file of pictures) await insertPicture(await readFile(file), at);
+      })().catch(() => toast("The picture could not be pasted.", "error"));
+      return;
+    }
     const text = event.clipboardData?.getData("text/plain");
     if (text === undefined) return;
     event.preventDefault();
     run("insertHTML", textToHtml(text.replace(/\r\n?/g, "\n")));
+  }
+
+  /** Picture types every mail client shows. */
+  const PICTURE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+  function selection(): Range | null {
+    const sel = getSelection();
+    return inside() && sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+  }
+
+  /** The cursor position under a point of the window, if it is in the text. */
+  export function rangeAt(x: number, y: number): Range | null {
+    const range = document.caretRangeFromPoint?.(x, y) ?? null;
+    return range && editor?.contains(range.startContainer) ? range : null;
+  }
+
+  /** Puts a picture (`data:` URL) into the text at `at`, else at the cursor,
+   *  else at the end. Large photos are made smaller first. */
+  export async function insertPicture(url: string, at: Range | null = selection()) {
+    if (!editor) return;
+    const fitted = await fitPicture(url);
+    editor.focus();
+    const sel = getSelection();
+    sel?.removeAllRanges();
+    if (at) {
+      sel?.addRange(at);
+    } else {
+      const end = document.createRange();
+      end.selectNodeContents(editor);
+      end.collapse(false);
+      sel?.addRange(end);
+    }
+    run("insertHTML", `<img src="${fitted}" alt="">`);
+  }
+
+  /** Right-clicking a picture offers sizes; anything else gets the text menu. */
+  function pictureMenu(event: MouseEvent) {
+    const img = event.target instanceof HTMLImageElement ? event.target : null;
+    if (!img) return;
+    const size = (label: string, width: number | null): MenuItem => ({
+      label,
+      icon: img.getAttribute("width") === (width == null ? null : String(width)) ? "check" : undefined,
+      run: () => {
+        img.removeAttribute("height");
+        if (width == null) img.removeAttribute("width");
+        else img.setAttribute("width", String(Math.min(width, img.naturalWidth)));
+        changed();
+      },
+    });
+    openMenu(event, [
+      size("Small", 200),
+      size("Medium", 400),
+      size("Large", 640),
+      size("Original size", null),
+      "separator",
+      {
+        label: "Remove picture",
+        icon: "trash",
+        danger: true,
+        run: () => {
+          img.remove();
+          changed();
+        },
+      },
+    ]);
+  }
+
+  async function pickPicture() {
+    const at = selection();
+    try {
+      const url = await api.pickPicture();
+      if (url) await insertPicture(url, at);
+    } catch (err) {
+      toast(errorText(err), "error");
+    }
   }
 
   const tools: { command: string; icon: IconName; title: string }[] = [
@@ -197,7 +298,7 @@
   ];
 </script>
 
-<div class="rich">
+<div class="rich" class:compact>
   <div class="tools" role="toolbar" aria-label="Formatting">
     {#each tools as t (t.command)}
       <button
@@ -210,6 +311,9 @@
       >
     {/each}
     <button title="Link (Ctrl+K)" aria-label="Link (Ctrl+K)" onmousedown={keepSelection} onclick={openLink}><Icon name="link" /></button>
+    <button title="Insert picture" aria-label="Insert picture" onmousedown={keepSelection} onclick={pickPicture}
+      ><Icon name="image" /></button
+    >
     <button title="Clear formatting" aria-label="Clear formatting" onmousedown={keepSelection} onclick={clearFormatting}
       ><Icon name="clear-formatting" /></button
     >
@@ -236,11 +340,12 @@
     role="textbox"
     tabindex="0"
     aria-multiline="true"
-    aria-label="Message"
+    aria-label={label}
     data-placeholder={placeholder}
     oninput={changed}
     onkeydown={keydown}
     onpaste={paste}
+    oncontextmenu={pictureMenu}
   ></div>
 </div>
 
@@ -250,6 +355,20 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+  .compact {
+    flex: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .compact .tools {
+    padding: 4px 6px;
+  }
+  .compact .editor {
+    min-height: 72px;
+    max-height: 220px;
+    padding: 8px 10px;
   }
   .tools {
     display: flex;
@@ -319,6 +438,10 @@
   .editor :global(ol) {
     margin: 4px 0;
     padding-left: 24px;
+  }
+  .editor :global(img) {
+    max-width: 100%;
+    height: auto;
   }
   .editor :global(a) {
     color: var(--accent-ink);

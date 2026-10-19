@@ -278,6 +278,7 @@ mod tests {
             smtp: endpoint(host),
             auth: Default::default(),
             signature: String::new(),
+            signature_html: String::new(),
         };
         assert!(saves_sent_itself(&account("imap.gmail.com")));
         assert!(saves_sent_itself(&account("IMAP.GoogleMail.com")));

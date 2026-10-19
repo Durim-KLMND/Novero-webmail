@@ -1068,11 +1068,12 @@ mod tests {
         );
         let acc = account(&store, "a@example.test");
         assert_eq!(store.account(acc).unwrap().unwrap().signature, "");
-        store.set_signature(acc, "Alice\nNovero").unwrap();
-        assert_eq!(
-            store.account(acc).unwrap().unwrap().signature,
-            "Alice\nNovero"
-        );
+        store
+            .set_signature(acc, "Alice\nNovero", "<p><b>Alice</b></p>")
+            .unwrap();
+        let account = store.account(acc).unwrap().unwrap();
+        assert_eq!(account.signature, "Alice\nNovero");
+        assert_eq!(account.signature_html, "<p><b>Alice</b></p>");
     }
 
     /// The phase 5 target: search answers in under 200 ms across 100,000

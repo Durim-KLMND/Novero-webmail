@@ -82,11 +82,13 @@ impl Store {
     /// Opens the cache in `dir`, creating it if needed.
     pub fn open(dir: &Path) -> Result<Self> {
         fs::create_dir_all(dir).map_err(io)?;
-        Ok(Self {
+        let store = Self {
             conn: crate::open(&dir.join("mail.db"))?,
             files: dir.join("messages"),
             rows: RefCell::default(),
-        })
+        };
+        store.build_contacts()?;
+        Ok(store)
     }
 
     /// An in-memory database that writes message files under `files`. For tests.
@@ -162,11 +164,12 @@ impl Store {
         remove_dir(&self.files.join(id.0.to_string()))
     }
 
-    pub fn set_signature(&self, id: AccountId, signature: &str) -> Result<()> {
+    /// Sets the signature: plain text, and the formatted version (or "").
+    pub fn set_signature(&self, id: AccountId, signature: &str, html: &str) -> Result<()> {
         self.conn
             .execute(
-                "UPDATE accounts SET signature = ?2 WHERE id = ?1",
-                params![id.0, signature],
+                "UPDATE accounts SET signature = ?2, signature_html = ?3 WHERE id = ?1",
+                params![id.0, signature, html],
             )
             .map_err(storage)?;
         Ok(())
@@ -470,14 +473,14 @@ impl Store {
         headers: &[MessageHeader],
     ) -> Result<Vec<Option<i64>>> {
         let tx = self.conn.transaction().map_err(storage)?;
-        let account = AccountId(
-            tx.query_row(
-                "SELECT account_id FROM folders WHERE id = ?1",
+        let (account, role) = tx
+            .query_row(
+                "SELECT account_id, role FROM folders WHERE id = ?1",
                 [folder.0],
-                |r| r.get(0),
+                |r| Ok((AccountId(r.get(0)?), r.get::<_, Option<String>>(1)?)),
             )
-            .map_err(storage)?,
-        );
+            .map_err(storage)?;
+        let role = FolderRole::parse(role.as_deref());
         let mut inserted = Vec::with_capacity(headers.len());
         for h in headers {
             let updated = tx
@@ -511,6 +514,7 @@ impl Store {
             .map_err(storage)?;
             let id = tx.last_insert_rowid();
             crate::mailbox::assign_thread(&tx, account, id, h)?;
+            crate::contacts::note_header(&tx, role, h)?;
             inserted.push(Some(id));
         }
         tx.commit().map_err(storage)?;
@@ -720,7 +724,7 @@ impl Store {
 }
 
 const ACCOUNT_SELECT: &str = "SELECT id, display_name, email, username, imap_host, imap_port, \
-     imap_security, smtp_host, smtp_port, smtp_security, oauth_provider, signature FROM accounts";
+     imap_security, smtp_host, smtp_port, smtp_security, oauth_provider, signature, signature_html FROM accounts";
 
 fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
     let security = |i: usize| -> rusqlite::Result<Security> {
@@ -761,6 +765,7 @@ fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
             },
         },
         signature: r.get(11)?,
+        signature_html: r.get(12)?,
     })
 }
 

@@ -2,9 +2,10 @@
   import Icon from "./Icon.svelte";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
-  import { api, errorText, type Account, type Draft, type DraftFields } from "./api";
+  import { api, errorText, onFileDrop, type Account, type Draft, type DraftFields, type FileDrop } from "./api";
   import { fileSize } from "./format";
   import RichEditor from "./RichEditor.svelte";
+  import AddressInput from "./AddressInput.svelte";
   import { openMenu } from "./menus.svelte";
   import { textToHtml } from "./richtext";
 
@@ -42,7 +43,7 @@
   let unuploaded = false;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let uploadTimer: ReturnType<typeof setInterval> | undefined;
-  let toInput = $state<HTMLInputElement>();
+  let toInput = $state<AddressInput>();
   let editor = $state<RichEditor>();
   /** What the editor starts with: the formatted text, or the plain text shown as such. */
   const startHtml = start.html || textToHtml(start.body);
@@ -52,6 +53,10 @@
 
   onMount(async () => {
     await tick();
+    // A new draft has the plain signature; a formatted one takes its place.
+    if (!start.html && account?.signatureHtml) {
+      editor?.replaceSignature(account.signature, account.signature, account.signatureHtml);
+    }
     if (draft.inReplyTo && fields.to) {
       // A reply: start typing above the quoted text.
       editor?.focusStart();
@@ -66,7 +71,53 @@
   onDestroy(() => {
     clearTimeout(saveTimer);
     clearInterval(uploadTimer);
+    unlistenDrop.then((fn) => fn());
   });
+
+  let section = $state<HTMLElement>();
+  /** Files are dragged over the composer: onto the text (pictures go in it)
+   *  or anywhere else (everything is attached). */
+  let dropZone = $state<"text" | "attach" | null>(null);
+
+  function zoneAt(x: number, y: number): "text" | "attach" | null {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !section?.contains(el)) return null;
+    return el.closest(".editor") ? "text" : "attach";
+  }
+
+  const unlistenDrop = onFileDrop((event) => dropped(event));
+
+  async function dropped(event: FileDrop) {
+    if (event.kind === "leave") {
+      dropZone = null;
+      return;
+    }
+    const zone = zoneAt(event.x, event.y);
+    if (event.kind === "over") {
+      dropZone = zone;
+      return;
+    }
+    dropZone = null;
+    if (!zone || closed) return;
+    const pictures = zone === "text" ? event.files.flatMap((f, i) => (f.picture ? [i] : [])) : [];
+    const others = event.files.flatMap((_, i) => (pictures.includes(i) ? [] : [i]));
+    error = "";
+    try {
+      let at = editor?.rangeAt(event.x, event.y) ?? null;
+      for (const index of pictures) {
+        await editor?.insertPicture(await api.droppedPicture(event.id, index), at);
+        at = null;
+      }
+      if (others.length) {
+        await save(false);
+        const updated = await api.attachDropped(draft.id, event.id, others);
+        attachments = updated.attachments;
+        unuploaded = true;
+      }
+    } catch (err) {
+      error = errorText(err);
+    }
+  }
 
   function bodyChanged(text: string, html: string) {
     fields.body = text;
@@ -179,14 +230,14 @@
   }
 
   /** Replaces the old sender's signature with the new one's, if it is still in the text. */
-  function swapSignature(from: string, to: string) {
-    if (from.trim()) editor?.replaceSignature(from, to);
+  function swapSignature(from: Account | undefined, to: Account | undefined) {
+    editor?.replaceSignature(from?.signature ?? "", to?.signature ?? "", to?.signatureHtml ?? "");
   }
 
   /** Moves the draft to another account: a new draft there, this one deleted. */
   async function changeSender(accountId: number) {
     if (accountId === draft.account) return;
-    swapSignature(account?.signature ?? "", accounts.find((a) => a.id === accountId)?.signature ?? "");
+    swapSignature(account, accounts.find((a) => a.id === accountId));
     try {
       const moved = await api.newDraft(accountId);
       const saved = await api.saveDraft(moved.id, $state.snapshot(fields), false);
@@ -207,13 +258,19 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="composer" aria-label="New message" onkeydown={keydown}>
+<section class="composer" aria-label="New message" onkeydown={keydown} bind:this={section}>
+  {#if dropZone}
+    <div class="drop" class:text={dropZone === "text"}>
+      <Icon name={dropZone === "text" ? "image" : "attachment"} size={22} />
+      {dropZone === "text" ? "Drop pictures to put them in the text; other files are attached" : "Drop files to attach them"}
+    </div>
+  {/if}
   <div class="actions" role="toolbar" aria-label="Message actions">
-    <button class="primary" onclick={send} disabled={busy}>{busy ? "Sending…" : "Send"}</button>
+    <button class="primary" onclick={send} disabled={busy}><Icon name="sent" />{busy ? "Sending…" : "Send"}</button>
     <button onclick={attach} disabled={busy}><Icon name="attachment" />Attach</button>
     <span class="status quiet" aria-live="polite">{status}</span>
-    <button onclick={discard} disabled={busy} title="Delete this draft">Discard</button>
-    <button onclick={close} disabled={busy} title="Save the draft and close">Close</button>
+    <button onclick={discard} disabled={busy} title="Delete this draft"><Icon name="trash" />Discard</button>
+    <button onclick={close} disabled={busy} title="Save the draft and close"><Icon name="close" />Close</button>
   </div>
 
   {#if error}<p class="error banner" role="alert">{error}</p>{/if}
@@ -232,23 +289,15 @@
 
     <label for="compose-to">To</label>
     <div class="row">
-      <input
-        id="compose-to"
-        bind:this={toInput}
-        bind:value={fields.to}
-        oninput={edited}
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="name@example.com, …"
-      />
+      <AddressInput id="compose-to" bind:this={toInput} bind:value={fields.to} onInput={edited} placeholder="name@example.com, …" />
       {#if !showCopies}<button class="link" onclick={() => (showCopies = true)}>Cc Bcc</button>{/if}
     </div>
 
     {#if showCopies}
       <label for="compose-cc">Cc</label>
-      <input id="compose-cc" bind:value={fields.cc} oninput={edited} autocomplete="off" spellcheck="false" />
+      <AddressInput id="compose-cc" bind:value={fields.cc} onInput={edited} />
       <label for="compose-bcc">Bcc</label>
-      <input id="compose-bcc" bind:value={fields.bcc} oninput={edited} autocomplete="off" spellcheck="false" />
+      <AddressInput id="compose-bcc" bind:value={fields.bcc} onInput={edited} />
     {/if}
 
     <label for="compose-subject">Subject</label>
@@ -275,6 +324,7 @@
 
 <style>
   .composer {
+    position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -347,6 +397,21 @@
     background: none;
     padding: 0 4px;
     color: var(--text-quiet);
+  }
+  .drop {
+    position: absolute;
+    inset: 8px;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border: 2px dashed var(--accent-ink);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    color: var(--accent-ink);
+    font-weight: 600;
+    pointer-events: none;
   }
   .hint {
     font-size: 12px;
