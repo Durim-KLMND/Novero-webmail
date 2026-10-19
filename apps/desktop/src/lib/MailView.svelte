@@ -31,7 +31,7 @@
   import ShortcutHelp from "./ShortcutHelp.svelte";
   import Toasts from "./Toasts.svelte";
   import CrashReport from "./CrashReport.svelte";
-  import { items, openMenu, setMailtoHandler, type MenuItem } from "./contextmenu.svelte";
+  import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
 
   interface Props {
     accounts: Account[];

@@ -3,7 +3,7 @@
   import { api, errorText, type FlagKind, type Folder, type MessageSummary } from "./api";
   import { folderLabel } from "./format";
   import MessageCard from "./MessageCard.svelte";
-  import { openMenuAt } from "./contextmenu.svelte";
+  import { openMenuAt } from "./menus.svelte";
 
   interface Props {
     /** The selected row of the message list: a message or a conversation. */

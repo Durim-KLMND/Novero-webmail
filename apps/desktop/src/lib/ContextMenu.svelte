@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
-  import { closeMenu, fallbackMenu, menu, type MenuAction, type MenuItem } from "./contextmenu.svelte";
+  import { closeMenu, fallbackMenu, menu, type MenuAction, type MenuItem } from "./menus.svelte";
 
   let root = $state<HTMLDivElement>();
   let sub = $state<HTMLDivElement>();

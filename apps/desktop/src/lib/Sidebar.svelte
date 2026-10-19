@@ -21,7 +21,7 @@
   import type { Account, Folder, UpdateInfo } from "./api";
   import { errorText } from "./api";
   import Icon, { type IconName } from "./Icon.svelte";
-  import { items, openMenu, openMenuAt, type MenuItem } from "./contextmenu.svelte";
+  import { items, openMenu, openMenuAt, type MenuItem } from "./menus.svelte";
 
   /** A dropped connection is expected and recovers by itself, so it is not shown as an error. */
   function isOffline(error: string): boolean {

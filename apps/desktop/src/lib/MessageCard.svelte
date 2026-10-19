@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { closeMenu, fallbackMenu, items, openMenu } from "./contextmenu.svelte";
+  import { closeMenu, fallbackMenu, items, openMenu } from "./menus.svelte";
   import { api, errorText, type MessageSummary, type ParsedMessage } from "./api";
   import { fileSize, folderLabel, fullDate, listDate, senderName } from "./format";
 

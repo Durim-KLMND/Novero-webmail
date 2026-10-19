@@ -5,7 +5,7 @@
   import { api, errorText, type Account, type Draft, type DraftFields } from "./api";
   import { fileSize } from "./format";
   import RichEditor from "./RichEditor.svelte";
-  import { openMenu } from "./contextmenu.svelte";
+  import { openMenu } from "./menus.svelte";
   import { textToHtml } from "./richtext";
 
   interface Props {
