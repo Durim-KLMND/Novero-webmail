@@ -185,6 +185,9 @@ pub struct Account {
     pub imap: Endpoint,
     pub smtp: Endpoint,
     pub auth: AuthMethod,
+    /// Plain-text signature for new messages, replies and forwards.
+    #[serde(default)]
+    pub signature: String,
 }
 
 /// What is needed to create an account.
@@ -226,6 +229,9 @@ pub struct MessageHeader {
     pub flags: Flags,
     /// Guessed from a multipart/mixed Content-Type until bodies are fetched.
     pub has_attachments: bool,
+    /// Message-IDs this one replies to, from References and In-Reply-To,
+    /// oldest first. Used to group conversations.
+    pub references: Vec<String>,
 }
 
 /// Message flags the client tracks.

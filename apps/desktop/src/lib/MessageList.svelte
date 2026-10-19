@@ -1,25 +1,33 @@
 <script lang="ts">
-  import { api, errorText, type Folder, type MessageSummary } from "./api";
-  import { folderLabel, listDate, recipientLabel, senderName } from "./format";
+  import { api, errorText, type Mailbox, type MessageSummary } from "./api";
+  import { listDate, recipientLabel, senderName } from "./format";
 
   interface Props {
-    folder: Folder | null;
-    /** Bumped when the folder's contents may have changed. */
+    mailbox: Mailbox | null;
+    title: string;
+    /** Shown when the mailbox has no messages. */
+    emptyText: string;
+    /** What a row is, for the count: "message" or "conversation". */
+    unit: string;
+    /** Bumped when the mailbox's contents may have changed. */
     version: number;
+    /** A message of the selected row. */
     selected: number | null;
+    /** Where a row's message is, for lists that mix folders or accounts. */
+    place?: (item: MessageSummary) => string | null;
     onSelect: (item: MessageSummary) => void;
-    /** The Delete key on the selected message. */
+    /** The Delete key on the selected row. */
     onDelete: () => void;
   }
-  let { folder, version, selected, onSelect, onDelete }: Props = $props();
-
-  /** Sent and Drafts list who a message is to, not who it is from. */
-  const outgoing = $derived(folder?.role === "sent" || folder?.role === "drafts");
+  let { mailbox, title, emptyText, unit, version, selected, place, onSelect, onDelete }: Props = $props();
 
   const ROW = 64;
   const PAGE = 100;
   const OVERSCAN = 8;
+  /** Search results stop here (MAX_RESULTS in mail-store). */
+  const MAX_RESULTS = 5000;
 
+  const key = $derived(mailbox ? JSON.stringify(mailbox) : "");
   let total = $state(0);
   let pages = $state<Record<number, MessageSummary[]>>({});
   let loading = new Set<number>();
@@ -27,54 +35,55 @@
   let viewport = $state(600);
   let error = $state("");
   let listEl = $state<HTMLDivElement>();
-  let loadedFor = -1;
+  let loadedFor = "";
 
-  async function loadPage(page: number, folderId: number, force = false) {
+  async function loadPage(page: number, box: Mailbox, force = false) {
     if (loading.has(page) || (!force && pages[page])) return;
+    const forKey = JSON.stringify(box);
     loading.add(page);
     try {
-      const result = await api.listMessages(folderId, page * PAGE, PAGE);
-      if (folder?.id !== folderId) return;
+      const result = await api.listMessages(box, page * PAGE, PAGE);
+      if (key !== forKey) return;
       total = result.total;
       pages[page] = result.items;
       error = "";
     } catch (err) {
-      error = errorText(err);
+      if (key === forKey) error = errorText(err);
     } finally {
       loading.delete(page);
     }
   }
 
-  // A new folder starts from the top.
+  // Another mailbox starts from the top.
   $effect(() => {
-    const id = folder?.id ?? -1;
-    if (id === loadedFor) return;
-    loadedFor = id;
+    if (key === loadedFor) return;
+    loadedFor = key;
     pages = {};
     total = 0;
+    error = "";
     loading = new Set();
     scrollTop = 0;
     if (listEl) listEl.scrollTop = 0;
-    if (id >= 0) loadPage(0, id);
+    if (mailbox) loadPage(0, mailbox);
   });
 
   // New mail or changed flags: reload the pages already shown.
   $effect(() => {
     void version;
-    const id = folder?.id;
-    if (id == null) return;
+    const box = mailbox;
+    if (!box) return;
     const loaded = Object.keys(pages).map(Number);
-    for (const page of loaded.length ? loaded : [0]) loadPage(page, id, true);
+    for (const page of loaded.length ? loaded : [0]) loadPage(page, box, true);
   });
 
   const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN));
   const last = $derived(Math.min(total, Math.ceil((scrollTop + viewport) / ROW) + OVERSCAN));
 
   $effect(() => {
-    const id = folder?.id;
-    if (id == null || total === 0) return;
+    const box = mailbox;
+    if (!box || total === 0) return;
     for (let page = Math.floor(first / PAGE); page <= Math.floor(Math.max(first, last - 1) / PAGE); page++) {
-      loadPage(page, id);
+      loadPage(page, box);
     }
   });
 
@@ -88,35 +97,34 @@
     return out;
   });
 
-  function indexOfSelected(): number {
+  /** The row holding message `id`: a conversation keeps its row as replies arrive. */
+  function indexOf(id: number | null): number {
+    if (id == null) return -1;
     for (const [page, items] of Object.entries(pages)) {
-      const i = items.findIndex((m) => m.id === selected);
+      const i = items.findIndex((m) => m.ids.includes(id));
       if (i >= 0) return Number(page) * PAGE + i;
     }
     return -1;
   }
 
-  /** The message to select once `id` leaves the list: the next one, else the previous. */
-  export function neighbour(id: number): MessageSummary | null {
-    for (const [page, items] of Object.entries(pages)) {
-      const i = items.findIndex((m) => m.id === id);
-      if (i < 0) continue;
-      const index = Number(page) * PAGE + i;
-      return itemAt(index + 1) ?? itemAt(index - 1) ?? null;
-    }
-    return null;
+  /** The current version of the row holding message `id`. */
+  export function find(id: number): MessageSummary | null {
+    const index = indexOf(id);
+    return index < 0 ? null : (itemAt(index) ?? null);
   }
 
-  function onKey(event: KeyboardEvent) {
-    if (event.key === "Delete" && selected != null) {
-      event.preventDefault();
-      onDelete();
-      return;
-    }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    const current = indexOfSelected();
-    const next = Math.min(total - 1, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
+  /** The row to select once the row holding `id` leaves the list: the next one, else the previous. */
+  export function neighbour(id: number): MessageSummary | null {
+    const index = indexOf(id);
+    if (index < 0) return null;
+    return itemAt(index + 1) ?? itemAt(index - 1) ?? null;
+  }
+
+  /** Selects the row `delta` rows from the selected one and scrolls it into view. */
+  export function move(delta: number) {
+    if (total === 0) return;
+    const current = indexOf(selected);
+    const next = current < 0 ? 0 : Math.min(total - 1, Math.max(0, current + delta));
     const item = itemAt(next);
     if (!item || !listEl) return;
     onSelect(item);
@@ -124,13 +132,35 @@
     if (top < listEl.scrollTop) listEl.scrollTop = top;
     else if (top + ROW > listEl.scrollTop + listEl.clientHeight) listEl.scrollTop = top + ROW - listEl.clientHeight;
   }
+
+  function onKey(event: KeyboardEvent) {
+    if (event.key === "Delete" && selected != null) {
+      event.preventDefault();
+      event.stopPropagation();
+      onDelete();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    move(event.key === "ArrowDown" ? 1 : -1);
+  }
+
+  const outgoing = (item: MessageSummary) => item.folderRole === "sent" || item.folderRole === "drafts";
+
+  const countText = $derived.by(() => {
+    if (mailbox?.kind === "search") {
+      if (total >= MAX_RESULTS) return `${MAX_RESULTS.toLocaleString()}+ results`;
+      return total === 1 ? "1 result" : `${total.toLocaleString()} results`;
+    }
+    return total === 1 ? `1 ${unit}` : `${total.toLocaleString()} ${unit}s`;
+  });
 </script>
 
 <section class="list-pane" aria-label="Messages">
   <header>
-    {#if folder}
-      <h2>{folderLabel(folder.name, folder.role, folder.delimiter)}</h2>
-      <span class="quiet">{total.toLocaleString()} {total === 1 ? "message" : "messages"}</span>
+    {#if mailbox}
+      <h2>{title}</h2>
+      {#if pages[0]}<span class="quiet">{countText}</span>{/if}
     {/if}
   </header>
   {#if error}<p class="error">{error}</p>{/if}
@@ -144,26 +174,30 @@
     role="listbox"
     aria-label="Message list"
   >
-    {#if !folder}
+    {#if !mailbox}
       <p class="empty quiet">Choose a folder.</p>
     {:else if total === 0 && pages[0]}
-      <p class="empty quiet">This folder is empty.</p>
+      <p class="empty quiet">{emptyText}</p>
     {:else}
       <div class="spacer" style:height="{total * ROW}px">
         {#each rows as { index, item } (index)}
           <div class="row-slot" style:top="{index * ROW}px">
             {#if item}
+              {@const active = selected != null && item.ids.includes(selected)}
+              {@const where = place?.(item)}
               <button
                 class="row"
                 class:unread={!item.flags.seen}
-                class:active={item.id === selected}
+                class:active
                 role="option"
-                aria-selected={item.id === selected}
+                aria-selected={active}
                 onclick={() => onSelect(item)}
                 tabindex="-1"
               >
                 <span class="line1">
-                  <span class="from">{outgoing ? recipientLabel(item.to) : senderName(item.from)}</span>
+                  <span class="from">{outgoing(item) ? recipientLabel(item.to) : senderName(item.from)}</span>
+                  {#if item.count > 1}<span class="count" title="{item.count} messages in this conversation">{item.count}</span>{/if}
+                  {#if where}<span class="place" title={where}>{where}</span>{/if}
                   <span class="date">{listDate(item.date)}</span>
                 </span>
                 <span class="line2">
@@ -258,6 +292,27 @@
   .unread .subject {
     font-weight: 600;
     color: var(--text);
+  }
+  .count {
+    font-size: 12px;
+    color: var(--text-quiet);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 0 6px;
+    line-height: 16px;
+    flex: none;
+  }
+  .place {
+    font-size: 11px;
+    color: var(--text-quiet);
+    background: var(--bg-hover);
+    border-radius: 4px;
+    padding: 0 5px;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: none;
   }
   .date {
     font-size: 12px;

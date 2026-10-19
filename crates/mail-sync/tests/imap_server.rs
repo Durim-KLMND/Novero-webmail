@@ -222,3 +222,181 @@ async fn opening_a_message_fetches_and_caches_its_body() {
         .unwrap();
     assert_eq!(again, raw);
 }
+
+/// An RFC 5322 date for a Unix time, e.g. "Mon, 19 Oct 2026 09:00:00 +0000".
+fn rfc_date(secs: i64) -> String {
+    const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{}, {day:02} {} {year} {:02}:{:02}:{:02} +0000",
+        DAYS[days.rem_euclid(7) as usize],
+        MONTHS[month as usize - 1],
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+#[test]
+fn rfc_dates_are_formatted() {
+    assert_eq!(rfc_date(1_792_400_400), "Mon, 19 Oct 2026 09:00:00 +0000");
+}
+
+/// A mailbox of its own: the test server accepts any user name with the
+/// password "secret" and starts it empty.
+fn fresh_user(dir: &std::path::Path, label: &str) -> (Mutex<Store>, mail_core::Account) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let user = format!("{label}{nanos}");
+    let store = Store::open_in_memory(dir).unwrap();
+    let account = store
+        .add_account(&NewAccount {
+            auth: Default::default(),
+            display_name: user.clone(),
+            email: format!("{user}@example.test"),
+            username: user,
+            imap: endpoint(),
+            smtp: endpoint(),
+        })
+        .unwrap();
+    (Mutex::new(store), account)
+}
+
+#[tokio::test]
+#[ignore = "needs the test IMAP server"]
+async fn new_mail_is_announced_threaded_and_searchable() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, account) = fresh_user(dir.path(), "newmail");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let message = |id: &str, reply_to: Option<&str>, subject: &str, body: &str, age: i64| {
+        let mut raw = format!(
+            "From: Carol <carol@example.test>\r\nTo: {}\r\nSubject: {subject}\r\n\
+             Date: {}\r\nMessage-ID: <{id}@example.test>\r\n",
+            account.email,
+            rfc_date(now - age)
+        );
+        if let Some(parent) = reply_to {
+            raw.push_str(&format!("In-Reply-To: <{parent}@example.test>\r\n"));
+        }
+        raw.push_str(&format!("Content-Type: text/plain\r\n\r\n{body}\r\n"));
+        raw.into_bytes()
+    };
+    let mut session = ImapSession::connect(&account.imap, &account.username, &secret())
+        .await
+        .unwrap();
+    session
+        .append(
+            "INBOX",
+            None,
+            &message(
+                "first",
+                None,
+                "Tasting",
+                "The pistachio tasting is on Friday.",
+                600,
+            ),
+        )
+        .await
+        .unwrap();
+    // Older than the prefetch window: listed, but its body waits until opened.
+    session
+        .append(
+            "INBOX",
+            Some("(\\Seen)"),
+            &message(
+                "old",
+                None,
+                "Old news",
+                "Archived walnut notes.",
+                90 * 86_400,
+            ),
+        )
+        .await
+        .unwrap();
+
+    let first = sync_account(&store, &account, &secret(), Scope::All, |_| {})
+        .await
+        .unwrap();
+    assert!(first.new_mail.is_empty(), "a first sync announces nothing");
+    let search = |q: &str| {
+        store
+            .lock()
+            .unwrap()
+            .search(&mail_store::SearchQuery::parse(q), 0, 10)
+            .unwrap()
+            .total
+    };
+    assert_eq!(
+        search("pistachio"),
+        1,
+        "recent bodies are downloaded and indexed"
+    );
+    assert_eq!(search("walnut"), 0, "old bodies are not");
+    assert_eq!(search("old news"), 1, "but their headers are");
+
+    session
+        .append(
+            "INBOX",
+            None,
+            &message("reply", Some("first"), "Re: Tasting", "Count me in.", 60),
+        )
+        .await
+        .unwrap();
+    session
+        .append(
+            "INBOX",
+            Some("(\\Seen)"),
+            &message("seen", None, "Already read", "Read elsewhere.", 30),
+        )
+        .await
+        .unwrap();
+    let second = sync_account(&store, &account, &secret(), Scope::Folder("INBOX"), |_| {})
+        .await
+        .unwrap();
+    let announced: Vec<_> = second
+        .new_mail
+        .iter()
+        .map(|m| m.subject.clone().unwrap())
+        .collect();
+    assert_eq!(announced, ["Re: Tasting"], "only new unread mail");
+
+    let inbox = store
+        .lock()
+        .unwrap()
+        .folder_id(account.id, "INBOX")
+        .unwrap()
+        .unwrap();
+    let page = store
+        .lock()
+        .unwrap()
+        .list(&mail_store::Mailbox::Folder { id: inbox }, true, 0, 10)
+        .unwrap();
+    assert_eq!(page.total, 3, "the reply joins its conversation");
+    let tasting = page
+        .items
+        .iter()
+        .find(|m| m.subject.as_deref() == Some("Re: Tasting"))
+        .unwrap();
+    assert_eq!(tasting.ids.len(), 2);
+    assert!(!tasting.flags.seen);
+    session.logout().await.unwrap();
+}

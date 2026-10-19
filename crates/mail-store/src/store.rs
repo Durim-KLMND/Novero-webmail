@@ -1,5 +1,6 @@
 //! Typed access to the local cache.
 
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,12 +13,15 @@ use mail_core::{
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::Serialize;
 
+use crate::mailbox::{Mailbox, MessagePage, RowCache};
 use crate::storage;
 
 /// The local cache: one SQLite database plus raw messages as `.eml` files.
 pub struct Store {
     pub(crate) conn: Connection,
     pub(crate) files: PathBuf,
+    /// The conversation list last built, reused while nothing changed.
+    pub(crate) rows: RefCell<Option<RowCache>>,
 }
 
 /// A folder in the sidebar.
@@ -65,30 +69,6 @@ pub struct QueuedOp {
     pub attempts: u32,
 }
 
-/// One row in the message list.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageSummary {
-    pub id: i64,
-    pub uid: u32,
-    pub from: Option<String>,
-    /// Shown instead of the sender in Sent and Drafts.
-    pub to: Option<String>,
-    pub subject: Option<String>,
-    pub date: Option<i64>,
-    pub flags: Flags,
-    pub has_attachments: bool,
-}
-
-/// A window of the message list.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MessagePage {
-    pub total: u32,
-    pub offset: u32,
-    pub items: Vec<MessageSummary>,
-}
-
 /// Where a message lives on the server and on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageSource {
@@ -105,6 +85,7 @@ impl Store {
         Ok(Self {
             conn: crate::open(&dir.join("mail.db"))?,
             files: dir.join("messages"),
+            rows: RefCell::default(),
         })
     }
 
@@ -113,6 +94,7 @@ impl Store {
         Ok(Self {
             conn: crate::open_in_memory()?,
             files: files.to_path_buf(),
+            rows: RefCell::default(),
         })
     }
 
@@ -178,6 +160,41 @@ impl Store {
             .execute("DELETE FROM accounts WHERE id = ?1", [id.0])
             .map_err(storage)?;
         remove_dir(&self.files.join(id.0.to_string()))
+    }
+
+    pub fn set_signature(&self, id: AccountId, signature: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE accounts SET signature = ?2 WHERE id = ?1",
+                params![id.0, signature],
+            )
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    // Settings
+
+    /// A stored preference, as JSON.
+    pub fn setting(&self, key: &str) -> Result<Option<serde_json::Value>> {
+        let value: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(storage)?;
+        Ok(value.and_then(|v| serde_json::from_str(&v).ok()))
+    }
+
+    pub fn set_setting(&self, key: &str, value: &serde_json::Value) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT (key) DO UPDATE SET value = ?2",
+                params![key, value.to_string()],
+            )
+            .map_err(storage)?;
+        Ok(())
     }
 
     // Folders
@@ -313,6 +330,17 @@ impl Store {
         })
     }
 
+    /// A folder's role, without counting its messages.
+    pub fn folder_role(&self, id: FolderId) -> Result<Option<FolderRole>> {
+        self.conn
+            .query_row("SELECT role FROM folders WHERE id = ?1", [id.0], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .optional()
+            .map(|role| role.map(|r| FolderRole::parse(r.as_deref())))
+            .map_err(storage)
+    }
+
     /// Looks up a folder of an account by its server name.
     pub fn folder_id(&self, account: AccountId, name: &str) -> Result<Option<FolderId>> {
         self.conn
@@ -433,76 +461,65 @@ impl Store {
 
     // Messages
 
-    /// Inserts headers, or updates flags of messages already cached.
-    pub fn insert_headers(&mut self, folder: FolderId, headers: &[MessageHeader]) -> Result<()> {
+    /// Inserts headers, or updates flags of messages already cached. New
+    /// messages join their conversation. Returns the new messages' ids,
+    /// matching `headers` (None for those already cached).
+    pub fn insert_headers(
+        &mut self,
+        folder: FolderId,
+        headers: &[MessageHeader],
+    ) -> Result<Vec<Option<i64>>> {
         let tx = self.conn.transaction().map_err(storage)?;
-        {
-            let mut stmt = tx
-                .prepare(
-                    "INSERT INTO messages (folder_id, uid, message_id, from_addr, to_addrs, cc_addrs, \
-                     subject, date, size, flags, has_attachments) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
-                     ON CONFLICT (folder_id, uid) DO UPDATE SET flags = ?10",
-                )
-                .map_err(storage)?;
-            for h in headers {
-                stmt.execute(params![
-                    folder.0,
-                    h.uid,
-                    h.message_id,
-                    h.from,
-                    h.to,
-                    h.cc,
-                    h.subject,
-                    h.date,
-                    h.size,
-                    h.flags.to_bits(),
-                    h.has_attachments,
-                ])
-                .map_err(storage)?;
-            }
-        }
-        tx.commit().map_err(storage)
-    }
-
-    /// Messages in a folder, newest first.
-    pub fn list_messages(&self, folder: FolderId, offset: u32, limit: u32) -> Result<MessagePage> {
-        let total: u32 = self
-            .conn
-            .query_row(
-                "SELECT count(*) FROM messages WHERE folder_id = ?1",
+        let account = AccountId(
+            tx.query_row(
+                "SELECT account_id FROM folders WHERE id = ?1",
                 [folder.0],
                 |r| r.get(0),
             )
-            .map_err(storage)?;
-        let mut stmt = self
-            .conn
-            .prepare_cached(
-                "SELECT id, uid, from_addr, to_addrs, subject, date, flags, has_attachments \
-                 FROM messages WHERE folder_id = ?1 ORDER BY date DESC, uid DESC LIMIT ?2 OFFSET ?3",
+            .map_err(storage)?,
+        );
+        let mut inserted = Vec::with_capacity(headers.len());
+        for h in headers {
+            let updated = tx
+                .prepare_cached("UPDATE messages SET flags = ?3 WHERE folder_id = ?1 AND uid = ?2")
+                .map_err(storage)?
+                .execute(params![folder.0, h.uid, h.flags.to_bits()])
+                .map_err(storage)?;
+            if updated > 0 {
+                inserted.push(None);
+                continue;
+            }
+            tx.prepare_cached(
+                "INSERT INTO messages (folder_id, uid, message_id, from_addr, to_addrs, cc_addrs, \
+                 subject, date, size, flags, has_attachments) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             )
-            .map_err(storage)?;
-        let items = stmt
-            .query_map(params![folder.0, limit, offset], |r| {
-                Ok(MessageSummary {
-                    id: r.get(0)?,
-                    uid: r.get(1)?,
-                    from: r.get(2)?,
-                    to: r.get(3)?,
-                    subject: r.get(4)?,
-                    date: r.get(5)?,
-                    flags: Flags::from_bits(r.get(6)?),
-                    has_attachments: r.get(7)?,
-                })
-            })
             .map_err(storage)?
-            .collect::<rusqlite::Result<_>>()
+            .execute(params![
+                folder.0,
+                h.uid,
+                h.message_id,
+                h.from,
+                h.to,
+                h.cc,
+                h.subject,
+                h.date,
+                h.size,
+                h.flags.to_bits(),
+                h.has_attachments,
+            ])
             .map_err(storage)?;
-        Ok(MessagePage {
-            total,
-            offset,
-            items,
-        })
+            let id = tx.last_insert_rowid();
+            crate::mailbox::assign_thread(&tx, account, id, h)?;
+            inserted.push(Some(id));
+        }
+        tx.commit().map_err(storage)?;
+        Ok(inserted)
+    }
+
+    /// Messages in a folder, newest first, one row each.
+    pub fn list_messages(&self, folder: FolderId, offset: u32, limit: u32) -> Result<MessagePage> {
+        self.list(&Mailbox::Folder { id: folder }, false, offset, limit)
     }
 
     pub fn message_source(&self, message: i64) -> Result<MessageSource> {
@@ -703,7 +720,7 @@ impl Store {
 }
 
 const ACCOUNT_SELECT: &str = "SELECT id, display_name, email, username, imap_host, imap_port, \
-     imap_security, smtp_host, smtp_port, smtp_security, oauth_provider FROM accounts";
+     imap_security, smtp_host, smtp_port, smtp_security, oauth_provider, signature FROM accounts";
 
 fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
     let security = |i: usize| -> rusqlite::Result<Security> {
@@ -743,6 +760,7 @@ fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
                 })?,
             },
         },
+        signature: r.get(11)?,
     })
 }
 

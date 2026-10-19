@@ -167,9 +167,20 @@
     }
   }
 
+  /** Replaces the old sender's signature with the new one's, if it is still in the text. */
+  function swapSignature(from: string, to: string) {
+    if (!from.trim()) return;
+    const block = `\n\n-- \n${from}`;
+    const at = fields.body.indexOf(block);
+    if (at < 0) return;
+    const replacement = to.trim() ? `\n\n-- \n${to}` : "";
+    fields.body = fields.body.slice(0, at) + replacement + fields.body.slice(at + block.length);
+  }
+
   /** Moves the draft to another account: a new draft there, this one deleted. */
   async function changeSender(accountId: number) {
     if (accountId === draft.account) return;
+    swapSignature(account?.signature ?? "", accounts.find((a) => a.id === accountId)?.signature ?? "");
     try {
       const moved = await api.newDraft(accountId);
       const saved = await api.saveDraft(moved.id, $state.snapshot(fields), false);

@@ -1,111 +1,128 @@
 <script lang="ts">
-  import { openUrl } from "@tauri-apps/plugin-opener";
-  import { api, errorText, type FlagKind, type Folder, type MessageSummary, type ParsedMessage } from "./api";
-  import { fileSize, folderLabel, fullDate } from "./format";
+  import { api, errorText, type FlagKind, type Folder, type MessageSummary } from "./api";
+  import { folderLabel } from "./format";
+  import MessageCard from "./MessageCard.svelte";
 
   interface Props {
-    summary: MessageSummary | null;
-    /** The folder the message is in, and the other folders of its account. */
-    folder: Folder | null;
+    /** The selected row of the message list: a message or a conversation. */
+    row: MessageSummary | null;
+    /** The folders of the row's account. */
     folders: Folder[];
+    /** Bumped when messages may have changed. */
+    version: number;
+    /** A message was read. */
     onOpened: () => void;
     onArchive: () => void;
     onDelete: () => void;
     onToggle: (flag: FlagKind, value: boolean) => void;
     onMove: (folder: number) => void;
-    onReply: (all: boolean) => void;
-    onForward: () => void;
+    onReply: (message: number, all: boolean) => void;
+    onForward: (message: number) => void;
   }
-  let { summary, folder, folders, onOpened, onArchive, onDelete, onToggle, onMove, onReply, onForward }: Props =
+  let { row, folders, version, onOpened, onArchive, onDelete, onToggle, onMove, onReply, onForward }: Props =
     $props();
 
-  const messageId = $derived(summary?.id ?? null);
-  const canArchive = $derived(folder?.role !== "archive" && folders.some((f) => f.role === "archive"));
-  const moveTargets = $derived(folders.filter((f) => f.id !== folder?.id));
+  const rowId = $derived(row?.id ?? null);
+  const canArchive = $derived(row?.folderRole !== "archive" && folders.some((f) => f.role === "archive"));
+  const moveTargets = $derived(folders.filter((f) => f.id !== row?.folderId));
 
-  let message = $state<ParsedMessage | null>(null);
-  let loading = $state(false);
+  /** The conversation, oldest first. */
+  let messages = $state<MessageSummary[]>([]);
+  let expanded = $state<Record<number, boolean>>({});
   let error = $state("");
-  const offline = $derived(error.startsWith("Network error"));
-  let allowRemote = $state(false);
+  let loadedFor: number | null = null;
   let request = 0;
 
-  async function load(id: number, remote: boolean) {
+  /** The message the toolbar's Reply and Forward answer: the newest one that isn't a draft. */
+  const latest = $derived(
+    [...messages].reverse().find((m) => m.folderRole !== "drafts" && m.folderRole !== "sent") ??
+      [...messages].reverse().find((m) => m.folderRole !== "drafts") ??
+      null,
+  );
+
+  /** The row's messages as last loaded: their flags are newer than the row's. */
+  const own = $derived(row ? messages.filter((m) => row.ids.includes(m.id)) : []);
+  const seen = $derived(own.length ? own.every((m) => m.flags.seen) : !!row?.flags.seen);
+  const flagged = $derived(own.length ? own.some((m) => m.flags.flagged) : !!row?.flags.flagged);
+
+  /** Whether the row is read and flagged, for the S and Shift+U shortcuts. */
+  export function rowFlags(): { seen: boolean; flagged: boolean } {
+    return { seen, flagged };
+  }
+
+  /** What R, A and F answer. */
+  export function replyTarget(): number | null {
+    return latest?.id ?? null;
+  }
+
+  async function load(id: number) {
     const mine = ++request;
-    loading = true;
-    error = "";
+    const fresh = loadedFor !== id;
     try {
-      const result = await api.openMessage(id, remote);
+      const result = await api.conversation(id);
       if (mine !== request) return;
-      message = result;
-      onOpened();
+      if (fresh) expanded = {};
+      // The newest message and anything unread start open; read ones fold away.
+      for (const m of result) {
+        if (!m.flags.seen && !(m.id in expanded)) expanded[m.id] = true;
+      }
+      const newest = result[result.length - 1];
+      if (newest && fresh) expanded[newest.id] = true;
+      if (!result.some((m) => expanded[m.id]) && newest) expanded[newest.id] = true;
+      messages = result;
+      loadedFor = id;
+      error = "";
     } catch (err) {
       if (mine === request) error = errorText(err);
-    } finally {
-      if (mine === request) loading = false;
     }
   }
 
   $effect(() => {
-    const id = messageId;
-    allowRemote = false;
-    message = null;
-    if (id != null) load(id, false);
+    const id = rowId;
+    if (id == null) {
+      messages = [];
+      loadedFor = null;
+      return;
+    }
+    if (id !== loadedFor) messages = [];
+    load(id);
   });
 
-  function loadImages() {
-    allowRemote = true;
-    if (messageId != null) load(messageId, true);
+  // Replies arriving or flags changing elsewhere.
+  $effect(() => {
+    void version;
+    if (loadedFor != null) load(loadedFor);
+  });
+
+  function opened(summary: MessageSummary) {
+    const m = messages.find((x) => x.id === summary.id);
+    if (m && !m.flags.seen) {
+      m.flags.seen = true;
+      onOpened();
+    }
   }
 
-  /** The message HTML in its own document: no scripts, no network unless images are allowed. */
-  function frameDoc(html: string, remote: boolean): string {
-    const images = remote ? "data: https: http:" : "data:";
-    return `<!doctype html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; font-src data:">
-<base target="_blank">
-<style>body{margin:0;padding:20px;font:14px/1.5 "Anthropic Sans","Segoe UI",system-ui,sans-serif;color:#1a1a19;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>
-</head><body>${html}</body></html>`;
-  }
-
-  /** Links open in the default browser instead of inside the app. */
-  function wireFrame(frame: HTMLIFrameElement) {
-    const doc = frame.contentDocument;
-    if (!doc) return;
-    doc.addEventListener("click", (event) => {
-      const link = (event.target as Element | null)?.closest?.("a[href]");
-      if (!link) return;
-      event.preventDefault();
-      const href = link.getAttribute("href") ?? "";
-      if (/^(https?:|mailto:)/i.test(href)) openUrl(href).catch(() => {});
-    });
-    frame.style.height = `${Math.max(doc.documentElement.scrollHeight, 200)}px`;
-  }
 </script>
 
-<article class="reader" aria-label="Message">
-  {#if messageId == null}
+<article class="reader" aria-label="Conversation">
+  {#if !row}
     <div class="empty quiet">Select a message to read it.</div>
-  {:else if !message && !error}
-    <div class="empty"><span class="spinner"></span></div>
   {:else}
     <div class="actions" role="toolbar" aria-label="Message actions">
-      {#if message}
-        <button onclick={() => onReply(false)}>Reply</button>
-        <button onclick={() => onReply(true)}>Reply all</button>
-        <button onclick={onForward}>Forward</button>
+      {#if latest}
+        <button onclick={() => onReply(latest.id, false)} title="Reply (R)">Reply</button>
+        <button onclick={() => onReply(latest.id, true)} title="Reply all (A)">Reply all</button>
+        <button onclick={() => onForward(latest.id)} title="Forward (F)">Forward</button>
         <span class="gap"></span>
       {/if}
-      {#if canArchive}<button onclick={onArchive}>Archive</button>{/if}
-      <button onclick={onDelete}>{folder?.role === "trash" ? "Delete forever" : "Delete"}</button>
-      {#if summary}
-        <button onclick={() => onToggle("seen", !summary.flags.seen)}>
-          {summary.flags.seen ? "Mark unread" : "Mark read"}
-        </button>
-        <button aria-pressed={summary.flags.flagged} onclick={() => onToggle("flagged", !summary.flags.flagged)}>
-          {summary.flags.flagged ? "⚑ Flagged" : "⚐ Flag"}
-        </button>
-      {/if}
+      {#if canArchive}<button onclick={onArchive} title="Archive (E)">Archive</button>{/if}
+      <button onclick={onDelete} title="Delete (#)">{row.folderRole === "trash" ? "Delete forever" : "Delete"}</button>
+      <button onclick={() => onToggle("seen", !seen)} title={seen ? "Mark unread (Shift+U)" : "Mark read (Shift+I)"}>
+        {seen ? "Mark unread" : "Mark read"}
+      </button>
+      <button aria-pressed={flagged} onclick={() => onToggle("flagged", !flagged)} title="Flag (S)">
+        {flagged ? "⚑ Flagged" : "⚐ Flag"}
+      </button>
       {#if moveTargets.length}
         <select
           aria-label="Move to folder"
@@ -122,56 +139,31 @@
         </select>
       {/if}
     </div>
-    {#if error || !message}
-      <div class="pad">
-        <p class="error">
-          {#if offline}
-            This message hasn't been downloaded yet and the server can't be reached. It will open once you're back online.
-          {:else}
-            Could not open this message: {error}
-          {/if}
-        </p>
-        <button onclick={() => messageId != null && load(messageId, allowRemote)} disabled={loading}>Try again</button>
-      </div>
-    {:else}
     <header>
-      <h1>{message.subject || "(no subject)"}</h1>
-      <dl>
-        <dt>From</dt><dd>{message.from ?? "(unknown)"}</dd>
-        {#if message.to}<dt>To</dt><dd>{message.to}</dd>{/if}
-        {#if message.cc}<dt>Cc</dt><dd>{message.cc}</dd>{/if}
-        {#if message.date}<dt>Date</dt><dd>{fullDate(message.date)}</dd>{/if}
-      </dl>
-      {#if message.attachments.length}
-        <ul class="attachments">
-          {#each message.attachments as a}
-            <li title={a.mimeType}>📎 {a.name} <span class="quiet">{fileSize(a.size)}</span></li>
-          {/each}
-        </ul>
-      {/if}
+      <h1>{row.subject || "(no subject)"}</h1>
+      {#if messages.length > 1}<span class="quiet">{messages.length} messages</span>{/if}
     </header>
-    {#if message.blockedRemote > 0 && !allowRemote}
-      <div class="blocked">
-        <span>Remote images are blocked to protect your privacy ({message.blockedRemote}).</span>
-        <button onclick={loadImages} disabled={loading}>Load images</button>
+    {#if error}
+      <div class="pad">
+        <p class="error">Could not open this conversation: {error}</p>
+        <button onclick={() => rowId != null && load(rowId)}>Try again</button>
       </div>
-    {/if}
-    <div class="body">
-      {#if message.html}
-        {#key message}
-          <iframe
-            title="Message content"
-            sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-            srcdoc={frameDoc(message.html, allowRemote)}
-            onload={(e) => wireFrame(e.currentTarget as HTMLIFrameElement)}
-          ></iframe>
-        {/key}
-      {:else if message.text}
-        <pre>{message.text}</pre>
-      {:else}
-        <p class="quiet pad">This message has no text.</p>
-      {/if}
-    </div>
+    {:else if !messages.length}
+      <div class="empty"><span class="spinner"></span></div>
+    {:else}
+      <div class="thread">
+        {#each messages as m (m.id)}
+          <MessageCard
+            summary={m}
+            expanded={!!expanded[m.id]}
+            showFolder={m.folderId !== row.folderId}
+            onExpand={(open) => (expanded[m.id] = open)}
+            onOpened={opened}
+            onReply={(all) => onReply(m.id, all)}
+            onForward={() => onForward(m.id)}
+          />
+        {/each}
+      </div>
     {/if}
   {/if}
 </article>
@@ -214,66 +206,19 @@
     border-color: var(--accent-ink);
   }
   header {
-    padding: 18px 24px 12px;
-    border-bottom: 1px solid var(--border);
+    padding: 18px 24px 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
   }
   h1 {
     font-size: 20px;
-    margin: 0 0 10px;
+    margin: 0;
     word-break: break-word;
   }
-  dl {
+  .thread {
     display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 2px 12px;
-    margin: 0;
-    font-size: 13px;
-  }
-  dt {
-    color: var(--text-quiet);
-  }
-  dd {
-    margin: 0;
-    word-break: break-word;
-  }
-  .attachments {
-    list-style: none;
-    padding: 0;
-    margin: 10px 0 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .attachments li {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 3px 8px;
-    font-size: 13px;
-  }
-  .blocked {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    background: var(--note-bg);
-    padding: 8px 24px;
-    font-size: 13px;
-  }
-  .body {
-    padding: 0;
-  }
-  iframe {
-    width: 100%;
-    border: none;
-    display: block;
-    background: #fff;
-    min-height: 200px;
-  }
-  pre {
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    font: 14px/1.5 var(--font);
-    margin: 0;
-    padding: 20px 24px;
+    gap: 8px;
+    padding: 12px 24px 24px;
   }
 </style>

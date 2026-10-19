@@ -2,8 +2,8 @@
 //!
 //! Incoming mail is hostile input: everything shown in the UI goes through
 //! [`parse_message`], which decodes the message and sanitizes its HTML.
-//! [`build_message`] turns a draft into outgoing mail. Threading (phase 5)
-//! comes later.
+//! [`build_message`] turns a draft into outgoing mail. [`parse_header_fields`]
+//! also reads the References that conversations are grouped by.
 
 mod compose;
 mod html;
@@ -15,4 +15,6 @@ pub use compose::{
 };
 pub use html::{SanitizedHtml, sanitize_html};
 pub use mail_core::{Error, Result};
-pub use parse::{AttachmentInfo, ParsedMessage, parse_header_fields, parse_message};
+pub use parse::{
+    AttachmentInfo, ParsedMessage, bracketed, parse_header_fields, parse_message, search_text,
+};
