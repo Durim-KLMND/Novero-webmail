@@ -21,7 +21,7 @@
   import type { Account, Folder, UpdateInfo } from "./api";
   import { errorText } from "./api";
   import Icon, { type IconName } from "./Icon.svelte";
-  import { items, openMenu, openMenuAt, type MenuItem } from "./menus.svelte";
+  import { items, openMenu, toggleMenuUnder, type MenuItem } from "./menus.svelte";
 
   /** A dropped connection is expected and recovers by itself, so it is not shown as an error. */
   function isOffline(error: string): boolean {
@@ -46,11 +46,11 @@
     /** Open an account's rules. */
     onRules: (account: number) => void;
     onHelp: () => void;
-    onAddAccount: () => void;
     onSync: (account: number) => void;
     onRemove: (account: Account) => void;
     onSignInAgain: (account: Account) => void;
-    onCompose: () => void;
+    /** Write a new message, here or in a window of its own. */
+    onCompose: (newWindow: boolean) => void;
     onOutbox: (account: number) => void;
     /** A downloaded update, offered at the bottom. */
     update: UpdateInfo | null;
@@ -69,7 +69,6 @@
     onSettings,
     onRules,
     onHelp,
-    onAddAccount,
     onSync,
     onRemove,
     onSignInAgain,
@@ -99,8 +98,7 @@
   }
 
   function moreMenu(account: Account, event: MouseEvent) {
-    const at = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    openMenuAt(at.left, at.bottom + 2, accountMenu(account));
+    toggleMenuUnder(event.currentTarget as HTMLElement, accountMenu(account), true);
   }
   let collapsed = $state<Record<number, boolean>>({});
 
@@ -164,7 +162,23 @@
 
 <nav class="sidebar" aria-label="Accounts and folders">
   <div class="brand">Novero Mail</div>
-  <button class="primary compose" onclick={onCompose} title="New message (C)">New message</button>
+  <div class="compose" role="group" aria-label="New message">
+    <button class="primary main" onclick={() => onCompose(false)} title="New message (C)">New message</button>
+    <button
+      class="primary more-compose"
+      aria-label="More ways to write a message"
+      aria-haspopup="menu"
+      title="More ways to write a message"
+      onclick={(e) =>
+        toggleMenuUnder(
+          e.currentTarget.parentElement ?? e.currentTarget,
+          [
+            { label: "New message", icon: "drafts", shortcut: "C", run: () => onCompose(false) },
+            { label: "New message in a new window", icon: "external-link", shortcut: "Shift+C", run: () => onCompose(true) },
+          ],
+        )}
+    ><Icon name="chevron-down" size={14} /></button>
+  </div>
   <div class="search">
     <input
       type="search"
@@ -177,6 +191,7 @@
       title="Search (/). Try from:, to:, subject:, is:unread, has:attachment, in:"
       spellcheck="false"
     />
+    <span class="keys" aria-hidden="true"><kbd>Ctrl</kbd><kbd>K</kbd></span>
   </div>
   <div class="scroll">
     {#if accounts.length > 1}
@@ -255,7 +270,7 @@
                   oncontextmenu={(e) => onFolderMenu(folder, e)}
                 >
                   <Icon name={icons[folder.role]} />
-                  <span class="label">{folderLabel(folder.name, folder.role, folder.delimiter)}</span>
+                  <span class="label" title={folder.role === "other" ? folder.name.split(folder.delimiter ?? "/").join(" › ") : undefined}>{folderLabel(folder.name, folder.role, folder.delimiter)}</span>
                   {#if folder.unread > 0 && folder.role !== "sent" && folder.role !== "trash"}
                     <span class="badge">{folder.unread.toLocaleString()}</span>
                   {/if}
@@ -276,9 +291,8 @@
     </div>
   {/if}
   <div class="footer">
-    <button class="add" onclick={onAddAccount}><Icon name="plus" /> Add account</button>
+    <button class="settings" onclick={onSettings} aria-label="Settings" title="Settings and accounts"><Icon name="settings" /> Settings</button>
     <button class="tool" onclick={onHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"><Icon name="keyboard" size={18} /></button>
-    <button class="tool" onclick={onSettings} aria-label="Settings" title="Settings"><Icon name="settings" size={18} /></button>
   </div>
 </nav>
 
@@ -417,9 +431,8 @@
     gap: 6px;
     margin: 8px;
   }
-  .add {
+  .settings {
     flex: 1;
-    border-style: dashed;
     white-space: nowrap;
     padding: 7px 8px;
   }
@@ -428,16 +441,52 @@
     color: var(--text-quiet);
   }
   .search {
+    position: relative;
     padding: 0 12px 10px;
   }
   .search input {
     padding: 6px 10px;
   }
+  /* The shortcut, shown in the empty box until it is used. */
+  .keys {
+    position: absolute;
+    right: 20px;
+    top: 6px;
+    display: flex;
+    gap: 3px;
+    pointer-events: none;
+  }
+  .search:has(input:focus) .keys,
+  .search:has(input:not(:placeholder-shown)) .keys {
+    display: none;
+  }
+  kbd {
+    font: 11px/1 var(--font);
+    color: var(--text-quiet);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 3px 5px;
+    background: var(--bg);
+  }
   .all {
     margin-bottom: 8px;
   }
   .compose {
+    display: flex;
     margin: 4px 12px 12px;
+  }
+  .compose .main {
+    flex: 1;
+    min-width: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .more-compose {
+    padding: 7px 9px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: 1px solid color-mix(in srgb, var(--accent-text) 30%, transparent);
   }
   .outbox-line {
     display: block;

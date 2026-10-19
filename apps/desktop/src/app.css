@@ -212,3 +212,15 @@ progress::-moz-progress-bar {
   background: var(--accent-ink);
   border-radius: 3px;
 }
+
+/* A button that is only an icon, such as "⋯" or "Open in a new window". */
+button.icon-only {
+  border: none;
+  background: none;
+  padding: 6px;
+  color: var(--text-quiet);
+}
+
+button.icon-only:hover:not(:disabled) {
+  color: var(--text);
+}

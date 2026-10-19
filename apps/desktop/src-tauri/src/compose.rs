@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mail_core::{AccountId, Draft, DraftAttachment, DraftFields, Error, FlagKind, Op, Result};
 use mail_mime::{Prefill, ReplyMode, Sender};
 use mail_store::{Contact, NewDraft, OutboxItem, OutboxState};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::commands::{change, raw_message};
@@ -127,6 +127,40 @@ fn create(
         attachments: prefill.attachments,
         ..NewDraft::new(account, mail_mime::new_message_id(email))
     })
+}
+
+/// A saved draft, for a composer in its own window.
+#[tauri::command]
+pub fn get_draft(state: State<'_, AppState>, id: i64) -> Result<Draft> {
+    state
+        .store
+        .lock()
+        .unwrap()
+        .draft(id)?
+        .ok_or_else(|| Error::Invalid("That draft no longer exists.".into()))
+}
+
+/// Opens a draft in a window of its own, or brings its window forward.
+/// (Async: creating a window from a blocking command deadlocks on Windows.)
+#[tauri::command]
+pub async fn open_composer_window(app: AppHandle, id: i64) -> Result<()> {
+    let label = format!("compose-{id}");
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        label,
+        WebviewUrl::App(format!("index.html?compose={id}").into()),
+    )
+    .title("New message")
+    .inner_size(760.0, 680.0)
+    .min_inner_size(480.0, 400.0)
+    .build()
+    .map_err(|e| Error::Invalid(format!("The message window could not open: {e}")))?;
+    Ok(())
 }
 
 /// Saves what the user typed. With `upload`, the Drafts folder copy is

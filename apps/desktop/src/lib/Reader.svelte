@@ -3,7 +3,7 @@
   import { api, errorText, type FlagKind, type Folder, type MessageSummary } from "./api";
   import { folderLabel } from "./format";
   import MessageCard from "./MessageCard.svelte";
-  import { openMenuAt } from "./menus.svelte";
+  import { toggleMenuUnder } from "./menus.svelte";
 
   interface Props {
     /** The selected row of the message list: a message or a conversation. */
@@ -29,10 +29,8 @@
   const moveTargets = $derived(folders.filter((f) => f.id !== row?.folderId));
 
   function moveMenu(event: MouseEvent) {
-    const at = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    openMenuAt(
-      at.left,
-      at.bottom + 2,
+    toggleMenuUnder(
+      event.currentTarget as HTMLElement,
       moveTargets.map((f) => ({
         label: folderLabel(f.name, f.role, f.delimiter),
         icon: f.role === "other" ? "folder" : f.role,

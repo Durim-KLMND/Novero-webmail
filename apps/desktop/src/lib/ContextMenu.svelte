@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
-  import { closeMenu, fallbackMenu, menu, type MenuAction, type MenuItem } from "./menus.svelte";
+  import { closeMenu, fallbackMenu, menu, menuAnchor, type MenuAction, type MenuItem } from "./menus.svelte";
 
   let root = $state<HTMLDivElement>();
   let sub = $state<HTMLDivElement>();
@@ -21,12 +21,12 @@
 
   $effect(() => {
     if (!menu.items) return;
-    const { x, y } = menu as { x: number; y: number };
+    const { x, y, alignRight } = menu as { x: number; y: number; alignRight?: boolean };
     open = null;
     pos = { x, y };
     tick().then(() => {
       if (!root) return;
-      pos = fit(root, x, y);
+      pos = fit(root, alignRight ? x - root.getBoundingClientRect().width : x, y);
       first(root)?.focus();
     });
   });
@@ -100,6 +100,8 @@
     if (!menu.items) return;
     const target = event.target as Node;
     if (root?.contains(target) || sub?.contains(target)) return;
+    // The button that opened it closes it on its own click.
+    if (menuAnchor()?.contains(target)) return;
     closeMenu();
   }
 

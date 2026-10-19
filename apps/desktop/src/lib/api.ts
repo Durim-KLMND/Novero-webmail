@@ -1,6 +1,7 @@
 // Typed wrappers around the Rust commands in src-tauri/src/commands.rs and compose.rs.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export type Security = "implicitTls" | "startTls" | "insecure";
 
@@ -324,6 +325,9 @@ export const api = {
   forwardDraft: (message: number) =>
     invoke<Draft>("forward_draft", { message }),
   openDraft: (message: number) => invoke<Draft>("open_draft", { message }),
+  getDraft: (id: number) => invoke<Draft>("get_draft", { id }),
+  /** Opens a draft in a window of its own. */
+  openComposerWindow: (id: number) => invoke<void>("open_composer_window", { id }),
   saveDraft: (id: number, fields: DraftFields, upload: boolean) =>
     invoke<Draft>("save_draft", { id, fields, upload }),
   attachFiles: (id: number) => invoke<Draft>("attach_files", { id }),
@@ -369,7 +373,8 @@ export type FileDrop =
   | { kind: "drop"; id: number; x: number; y: number; files: { name: string; picture: boolean }[] };
 
 export function onFileDrop(handler: (event: FileDrop) => void): Promise<UnlistenFn> {
-  return listen<FileDrop>("file-drop", (e) => handler(e.payload));
+  // Drops are sent to the window they landed on.
+  return getCurrentWebviewWindow().listen<FileDrop>("file-drop", (e) => handler(e.payload));
 }
 
 /** A downloaded update is ready to install. */

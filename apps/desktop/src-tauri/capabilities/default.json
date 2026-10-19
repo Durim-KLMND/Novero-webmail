@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window. Keep this list minimal.",
+  "description": "Permissions for the main window and message windows. Keep this list minimal.",
   "windows": [
-    "main"
+    "main",
+    "compose-*"
   ],
   "permissions": [
     "core:default",
@@ -11,6 +12,8 @@
     "opener:allow-default-urls",
     "dialog:allow-ask",
     "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "core:window:allow-close",
+    "core:window:allow-destroy"
   ]
 }

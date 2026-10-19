@@ -96,7 +96,9 @@ pub fn window_event<R: Runtime>(window: &Window<R>, event: &DragDropEvent) {
         }
         _ => return,
     };
-    let _ = window.emit(FILE_DROP, ui);
+    // Only to the window the files were dropped on: each composer window
+    // handles its own drops.
+    let _ = window.emit_to(window.label(), FILE_DROP, ui);
 }
 
 fn dropped(drops: &Drops, id: u64) -> Result<Vec<PathBuf>> {

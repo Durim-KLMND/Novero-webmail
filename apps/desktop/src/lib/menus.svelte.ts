@@ -22,7 +22,16 @@ export type MenuItem = MenuAction | "separator";
 /** Entries left out of a menu, from `condition && item`. */
 type Skipped = null | false | undefined | "";
 
-export const menu = $state<{ x: number; y: number; items: MenuItem[] } | { items: null }>({ items: null });
+export const menu = $state<
+  { x: number; y: number; items: MenuItem[]; alignRight?: boolean } | { items: null }
+>({ items: null });
+
+/** The button that opened the menu, if one did: clicking it again closes it. */
+let anchor: Element | null = null;
+
+export function menuAnchor(): Element | null {
+  return menu.items ? anchor : null;
+}
 
 /** Opens the menu at the pointer. `offset` moves it, for clicks inside a frame. */
 export function openMenu(event: MouseEvent, items: MenuItem[], offset = { x: 0, y: 0 }) {
@@ -33,16 +42,26 @@ export function openMenu(event: MouseEvent, items: MenuItem[], offset = { x: 0, 
     closeMenu();
     return;
   }
-  Object.assign(menu, { x: event.clientX + offset.x, y: event.clientY + offset.y, items: shown });
+  anchor = null;
+  Object.assign(menu, { x: event.clientX + offset.x, y: event.clientY + offset.y, items: shown, alignRight: false });
 }
 
-/** Opens the menu at a point, e.g. under a "⋯" button. */
-export function openMenuAt(x: number, y: number, items: MenuItem[]) {
+/** Opens the menu under a button ("⋯", "Move to"), or closes it when that
+ *  button opened it. `alignRight` lines its right edge up with the button's. */
+export function toggleMenuUnder(button: Element, items: MenuItem[], alignRight = false) {
+  if (menu.items && anchor === button) {
+    closeMenu();
+    return;
+  }
   const shown = tidy(items);
-  if (shown.length) Object.assign(menu, { x, y, items: shown });
+  if (!shown.length) return;
+  const box = button.getBoundingClientRect();
+  anchor = button;
+  Object.assign(menu, { x: alignRight ? box.right : box.left, y: box.bottom + 2, items: shown, alignRight });
 }
 
 export function closeMenu() {
+  anchor = null;
   Object.assign(menu, { items: null });
 }
 
