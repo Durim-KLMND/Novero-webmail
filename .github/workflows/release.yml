@@ -1,7 +1,7 @@
 name: Release
 
-# Pushing a tag such as v0.2.0 (stable) or v0.2.0-beta.1 (beta) builds the
-# Windows installer, signs it, and publishes it with its update manifest.
+# Pushing a tag such as v0.2.0 or v0.2.0-beta.3 builds the Windows installer,
+# signs it, and publishes it as the latest release with its update manifest.
 # One-time setup and the steps for a release are in docs/releasing.md.
 
 on:
@@ -91,7 +91,6 @@ jobs:
       - name: Publish the release
         run: |
           version="${TAG#v}"
-          case "$version" in *-*) kind=--prerelease ;; *) kind=--latest ;; esac
           cd target/release/bundle/nsis
           # GitHub turns spaces in asset names into dots, which would break the links.
           name="Novero-Mail_${version}_x64-setup.exe"
@@ -100,19 +99,14 @@ jobs:
           # A release published on GitHub's Releases page keeps its title and notes.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" "$name" "$name.sig" --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false $kind
+            # Installed copies only look at the latest release, which can't be a pre-release.
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
           else
             gh release create "$TAG" "$name" "$name.sig" --repo "$GITHUB_REPOSITORY" \
-              --title "Novero Mail $version" --generate-notes $kind
+              --title "Novero Mail $version" --generate-notes --latest
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
           node "$GITHUB_WORKSPACE/scripts/update-manifest.mjs" "$version" \
             "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name" "$name.sig" notes.md
-          # Stable users read the newest stable release's manifest.
+          # Installed copies read this from the latest release.
           gh release upload "$TAG" latest.json --clobber --repo "$GITHUB_REPOSITORY"
-          # Beta users read this copy, which every release replaces.
-          if ! gh release view beta-channel --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create beta-channel --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
-              --title "Beta channel" --notes "Update manifest for the beta channel. Download installers from the releases themselves."
-          fi
-          gh release upload beta-channel latest.json --clobber --repo "$GITHUB_REPOSITORY"

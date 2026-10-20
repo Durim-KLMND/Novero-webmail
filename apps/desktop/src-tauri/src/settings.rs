@@ -18,33 +18,6 @@ pub enum Theme {
     Dark,
 }
 
-/// Which releases updates come from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Channel {
-    Stable,
-    /// Test versions before they are released, and stable releases too.
-    Beta,
-}
-
-impl Default for Channel {
-    /// A copy installed from a beta release stays on the beta channel, so it
-    /// is offered the next beta and not only the next stable release.
-    fn default() -> Self {
-        Channel::for_version(env!("CARGO_PKG_VERSION"))
-    }
-}
-
-impl Channel {
-    fn for_version(version: &str) -> Channel {
-        if version.contains('-') {
-            Channel::Beta
-        } else {
-            Channel::Stable
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -55,7 +28,6 @@ pub struct Settings {
     pub notifications: bool,
     /// Look for updates in the background and download them.
     pub auto_update: bool,
-    pub update_channel: Channel,
     /// After a crash, offer to send a report. Nothing is sent without asking.
     pub crash_reports: bool,
     /// Windows draw Novero Mail's own title bar instead of the Windows one.
@@ -69,7 +41,6 @@ impl Default for Settings {
             conversations: true,
             notifications: true,
             auto_update: true,
-            update_channel: Channel::default(),
             crash_reports: true,
             custom_titlebar: true,
         }
@@ -235,18 +206,11 @@ mod tests {
         assert_eq!(loaded.theme, Theme::Dark);
         assert!(loaded.conversations && loaded.notifications && loaded.auto_update);
         assert!(loaded.custom_titlebar);
-        assert_eq!(loaded.update_channel, Channel::default());
         let off = Settings {
             notifications: false,
             ..loaded
         };
         off.save(&store).unwrap();
         assert_eq!(Settings::load(&store), off);
-    }
-
-    #[test]
-    fn beta_builds_default_to_the_beta_channel() {
-        assert_eq!(Channel::for_version("0.2.0-beta.1"), Channel::Beta);
-        assert_eq!(Channel::for_version("0.2.0"), Channel::Stable);
     }
 }

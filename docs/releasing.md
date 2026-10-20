@@ -6,7 +6,8 @@ copies read that manifest and offer the update.
 
 ## How installed copies update
 
-- 30 seconds after start, and every six hours after that, the app reads its channel's manifest.
+- 30 seconds after start, and every six hours after that, the app reads the manifest on the
+  latest release (`releases/latest/download/latest.json`).
 - With **Download updates automatically** on (the default), a newer version is downloaded in the
   background; the sidebar shows the progress and then "Version x is ready · Restart to update".
   With it off, the sidebar says "Version x is out" and downloads it on **Download**.
@@ -14,20 +15,9 @@ copies read that manifest and offer the update.
 - **Restart to update** first closes any message windows, which saves what was typed as drafts,
   then runs the installer. It closes the app, shows its progress and opens the new version.
 - Settings → Updates shows the same state, when it last checked, and **Check now**.
-- A copy installed from a beta release starts on the beta channel; one from a stable release on
-  stable.
-
-## Channels
-
-| Channel | Tags | Who gets it |
-| --- | --- | --- |
-| Stable | `v0.2.0` | Everyone (the default in Settings) |
-| Beta | `v0.2.0-beta.1` | People who pick **Beta** under Settings → Updates |
-
-Stable copies read the manifest of the newest stable release
-(`releases/latest/download/latest.json`). Beta copies read the manifest on the `beta-channel`
-release, which every release replaces, so beta users also get stable releases. Beta releases
-are marked as pre-releases on GitHub, so they never show as the latest release.
+- There is one channel: every release reaches everyone. Version names may still carry
+  `-beta.n`, but the workflow always publishes the release as the latest, never as a
+  pre-release, because GitHub's `latest` link skips pre-releases.
 
 ## One-time setup
 
@@ -84,7 +74,7 @@ Without them the workflow still releases, unsigned, with a warning in the run su
 1. From an up-to-date `main`, set the version and open a pull request with it:
 
    ```sh
-   node scripts/set-version.mjs 0.2.0-beta.2   # or 0.2.0 for stable
+   node scripts/set-version.mjs 0.2.0-beta.3   # or 0.2.0
    ```
 
    This changes `Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `package.json` and
@@ -93,17 +83,17 @@ Without them the workflow still releases, unsigned, with a warning in the run su
 
    ```sh
    git checkout main && git pull
-   git tag v0.2.0-beta.2
-   git push origin v0.2.0-beta.2
+   git tag v0.2.0-beta.3
+   git push origin v0.2.0-beta.3
    ```
 
    Or on GitHub: **Releases → Draft a new release → Choose a tag**, type the new tag (it is
-   created on `main`), write notes if you like, tick **Set as a pre-release** for a beta, and
+   created on `main`), write notes if you like, leave **Set as a pre-release** unticked, and
    publish. The workflow adds the installer to that release.
 3. Watch the **Release** run under **Actions**. It checks the tag matches the app version,
    builds and signs the installer, checks the signature against `NOVERO_UPDATER_PUBKEY`,
-   publishes the release with notes generated from the merged pull requests, and updates the
-   channel manifests. If it fails (for example because a key is wrong), fix the cause, delete
+   publishes the release with notes generated from the merged pull requests, marks it as the
+   latest release, and attaches `latest.json`. If it fails (for example because a key is wrong), fix the cause, delete
    the release and its tag on GitHub, and publish it again from `main`.
 
 Copies that download updates automatically find the release within six hours, or straight
@@ -119,9 +109,9 @@ To see a real update end to end:
    release's assets. (Installers from CI runs on `main` can update too, once
    `NOVERO_UPDATER_PUBKEY` is set before they are built; `npm run tauri dev` builds can't.)
 3. Merge anything, set the version to `0.2.0-beta.2`, and release that too.
-4. In the installed copy, open Settings → Updates and press **Check now** (beta is already
-   picked). It downloads `0.2.0-beta.2`; **Restart to update** installs it, and Settings then
-   shows Novero Mail 0.2.0-beta.2.
+4. In the installed copy, open Settings → Updates and press **Check now**. It downloads
+   `0.2.0-beta.2`; **Restart to update** installs it, and Settings then shows Novero Mail
+   0.2.0-beta.2.
 
 ## Trying an update before release
 
