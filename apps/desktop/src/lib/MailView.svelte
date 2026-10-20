@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api,
@@ -132,6 +133,11 @@
 
   const unlistenUpdate = onUpdateReady((found) => (update = found));
   const unlistenMailto = onMailto(openMailto);
+  // A message window closed (see ComposerWindow).
+  const unlistenWindows = listen<{ account: number; outcome: "sent" | "saved" | "discarded" }>(
+    "composer-closed",
+    (e) => ended(e.payload.account, e.payload.outcome),
+  );
 
   async function openMailto() {
     const link = await api.takeMailto().catch(() => null);
@@ -268,6 +274,7 @@
     unlisten.then((fn) => fn());
     unlistenUpdate.then((fn) => fn());
     unlistenMailto.then((fn) => fn());
+    unlistenWindows.then((fn) => fn());
     clearTimeout(refreshTimer);
   });
 
@@ -445,9 +452,33 @@
     }
   }
 
-  function compose() {
+  /** A new message from the account in view, here or in a window of its own. */
+  async function compose(newWindow = false) {
     const account = (allInboxes || searchQuery ? selected?.accountId : selectedFolder?.accountId) ?? selectedFolder?.accountId ?? accounts[0]?.id;
-    if (account != null) openComposer(() => api.newDraft(account));
+    if (account == null) return;
+    if (!newWindow) {
+      openComposer(() => api.newDraft(account));
+      return;
+    }
+    try {
+      const draft = await api.newDraft(account);
+      await api.openComposerWindow(draft.id);
+    } catch (err) {
+      say(errorText(err));
+    }
+  }
+
+  /** Moves the open draft to a window of its own. */
+  async function popOut() {
+    const draft = composing;
+    if (!draft) return;
+    composing = null;
+    if (selected?.folderRole === "drafts") selected = null;
+    try {
+      await api.openComposerWindow(draft.id);
+    } catch (err) {
+      say(errorText(err));
+    }
   }
 
   async function selectMessage(item: MessageSummary) {
@@ -465,14 +496,18 @@
     const draft = composing;
     composing = null;
     if (selected?.folderRole === "drafts") selected = null;
-    if (!draft) return;
+    if (draft) ended(draft.account, outcome);
+  }
+
+  /** A composer here or in its own window is done. */
+  function ended(account: number, outcome: "sent" | "saved" | "discarded") {
     if (outcome === "sent") {
-      sending.add(draft.account);
+      sending.add(account);
       say("Sending…", "info");
     } else if (outcome === "discarded") {
       say("Draft deleted", "info");
     }
-    scheduleRefresh(draft.account);
+    scheduleRefresh(account);
   }
 
   async function showOutbox(account: number) {
@@ -520,6 +555,76 @@
     say("Settings saved", "info");
   }
 
+  // The folder list and message list can be made wider or narrower; the
+  // widths are kept on this computer for next time.
+  type Pane = "side" | "list";
+  const PANES_KEY = "novero.panes";
+  const PANE_DEFAULTS = { side: 240, list: 360 };
+  const PANE_LIMITS: Record<Pane, [number, number]> = { side: [180, 440], list: [260, 640] };
+
+  function clampPane(pane: Pane, width: number): number {
+    const [min, max] = PANE_LIMITS[pane];
+    return Math.round(Math.min(max, Math.max(min, width)));
+  }
+
+  function loadPanes(): { side: number; list: number } {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PANES_KEY) ?? "{}");
+      return {
+        side: clampPane("side", Number(saved.side) || PANE_DEFAULTS.side),
+        list: clampPane("list", Number(saved.list) || PANE_DEFAULTS.list),
+      };
+    } catch {
+      return { ...PANE_DEFAULTS };
+    }
+  }
+
+  let panes = $state(loadPanes());
+  let dragging = $state<Pane | null>(null);
+
+  function savePanes() {
+    try {
+      localStorage.setItem(PANES_KEY, JSON.stringify(panes));
+    } catch {
+      // Not kept; the default widths come back next time.
+    }
+  }
+
+  function startDrag(pane: Pane, event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = panes[pane];
+    dragging = pane;
+    const move = (e: PointerEvent) => (panes[pane] = clampPane(pane, startWidth + e.clientX - startX));
+    const end = () => {
+      dragging = null;
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      savePanes();
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+
+  function resetPane(pane: Pane) {
+    panes[pane] = PANE_DEFAULTS[pane];
+    savePanes();
+  }
+
+  function paneKey(pane: Pane, event: KeyboardEvent) {
+    const step = event.key === "ArrowLeft" ? -16 : event.key === "ArrowRight" ? 16 : 0;
+    if (!step) return;
+    event.preventDefault();
+    event.stopPropagation();
+    panes[pane] = clampPane(pane, panes[pane] + step);
+    savePanes();
+  }
+
   /** Typing in a field, or a dialog is open: keys belong to it. */
   function typing(event: KeyboardEvent): boolean {
     const target = event.target as HTMLElement | null;
@@ -528,7 +633,15 @@
   }
 
   function shortcut(event: KeyboardEvent) {
-    if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (event.defaultPrevented) return;
+    // Ctrl+K searches from anywhere, even while typing a message.
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+      if (showHelp || showSettings || rulesFor || signingIn) return;
+      event.preventDefault();
+      sidebar?.focusSearch();
+      return;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (showHelp) {
       if (event.key === "Escape" || event.key === "?") {
         event.preventDefault();
@@ -545,6 +658,7 @@
     else if (key === "j" || key === "ArrowDown") list?.move(1);
     else if (key === "k" || key === "ArrowUp") list?.move(-1);
     else if (key === "c") compose();
+    else if (key === "C") compose(true);
     else if (key === "r" || key === "a" || key === "f") {
       const target = reader?.replyTarget();
       if (target == null) return;
@@ -562,7 +676,7 @@
 
 <svelte:window onkeydown={shortcut} />
 
-<div class="layout">
+<div class="layout" style:--side="{panes.side}px" style:--list="{panes.list}px" class:resizing={dragging != null}>
   <Sidebar
     {accounts}
     {folders}
@@ -577,7 +691,6 @@
     onSettings={() => (showSettings = true)}
     onRules={(account) => (rulesFor = { account })}
     onHelp={() => (showHelp = true)}
-    {onAddAccount}
     onSync={(id) => api.syncAccount(id)}
     onRemove={removeAccount}
     onSignInAgain={(account) => (signingIn = account)}
@@ -586,6 +699,40 @@
     {update}
     onInstallUpdate={installUpdate}
   />
+  <!-- A focusable separator is the ARIA window splitter: arrows resize it. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+  <div
+    class="splitter"
+    style:left="{panes.side - 3}px"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize the folder list"
+    aria-valuenow={panes.side}
+    aria-valuemin={PANE_LIMITS.side[0]}
+    aria-valuemax={PANE_LIMITS.side[1]}
+    tabindex="0"
+    title="Drag to resize. Double-click to reset."
+    onpointerdown={(e) => startDrag("side", e)}
+    ondblclick={() => resetPane("side")}
+    onkeydown={(e) => paneKey("side", e)}
+  ></div>
+  <!-- A focusable separator is the ARIA window splitter: arrows resize it. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+  <div
+    class="splitter"
+    style:left="{panes.side + panes.list - 3}px"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize the message list"
+    aria-valuenow={panes.list}
+    aria-valuemin={PANE_LIMITS.list[0]}
+    aria-valuemax={PANE_LIMITS.list[1]}
+    tabindex="0"
+    title="Drag to resize. Double-click to reset."
+    onpointerdown={(e) => startDrag("list", e)}
+    ondblclick={() => resetPane("list")}
+    onkeydown={(e) => paneKey("list", e)}
+  ></div>
   <MessageList
     bind:this={list}
     {mailbox}
@@ -608,6 +755,7 @@
         {accounts}
         onClose={composerClosed}
         onReplace={(draft) => (composing = draft)}
+        onPopOut={popOut}
       />
     {/key}
   {:else if outboxAccount != null && accounts.some((a) => a.id === outboxAccount)}
@@ -642,6 +790,9 @@
       onClose={settingsClosed}
       onUpdate={(found) => (update = found)}
       onRules={() => (rulesFor = { account: selectedFolder?.accountId ?? accounts[0].id })}
+      {onAddAccount}
+      onSignInAgain={(account) => (signingIn = account)}
+      onRemoveAccount={removeAccount}
     />
   {/if}
   {#if rulesFor && accounts.length}
@@ -659,8 +810,31 @@
 <style>
   .layout {
     display: grid;
-    grid-template-columns: 240px minmax(300px, 380px) 1fr;
+    grid-template-columns: var(--side) var(--list) minmax(320px, 1fr);
     height: 100%;
     position: relative;
+  }
+  /* A thin handle on the line between two columns, easy to grab. */
+  .splitter {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    z-index: 5;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .splitter:hover,
+  .splitter:focus-visible {
+    background: color-mix(in srgb, var(--accent-ink) 35%, transparent);
+    outline: none;
+  }
+  .resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+  /* The message frame would swallow the pointer while dragging over it. */
+  .resizing :global(iframe) {
+    pointer-events: none;
   }
 </style>

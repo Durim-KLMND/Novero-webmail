@@ -16,8 +16,12 @@
     onClose: (outcome: "sent" | "saved" | "discarded") => void;
     /** Another account was picked as the sender; the draft moved to it. */
     onReplace: (draft: Draft) => void;
+    /** Moves the draft to a window of its own; left out in that window. */
+    onPopOut?: () => void;
+    /** Close says "Close window" in a window of its own. */
+    inWindow?: boolean;
   }
-  let { draft, accounts, onClose, onReplace }: Props = $props();
+  let { draft, accounts, onClose, onReplace, onPopOut, inWindow = false }: Props = $props();
 
   /** Typing is saved locally after this pause, and copied to the server this often. */
   const SAVE_AFTER = 1200;
@@ -161,6 +165,11 @@
     onClose("saved");
   }
 
+  async function popOut() {
+    await flush();
+    onPopOut?.();
+  }
+
   async function send() {
     if (busy) return;
     if (!fields.subject.trim()) {
@@ -270,7 +279,16 @@
     <button onclick={attach} disabled={busy}><Icon name="attachment" />Attach</button>
     <span class="status quiet" aria-live="polite">{status}</span>
     <button onclick={discard} disabled={busy} title="Delete this draft"><Icon name="trash" />Discard</button>
-    <button onclick={close} disabled={busy} title="Save the draft and close"><Icon name="close" />Close</button>
+    {#if onPopOut}
+      <button
+        class="icon-only"
+        onclick={popOut}
+        disabled={busy}
+        title="Open in a new window"
+        aria-label="Open in a new window"
+      ><Icon name="external-link" /></button>
+    {/if}
+    <button onclick={close} disabled={busy} title={inWindow ? "Save the draft and close the window" : "Save the draft and close"}><Icon name="close" />Close</button>
   </div>
 
   {#if error}<p class="error banner" role="alert">{error}</p>{/if}

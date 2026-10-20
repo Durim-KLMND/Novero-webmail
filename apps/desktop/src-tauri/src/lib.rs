@@ -99,6 +99,8 @@ pub fn run() {
             files::dropped_picture,
             files::pick_picture,
             compose::hide_contact,
+            compose::get_draft,
+            compose::open_composer_window,
             rules::list_rules,
             rules::save_rule,
             rules::delete_rule,

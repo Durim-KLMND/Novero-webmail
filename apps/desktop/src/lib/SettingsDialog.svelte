@@ -1,7 +1,17 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { api, errorText, type Account, type Settings, type Theme, type UpdateChannel, type UpdateInfo } from "./api";
+  import { onMount, tick } from "svelte";
+  import {
+    api,
+    errorText,
+    providerLabel,
+    type Account,
+    type Settings,
+    type Theme,
+    type UpdateChannel,
+    type UpdateInfo,
+  } from "./api";
   import { applyTheme } from "./theme";
+  import Icon, { type IconName } from "./Icon.svelte";
   import RichEditor from "./RichEditor.svelte";
   import { textToHtml } from "./richtext";
 
@@ -14,8 +24,44 @@
     onUpdate: (update: UpdateInfo) => void;
     /** Open the rules, over this dialog. */
     onRules: () => void;
+    /** These leave Settings (after saving it) for a screen of their own. */
+    onAddAccount: () => void;
+    onSignInAgain: (account: Account) => void;
+    /** Asks first; Settings stays open. */
+    onRemoveAccount: (account: Account) => void;
   }
-  let { accounts, settings, onClose, onUpdate, onRules }: Props = $props();
+  let { accounts, settings, onClose, onUpdate, onRules, onAddAccount, onSignInAgain, onRemoveAccount }: Props =
+    $props();
+
+  type Category = "general" | "mail" | "accounts" | "signatures" | "updates" | "privacy";
+  const categories: { id: Category; label: string; icon: IconName }[] = [
+    { id: "general", label: "General", icon: "settings" },
+    { id: "mail", label: "Mail", icon: "inbox" },
+    { id: "accounts", label: "Accounts", icon: "contacts" },
+    { id: "signatures", label: "Signatures", icon: "signature" },
+    { id: "updates", label: "Updates", icon: "refresh" },
+    { id: "privacy", label: "Privacy", icon: "junk" },
+  ];
+
+  /** The category shown last, while the app runs. */
+  const LAST = "novero.settingsCategory";
+  function lastCategory(): Category {
+    try {
+      const saved = sessionStorage.getItem(LAST);
+      if (categories.some((c) => c.id === saved)) return saved as Category;
+    } catch {
+      // Storage may be off; start at the top.
+    }
+    return "general";
+  }
+  let category = $state<Category>(lastCategory());
+  $effect(() => {
+    try {
+      sessionStorage.setItem(LAST, category);
+    } catch {
+      // Not remembered; nothing else depends on it.
+    }
+  });
 
   // svelte-ignore state_referenced_locally
   let draft = $state<Settings>({ ...settings });
@@ -26,6 +72,7 @@
   let saving = $state(false);
   let error = $state("");
   let dialog = $state<HTMLDivElement>();
+  let pane = $state<HTMLDivElement>();
 
   const themes: { value: Theme; label: string }[] = [
     { value: "system", label: "Same as Windows" },
@@ -44,13 +91,29 @@
   let checkResult = $state("");
 
   onMount(async () => {
-    dialog?.querySelector<HTMLElement>("input, textarea, button")?.focus();
+    dialog?.querySelector<HTMLElement>(".nav button.active")?.focus();
     try {
       [version, canUpdate] = await Promise.all([api.appVersion(), api.updatesAvailable()]);
     } catch {
       // The section just shows less.
     }
   });
+
+  async function show(next: Category) {
+    category = next;
+    await tick();
+    pane?.scrollTo({ top: 0 });
+  }
+
+  /** Up and down move between categories, as in a list. */
+  function navKey(event: KeyboardEvent) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const at = categories.findIndex((c) => c.id === category);
+    const next = categories[(at + (event.key === "ArrowDown" ? 1 : -1) + categories.length) % categories.length];
+    show(next.id);
+    tick().then(() => dialog?.querySelector<HTMLElement>(".nav button.active")?.focus());
+  }
 
   async function checkNow() {
     checking = true;
@@ -86,7 +149,8 @@
     onClose(null, false);
   }
 
-  async function save() {
+  /** Saves everything and closes; false when it couldn't. */
+  async function save(): Promise<boolean> {
     saving = true;
     error = "";
     try {
@@ -97,11 +161,18 @@
       for (const a of changed) await api.setSignature(a.id, signatures[a.id].text, signatures[a.id].html);
       const saved = await api.saveSettings($state.snapshot(draft));
       onClose(saved, changed.length > 0);
+      return true;
     } catch (err) {
       error = errorText(err);
+      return false;
     } finally {
       saving = false;
     }
+  }
+
+  /** Saves, then goes on to a screen of its own (adding an account, signing in). */
+  async function saveThen(next: () => void) {
+    if (await save()) next();
   }
 
   function keydown(event: KeyboardEvent) {
@@ -111,119 +182,168 @@
       cancel();
     }
   }
+
+  function signIn(account: Account): string {
+    return account.auth.kind === "oauth2" ? `${providerLabel[account.auth.provider]} sign-in` : "Password";
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="backdrop" onkeydown={keydown} role="presentation">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" bind:this={dialog}>
-    <h2 id="settings-title">Settings</h2>
-
-    <fieldset>
-      <legend>Appearance</legend>
-      <div class="choices">
-        {#each themes as t (t.value)}
-          <label class="choice">
-            <input type="radio" name="theme" value={t.value} bind:group={draft.theme} />
-            {t.label}
-          </label>
-        {/each}
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Reading</legend>
-      <label class="check">
-        <input type="checkbox" bind:checked={draft.conversations} />
-        <span>
-          Group messages into conversations
-          <small class="quiet">Replies are shown together with the message they answer.</small>
-        </span>
-      </label>
-      <label class="check">
-        <input type="checkbox" bind:checked={draft.notifications} />
-        <span>
-          Notify me about new mail
-          <small class="quiet">Shown by Windows while Novero Mail is in the background.</small>
-        </span>
-      </label>
-    </fieldset>
-
-    <fieldset>
-      <legend>Signatures</legend>
-      {#each accounts as a (a.id)}
-        <div class="sig">
-          <span>
-            {a.displayName}
-            {#if a.displayName !== a.email}<small class="quiet">{a.email}</small>{/if}
-          </span>
-          <RichEditor
-            compact
-            label="Signature for {a.email}"
-            html={a.signatureHtml || textToHtml(a.signature)}
-            placeholder="Added below new messages and replies"
-            onChange={(text, html) => (signatures[a.id] = { text, html })}
-          />
-        </div>
+    <nav class="nav" aria-label="Settings categories">
+      <h2 id="settings-title">Settings</h2>
+      {#each categories as c (c.id)}
+        <button
+          class:active={category === c.id}
+          aria-current={category === c.id ? "page" : undefined}
+          tabindex={category === c.id ? 0 : -1}
+          onclick={() => show(c.id)}
+          onkeydown={navKey}
+        >
+          <Icon name={c.icon} />
+          {c.label}
+        </button>
       {/each}
-    </fieldset>
+    </nav>
 
-    <fieldset>
-      <legend>Rules</legend>
-      <div class="row">
-        <button onclick={onRules}>Manage rules…</button>
-      </div>
-      <small class="quiet">Sort new mail as it arrives, such as moving newsletters to a folder.</small>
-    </fieldset>
+    <div class="pane" bind:this={pane}>
+      <h3>{categories.find((c) => c.id === category)?.label}</h3>
 
-    <fieldset>
-      <legend>Updates</legend>
-      {#if canUpdate}
-        <label class="check">
-          <input type="checkbox" bind:checked={draft.autoUpdate} />
-          <span>
-            Download updates automatically
-            <small class="quiet">You choose when to restart and install them.</small>
-          </span>
-        </label>
-        <div class="choices channel">
-          {#each channels as c (c.value)}
-            <label class="choice" title={c.hint}>
-              <input type="radio" name="channel" value={c.value} bind:group={draft.updateChannel} />
-              {c.label}
-            </label>
+      {#if category === "general"}
+        <fieldset>
+          <legend>Appearance</legend>
+          <div class="choices">
+            {#each themes as t (t.value)}
+              <label class="choice">
+                <input type="radio" name="theme" value={t.value} bind:group={draft.theme} />
+                {t.label}
+              </label>
+            {/each}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Notifications</legend>
+          <label class="check">
+            <input type="checkbox" bind:checked={draft.notifications} />
+            <span>
+              Notify me about new mail
+              <small class="quiet">Shown by Windows while Novero Mail is in the background.</small>
+            </span>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Default email app</legend>
+          <div class="row">
+            <button onclick={defaultApp}>Make Novero Mail the default email app…</button>
+          </div>
+          <small class="quiet">Opens Windows settings, where email links are set to open here.</small>
+        </fieldset>
+      {:else if category === "mail"}
+        <fieldset>
+          <legend>Reading</legend>
+          <label class="check">
+            <input type="checkbox" bind:checked={draft.conversations} />
+            <span>
+              Group messages into conversations
+              <small class="quiet">Replies are shown together with the message they answer.</small>
+            </span>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Rules</legend>
+          <div class="row">
+            <button onclick={onRules}><Icon name="rules" /> Manage rules…</button>
+          </div>
+          <small class="quiet">Sort new mail as it arrives, such as moving newsletters to a folder.</small>
+        </fieldset>
+      {:else if category === "accounts"}
+        <ul class="accounts">
+          {#each accounts as a (a.id)}
+            <li>
+              <span class="who">
+                <strong>{a.displayName}</strong>
+                <small class="quiet">{a.email} · {signIn(a)}</small>
+              </span>
+              <button onclick={() => saveThen(() => onSignInAgain(a))} disabled={saving}>Sign in again</button>
+              <button
+                class="icon-only danger"
+                onclick={() => onRemoveAccount(a)}
+                disabled={saving}
+                title="Remove {a.email}"
+                aria-label="Remove {a.email}"
+              ><Icon name="remove-account" /></button>
+            </li>
           {/each}
-        </div>
-        <small class="quiet">{channels.find((c) => c.value === draft.updateChannel)?.hint}</small>
+        </ul>
         <div class="row">
-          <button onclick={checkNow} disabled={checking}>{checking ? "Checking…" : "Check now"}</button>
-          <span class="quiet" role="status">{checkResult}</span>
+          <button onclick={() => saveThen(onAddAccount)} disabled={saving}><Icon name="plus" /> Add account</button>
         </div>
-      {:else}
-        <p class="quiet">This copy of Novero Mail can't update itself. Download new versions from the releases page.</p>
+        <small class="quiet">Removing an account only removes it from Novero Mail. Mail on the server is not touched.</small>
+      {:else if category === "signatures"}
+        <p class="quiet intro">Added below new messages and replies. Pictures and formatting are kept.</p>
+        {#each accounts as a (a.id)}
+          <div class="sig">
+            <span>
+              {a.displayName}
+              {#if a.displayName !== a.email}<small class="quiet">{a.email}</small>{/if}
+            </span>
+            <RichEditor
+              compact
+              label="Signature for {a.email}"
+              html={signatures[a.id]?.html || textToHtml(signatures[a.id]?.text ?? a.signature)}
+              placeholder="Added below new messages and replies"
+              onChange={(text, html) => (signatures[a.id] = { text, html })}
+            />
+          </div>
+        {/each}
+      {:else if category === "updates"}
+        <fieldset>
+          {#if canUpdate}
+            <label class="check">
+              <input type="checkbox" bind:checked={draft.autoUpdate} />
+              <span>
+                Download updates automatically
+                <small class="quiet">You choose when to restart and install them.</small>
+              </span>
+            </label>
+            <div class="choices channel">
+              {#each channels as c (c.value)}
+                <label class="choice" title={c.hint}>
+                  <input type="radio" name="channel" value={c.value} bind:group={draft.updateChannel} />
+                  {c.label}
+                </label>
+              {/each}
+            </div>
+            <small class="quiet">{channels.find((c) => c.value === draft.updateChannel)?.hint}</small>
+            <div class="row">
+              <button onclick={checkNow} disabled={checking}>{checking ? "Checking…" : "Check now"}</button>
+              <span class="quiet" role="status">{checkResult}</span>
+            </div>
+          {:else}
+            <p class="quiet">This copy of Novero Mail can't update itself. Download new versions from the releases page.</p>
+          {/if}
+          {#if version}<small class="quiet">Novero Mail {version}</small>{/if}
+        </fieldset>
+      {:else if category === "privacy"}
+        <fieldset>
+          <label class="check">
+            <input type="checkbox" bind:checked={draft.crashReports} />
+            <span>
+              Offer to send a crash report after a problem
+              <small class="quiet">You see each report first. Nothing is sent without asking.</small>
+            </span>
+          </label>
+        </fieldset>
       {/if}
-      {#if version}<small class="quiet">Novero Mail {version}</small>{/if}
-    </fieldset>
+    </div>
 
-    <fieldset>
-      <legend>Windows</legend>
-      <div class="row">
-        <button onclick={defaultApp}>Make Novero Mail the default email app…</button>
+    <div class="footer">
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      <div class="buttons">
+        <button onclick={cancel} disabled={saving}>Cancel</button>
+        <button class="primary" onclick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
       </div>
-      <small class="quiet">Opens Windows settings, where email links are set to open here.</small>
-      <label class="check crash">
-        <input type="checkbox" bind:checked={draft.crashReports} />
-        <span>
-          Offer to send a crash report after a problem
-          <small class="quiet">You see each report first. Nothing is sent without asking.</small>
-        </span>
-      </label>
-    </fieldset>
-
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-
-    <div class="buttons">
-      <button onclick={cancel} disabled={saving}>Cancel</button>
-      <button class="primary" onclick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
     </div>
   </div>
 </div>
@@ -241,15 +361,64 @@
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 12px;
-    width: min(520px, calc(100vw - 32px));
-    max-height: calc(100vh - 48px);
-    overflow-y: auto;
-    padding: 20px 24px;
+    width: min(760px, calc(100vw - 32px));
+    height: min(560px, calc(100vh - 48px));
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    grid-template-rows: 1fr auto;
+    overflow: hidden;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
   }
-  h2 {
-    margin: 0 0 12px;
+  .nav {
+    grid-row: 1 / 3;
+    background: var(--bg-side);
+    border-right: 1px solid var(--border);
+    padding: 16px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .nav h2 {
+    margin: 0 8px 12px;
     font-size: 18px;
+  }
+  .nav button {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    border: none;
+    background: none;
+    padding: 7px 10px;
+    text-align: left;
+  }
+  .nav button :global(.icon) {
+    color: var(--text-quiet);
+  }
+  .nav button.active {
+    background: var(--bg-selected);
+    font-weight: 600;
+  }
+  .nav button.active :global(.icon) {
+    color: var(--accent-ink);
+  }
+  .pane {
+    overflow-y: auto;
+    padding: 18px 24px;
+    min-width: 0;
+  }
+  h3 {
+    margin: 0 0 14px;
+    font-size: 16px;
+  }
+  .footer {
+    padding: 12px 24px 16px;
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: 10px;
+  }
+  .footer .error {
+    margin: 0;
   }
   fieldset {
     border: none;
@@ -259,6 +428,9 @@
   legend {
     font-weight: 600;
     margin-bottom: 8px;
+  }
+  .intro {
+    margin: 0 0 12px;
   }
   .choices {
     display: flex;
@@ -272,9 +444,6 @@
     align-items: flex-start;
     cursor: pointer;
   }
-  .check + .check {
-    margin-top: 10px;
-  }
   .choice input,
   .check input {
     width: auto;
@@ -284,12 +453,44 @@
   .check span {
     display: grid;
   }
+  .accounts {
+    list-style: none;
+    margin: 0 0 4px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .accounts li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px 8px 12px;
+  }
+  .accounts li + li {
+    border-top: 1px solid var(--border);
+  }
+  .who {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+  }
+  .who small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .accounts button {
+    white-space: nowrap;
+  }
+  .danger:hover:not(:disabled) {
+    color: var(--danger);
+  }
   .sig {
     display: grid;
     gap: 4px;
   }
   .sig + .sig {
-    margin-top: 12px;
+    margin-top: 14px;
   }
   .channel {
     margin: 10px 0 2px;
@@ -303,15 +504,29 @@
     gap: 10px;
     margin: 10px 0 6px;
   }
-  .check.crash {
-    margin-top: 12px;
-  }
-  fieldset > small {
+  fieldset > small,
+  .pane > small {
     display: block;
   }
   .buttons {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+  }
+  @media (max-width: 620px) {
+    .dialog {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr auto;
+    }
+    .nav {
+      grid-row: auto;
+      flex-direction: row;
+      overflow-x: auto;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .nav h2 {
+      display: none;
+    }
   }
 </style>

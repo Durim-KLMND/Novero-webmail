@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { api, errorText, type Account, type Folder, type Rule, type RuleAction, type RuleField } from "./api";
-  import { items, openMenu, openMenuAt, type MenuItem } from "./menus.svelte";
+  import { items, openMenu, toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { folderLabel } from "./format";
   import Icon from "./Icon.svelte";
 
@@ -201,8 +201,7 @@
   }
 
   function moreMenu(rule: Rule, at: number, event: MouseEvent) {
-    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    openMenuAt(box.right - 200, box.bottom + 2, ruleMenu(rule, at));
+    toggleMenuUnder(event.currentTarget as HTMLElement, ruleMenu(rule, at), true);
   }
 
   function keydown(event: KeyboardEvent) {
