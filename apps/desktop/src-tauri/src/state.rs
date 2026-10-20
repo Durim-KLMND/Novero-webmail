@@ -11,7 +11,7 @@ use mail_auth::SecretStore;
 use mail_auth::oauth::{self, OAuthClient};
 use mail_core::{Account, AccountId, AuthMethod, Error, Event, OAuthProvider, Result, Secret};
 use mail_store::{OutboxState, Store};
-use mail_sync::{ImapSession, NewMail, Scope};
+use mail_sync::{IdleChange, ImapSession, NewMail, Scope};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::Settings;
@@ -28,6 +28,14 @@ const IDLE_WAIT: Duration = Duration::from_secs(25 * 60);
 /// Retry delays after a failed connection, doubling up to the maximum.
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_MAX: Duration = Duration::from_secs(5 * 60);
+/// Changes such as messages marked read wait this long after the last one,
+/// so a burst of them goes to the server together, but never longer than
+/// `SETTLE_MAX` in all. Mail to send doesn't wait.
+const SETTLE: Duration = Duration::from_millis(1500);
+const SETTLE_MAX: Duration = Duration::from_secs(8);
+/// Flag changes the server reports this soon after we sent some are taken
+/// to be ours, and don't start a sync.
+const ECHO_WINDOW: Duration = Duration::from_secs(20);
 
 /// An access token this close to expiring is replaced before use, so it
 /// cannot run out in the middle of a sync.
@@ -45,6 +53,9 @@ pub struct AppState {
     /// Current OAuth2 access tokens and when they expire. Kept in memory
     /// only; the refresh token in the credential store gets new ones.
     tokens: Mutex<HashMap<AccountId, (String, i64)>>,
+    /// When each account last sent changes to the server, so the server
+    /// telling us about them again can be ignored.
+    pushed: Mutex<HashMap<AccountId, tokio::time::Instant>>,
     /// Ends the browser sign-in that is waiting, when the person cancels.
     pub sign_in: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
@@ -65,6 +76,7 @@ impl AppState {
             syncing: Mutex::new(HashMap::new()),
             workers: Mutex::new(HashMap::new()),
             tokens: Mutex::new(HashMap::new()),
+            pushed: Mutex::new(HashMap::new()),
             sign_in: Mutex::new(None),
         })
     }
@@ -226,12 +238,34 @@ fn has_outgoing(app: &AppHandle, id: AccountId) -> bool {
         })
 }
 
+/// Whether the account has mail to send now.
+fn mail_due(app: &AppHandle, id: AccountId) -> bool {
+    let now = crate::compose::now();
+    app.state::<AppState>()
+        .store
+        .lock()
+        .unwrap()
+        .outbox(id)
+        .is_ok_and(|o| {
+            o.iter()
+                .any(|i| i.state == OutboxState::Queued && !i.waiting(now))
+        })
+}
+
 /// Sends queued changes, drafts and mail whenever woken, retrying with backoff
 /// while offline. This is the only task that sends an account's changes and
 /// mail, so nothing goes twice.
 async fn push_loop(app: AppHandle, id: AccountId, wake: Arc<Notify>) {
     loop {
         wake.notified().await;
+        let started = tokio::time::Instant::now();
+        while !mail_due(&app, id) && started.elapsed() < SETTLE_MAX {
+            let quiet = SETTLE.min(SETTLE_MAX - started.elapsed());
+            tokio::select! {
+                _ = tokio::time::sleep(quiet) => break,
+                _ = wake.notified() => {}
+            }
+        }
         let mut delay = RETRY_FIRST;
         loop {
             let state = app.state::<AppState>();
@@ -263,14 +297,21 @@ async fn push_loop(app: AppHandle, id: AccountId, wake: Arc<Notify>) {
             let outbox =
                 mail_send::flush_outbox(&state.store, &account, &secret, |e| emit(&app, e)).await;
 
+            if changes.as_ref().is_ok_and(|c| c.applied > 0) {
+                state
+                    .pushed
+                    .lock()
+                    .unwrap()
+                    .insert(id, tokio::time::Instant::now());
+            }
             let offline = matches!(changes, Err(Error::Network(_)))
                 || matches!(outbox, Err(Error::Network(_)));
             let mut changed = false;
             let changes_error = match changes {
                 Ok(outcome) => {
-                    changed |= outcome.applied > 0
-                        || !outcome.rejected.is_empty()
-                        || !outcome.touched.is_empty();
+                    // Changes the server took are on screen already; only
+                    // undone ones and folders synced afterwards change lists.
+                    changed |= !outcome.rejected.is_empty() || !outcome.touched.is_empty();
                     (!outcome.rejected.is_empty()).then(|| {
                         format!(
                             "the server refused a change, so it was undone: {}",
@@ -334,8 +375,12 @@ async fn idle_loop(app: AppHandle, id: AccountId) {
                 session.select("INBOX").await?;
                 let (s, changed) = session.idle(IDLE_WAIT).await?;
                 session = s;
-                if changed {
-                    request_sync(&app, id, false);
+                match changed {
+                    IdleChange::Mail => request_sync(&app, id, false),
+                    // Most likely our own messages marked read coming back;
+                    // otherwise another device's, picked up quietly.
+                    IdleChange::Flags if !pushed_lately(&app, id) => request_sync(&app, id, false),
+                    _ => {}
                 }
             }
         }
@@ -349,6 +394,16 @@ async fn idle_loop(app: AppHandle, id: AccountId) {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RETRY_MAX);
     }
+}
+
+/// Whether the account sent changes to the server in the last moments.
+fn pushed_lately(app: &AppHandle, id: AccountId) -> bool {
+    app.state::<AppState>()
+        .pushed
+        .lock()
+        .unwrap()
+        .get(&id)
+        .is_some_and(|at| at.elapsed() < ECHO_WINDOW)
 }
 
 /// Starts a sync of one account: every folder when `full`, else the inbox.

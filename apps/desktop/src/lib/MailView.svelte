@@ -248,6 +248,10 @@
 
   /** Downloads of fewer items than this show no progress bar. */
   const PROGRESS_FROM = 50;
+  /** Quick checks, such as after new mail or a change elsewhere, finish
+   *  before this and show nothing; longer ones show a spinner. */
+  const SHOW_SYNC_AFTER = 1000;
+  const syncShowTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
   /** The progress bar over the message list: the shown account's sync, or
    *  any account's in lists that mix them. */
@@ -279,16 +283,28 @@
   const unlisten = onMailEvent((e: MailEvent) => {
     const current = stateOf(e.account);
     if (e.type === "syncStarted") {
-      syncState[e.account] = { ...current, running: true, error: null, detail: "Checking for mail…", progress: null };
+      clearTimeout(syncShowTimers.get(e.account));
+      syncShowTimers.set(
+        e.account,
+        setTimeout(() => {
+          syncShowTimers.delete(e.account);
+          const now = stateOf(e.account);
+          syncState[e.account] = { ...now, running: true, detail: now.detail || "Checking for mail…" };
+        }, SHOW_SYNC_AFTER),
+      );
+      syncState[e.account] = { ...current, error: null, detail: "", progress: null };
     } else if (e.type === "syncProgress") {
       const detail = e.total > 0 ? `${e.folder}: ${e.done.toLocaleString()} of ${e.total.toLocaleString()}` : `Checking ${e.folder}…`;
-      syncState[e.account] = { ...current, running: true, detail };
+      // Shown once the check has run a moment, as above.
+      syncState[e.account] = { ...current, running: !syncShowTimers.has(e.account), detail };
       if (e.done > 0) scheduleRefresh(e.account);
     } else if (e.type === "accountProgress") {
       // A handful of new messages is quick; a bar is for real downloads.
       const progress = e.total >= PROGRESS_FROM ? { stage: e.stage, done: e.done, total: e.total } : null;
       syncState[e.account] = { ...current, progress };
     } else if (e.type === "syncFinished") {
+      clearTimeout(syncShowTimers.get(e.account));
+      syncShowTimers.delete(e.account);
       syncState[e.account] = { ...current, running: false, error: e.error, detail: "", progress: null };
       scheduleRefresh(e.account);
     } else if (e.type === "pendingChanges") {
@@ -313,6 +329,7 @@
     unlistenMailto.then((fn) => fn());
     unlistenWindows.then((fn) => fn());
     clearTimeout(refreshTimer);
+    syncShowTimers.forEach((timer) => clearTimeout(timer));
   });
 
   function selectFolder(folder: Folder) {

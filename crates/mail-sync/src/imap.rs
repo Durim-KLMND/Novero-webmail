@@ -29,6 +29,27 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + fmt::Debug> Transport for T {}
 
 type Stream = Box<dyn Transport>;
 
+/// What woke an IDLE wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdleChange {
+    /// The wait ran out.
+    Nothing,
+    /// Only flags changed, such as a message marked read, here or elsewhere.
+    Flags,
+    /// Mail arrived or went: anything else the server reported.
+    Mail,
+}
+
+impl IdleChange {
+    fn of(response: &async_imap::imap_proto::Response<'_>) -> Self {
+        use async_imap::imap_proto::Response;
+        match response {
+            Response::Fetch(..) => IdleChange::Flags,
+            _ => IdleChange::Mail,
+        }
+    }
+}
+
 /// A logged-in IMAP session.
 pub struct ImapSession {
     session: async_imap::Session<Stream>,
@@ -277,14 +298,17 @@ impl ImapSession {
     }
 
     /// Waits in IDLE (RFC 2177) on the selected folder until the server reports
-    /// a change or `wait` passes. Returns the session and whether something changed.
-    pub async fn idle(self, wait: Duration) -> Result<(Self, bool)> {
+    /// a change or `wait` passes. Returns the session and what changed.
+    pub async fn idle(self, wait: Duration) -> Result<(Self, IdleChange)> {
         let caps = self.caps;
         let mut handle = self.session.idle();
         handle.init().await.map_err(protocol)?;
         let changed = {
             let (event, _stop) = handle.wait_with_timeout(wait);
-            matches!(event.await.map_err(protocol)?, IdleResponse::NewData(_))
+            match event.await.map_err(protocol)? {
+                IdleResponse::NewData(data) => IdleChange::of(data.parsed()),
+                _ => IdleChange::Nothing,
+            }
         };
         let session = handle.done().await.map_err(protocol)?;
         Ok((Self { session, caps }, changed))
