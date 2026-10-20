@@ -81,6 +81,15 @@ pub struct OutboxItem {
     pub attempts: u32,
     pub last_error: Option<String>,
     pub created_at: i64,
+    /// When a scheduled message goes; it waits until then.
+    pub send_at: Option<i64>,
+}
+
+impl OutboxItem {
+    /// A scheduled message whose time hasn't come.
+    pub fn waiting(&self, now: i64) -> bool {
+        self.send_at.is_some_and(|t| t > now)
+    }
 }
 
 /// The parts of a draft kept as JSON.
@@ -390,7 +399,7 @@ impl Store {
             .conn
             .prepare(
                 "SELECT id, account_id, message_id, subject, recipients, state, attempts, \
-                 last_error, created_at FROM outbox WHERE account_id = ?1 ORDER BY id",
+                 last_error, created_at, send_at FROM outbox WHERE account_id = ?1 ORDER BY id",
             )
             .map_err(storage)?;
         let rows = stmt
@@ -405,7 +414,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, account_id, message_id, subject, recipients, state, attempts, \
-                 last_error, created_at FROM outbox WHERE id = ?1",
+                 last_error, created_at, send_at FROM outbox WHERE id = ?1",
                 [id],
                 outbox_row,
             )
@@ -414,14 +423,45 @@ impl Store {
             .transpose()
     }
 
-    /// Messages waiting to send, and messages the server refused.
-    pub fn outbox_counts(&self, account: AccountId) -> Result<(u32, u32)> {
+    /// Holds a queued message until `send_at`, or sends it as soon as
+    /// possible with `None`.
+    pub fn schedule_outbox(&self, id: i64, send_at: Option<i64>) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE outbox SET send_at = ?2 WHERE id = ?1",
+                params![id, send_at],
+            )
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    /// Accounts with a scheduled message whose time has come.
+    pub fn due_scheduled(&self, now: i64) -> Result<Vec<AccountId>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT DISTINCT account_id FROM outbox \
+                 WHERE state = 'queued' AND send_at IS NOT NULL AND send_at <= ?1",
+            )
+            .map_err(storage)?;
+        stmt.query_map([now], |r| r.get(0).map(AccountId))
+            .map_err(storage)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(storage)
+    }
+
+    /// Messages to send now, messages the server refused, and scheduled
+    /// messages waiting for their time.
+    pub fn outbox_counts(&self, account: AccountId) -> Result<(u32, u32, u32)> {
         self.conn
             .query_row(
-                "SELECT count(*) FILTER (WHERE state = 'queued'), \
-                 count(*) FILTER (WHERE state = 'failed') FROM outbox WHERE account_id = ?1",
+                "SELECT \
+                 count(*) FILTER (WHERE state = 'queued' AND coalesce(send_at, 0) <= unixepoch()), \
+                 count(*) FILTER (WHERE state = 'failed'), \
+                 count(*) FILTER (WHERE state = 'queued' AND send_at > unixepoch()) \
+                 FROM outbox WHERE account_id = ?1",
                 [account.0],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(storage)
     }
@@ -541,6 +581,7 @@ fn outbox_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Result<OutboxItem>> {
         attempts: r.get(6)?,
         last_error: r.get(7)?,
         created_at: r.get(8)?,
+        send_at: r.get(9)?,
     };
     Ok(from_json(&recipients).map(|recipients| OutboxItem { recipients, ..item }))
 }
@@ -676,6 +717,36 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_mail_waits_for_its_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, account) = store(dir.path());
+        let draft = store
+            .create_draft(NewDraft::new(account, "s1@example.test".into()))
+            .unwrap();
+        let id = store
+            .queue_outgoing(&draft, b"raw", b"copy", &["bob@example.test".into()])
+            .unwrap();
+        store.schedule_outbox(id, Some(1_000)).unwrap();
+        let item = store.outbox_item(id).unwrap().unwrap();
+        assert_eq!(item.send_at, Some(1_000));
+        assert!(item.waiting(999));
+        assert!(!item.waiting(1_000));
+        assert!(store.due_scheduled(999).unwrap().is_empty());
+        assert_eq!(store.due_scheduled(1_000).unwrap(), [account]);
+        // Long past by the clock, so it counts as ready to go.
+        assert_eq!(store.outbox_counts(account).unwrap(), (1, 0, 0));
+        store
+            .schedule_outbox(id, Some(i64::from(u32::MAX) * 4))
+            .unwrap();
+        assert_eq!(store.outbox_counts(account).unwrap(), (0, 0, 1));
+
+        // "Send now" clears the time.
+        store.schedule_outbox(id, None).unwrap();
+        assert!(!store.outbox_item(id).unwrap().unwrap().waiting(0));
+        assert!(store.due_scheduled(i64::MAX).unwrap().is_empty());
+    }
+
+    #[test]
     fn outgoing_mail_moves_through_the_outbox() {
         let dir = tempfile::tempdir().unwrap();
         let (mut store, account) = store(dir.path());
@@ -701,18 +772,18 @@ mod tests {
         assert_eq!(item.state, OutboxState::Queued);
         assert_eq!(store.outbox_file(&item, false).unwrap(), b"raw");
         assert_eq!(store.outbox_file(&item, true).unwrap(), b"copy");
-        assert_eq!(store.outbox_counts(account).unwrap(), (1, 0));
+        assert_eq!(store.outbox_counts(account).unwrap(), (1, 0, 0));
 
         store.outbox_attempt_failed(id, "offline").unwrap();
         let retried = store.outbox_item(id).unwrap().unwrap();
         assert_eq!((retried.state, retried.attempts), (OutboxState::Queued, 1));
         store.outbox_failed(id, "550 no such user").unwrap();
-        assert_eq!(store.outbox_counts(account).unwrap(), (0, 1));
+        assert_eq!(store.outbox_counts(account).unwrap(), (0, 1, 0));
         store.outbox_retry(id).unwrap();
         store.outbox_sent(id).unwrap();
         let sent = store.outbox_item(id).unwrap().unwrap();
         assert_eq!((sent.state, sent.last_error), (OutboxState::Sent, None));
-        assert_eq!(store.outbox_counts(account).unwrap(), (0, 0));
+        assert_eq!(store.outbox_counts(account).unwrap(), (0, 0, 0));
 
         store.outbox_remove(id).unwrap();
         assert!(store.outbox(account).unwrap().is_empty());

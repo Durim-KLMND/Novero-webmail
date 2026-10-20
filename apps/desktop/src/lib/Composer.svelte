@@ -2,18 +2,20 @@
   import Icon from "./Icon.svelte";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
-  import { api, errorText, onFileDrop, type Account, type Draft, type DraftFields, type FileDrop } from "./api";
+  import { api, errorText, onFileDrop, type Account, type ComposerOutcome, type Draft, type DraftFields, type FileDrop } from "./api";
   import { fileSize } from "./format";
   import RichEditor from "./RichEditor.svelte";
   import AddressInput from "./AddressInput.svelte";
-  import { openMenu } from "./menus.svelte";
+  import { openMenu, toggleMenuUnder } from "./menus.svelte";
+  import { laterChoices } from "./later";
+  import PickTime from "./PickTime.svelte";
   import { textToHtml } from "./richtext";
 
   interface Props {
     draft: Draft;
     accounts: Account[];
     /** The composer is done: sent, saved or thrown away. */
-    onClose: (outcome: "sent" | "saved" | "discarded") => void;
+    onClose: (outcome: ComposerOutcome) => void;
     /** Another account was picked as the sender; the draft moved to it. */
     onReplace: (draft: Draft) => void;
     /** Moves the draft to a window of its own; left out in that window. */
@@ -170,7 +172,25 @@
     onPopOut?.();
   }
 
-  async function send() {
+  /** "Pick a date and time" for Send later is open. */
+  let picking = $state(false);
+
+  function sendLaterMenu(e: MouseEvent) {
+    const button = e.currentTarget as HTMLElement;
+    toggleMenuUnder(button.parentElement ?? button, [
+      ...laterChoices(new Date(), false).map((c) => ({
+        label: `${c.label}`,
+        shortcut: c.when,
+        icon: "clock" as const,
+        run: () => send(c.at),
+      })),
+      "separator",
+      { label: "Pick a date and time…", icon: "calendar", run: () => (picking = true) },
+    ]);
+  }
+
+  /** Sends now, or at `at`: the message waits in the outbox until then. */
+  async function send(at: Date | null = null) {
     if (busy) return;
     if (!fields.subject.trim()) {
       const go = await ask("This message has no subject. Send it anyway?", {
@@ -183,9 +203,9 @@
     busy = true;
     clearTimeout(saveTimer);
     try {
-      await api.sendDraft(draft.id, $state.snapshot(fields));
+      await api.sendDraft(draft.id, $state.snapshot(fields), at ? Math.floor(at.getTime() / 1000) : null);
       closed = true;
-      onClose("sent");
+      onClose(at ? "scheduled" : "sent");
     } catch (err) {
       error = errorText(err);
     } finally {
@@ -275,7 +295,17 @@
     </div>
   {/if}
   <div class="actions" role="toolbar" aria-label="Message actions">
-    <button class="primary" onclick={send} disabled={busy}><Icon name="sent" />{busy ? "Sending…" : "Send"}</button>
+    <div class="send" role="group" aria-label="Send">
+      <button class="primary main" onclick={() => send()} disabled={busy} title="Send (Ctrl+Enter)"><Icon name="sent" />{busy ? "Sending…" : "Send"}</button>
+      <button
+        class="primary more"
+        onclick={sendLaterMenu}
+        disabled={busy}
+        aria-label="Send later"
+        aria-haspopup="menu"
+        title="Send later"
+      ><Icon name="chevron-down" size={14} /></button>
+    </div>
     <button onclick={attach} disabled={busy}><Icon name="attachment" />Attach</button>
     <span class="status quiet" aria-live="polite">{status}</span>
     <button onclick={discard} disabled={busy} title="Delete this draft"><Icon name="trash" />Discard</button>
@@ -340,6 +370,19 @@
   <p class="hint quiet">Ctrl+Enter sends. Drafts are saved as you type.</p>
 </section>
 
+{#if picking}
+  <PickTime
+    title="Send later"
+    action="Schedule"
+    start={laterChoices(new Date(), false)[0].at}
+    onPick={(at) => {
+      picking = false;
+      send(at);
+    }}
+    onCancel={() => (picking = false)}
+  />
+{/if}
+
 <style>
   .composer {
     position: relative;
@@ -360,6 +403,19 @@
     width: auto;
     padding: 5px 12px;
     font-size: 13px;
+  }
+  .send {
+    display: flex;
+  }
+  .send .main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .actions .send .more {
+    padding: 5px 7px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: 1px solid color-mix(in srgb, var(--accent-text) 30%, transparent);
   }
   .status {
     flex: 1;

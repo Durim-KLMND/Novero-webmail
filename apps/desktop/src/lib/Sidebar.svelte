@@ -11,6 +11,8 @@
     /** Mail waiting to send, mail the server refused, and why the last try failed. */
     queued: number;
     failed: number;
+    /** Scheduled mail waiting for its time. */
+    scheduled: number;
     outboxError: string | null;
     /** The running sync's progress, while it has a lot to download. */
     progress: { stage: SyncStage; done: number; total: number } | null;
@@ -40,6 +42,10 @@
     /** A right-click on a folder. */
     onFolderMenu: (folder: Folder, event: MouseEvent) => void;
     onAllInboxes: () => void;
+    /** Snoozed messages, shown under All inboxes while there are any. */
+    snoozedCount: number;
+    snoozedActive: boolean;
+    onSnoozed: () => void;
     /** The search box changed; an empty query ends the search. */
     onSearch: (query: string) => void;
     /** Open an account's rules. */
@@ -63,6 +69,9 @@
     onSelect,
     onFolderMenu,
     onAllInboxes,
+    snoozedCount,
+    snoozedActive,
+    onSnoozed,
     onSearch,
     onRules,
     onSync,
@@ -197,6 +206,13 @@
         {#if unreadInboxes > 0}<span class="badge">{unreadInboxes.toLocaleString()}</span>{/if}
       </button>
     {/if}
+    {#if snoozedCount > 0 || snoozedActive}
+      <button class="folder all" class:active={snoozedActive} onclick={onSnoozed}>
+        <Icon name="clock" />
+        <span class="label">Snoozed</span>
+        {#if snoozedCount > 0}<span class="count quiet">{snoozedCount.toLocaleString()}</span>{/if}
+      </button>
+    {/if}
     {#each accounts as account (account.id)}
       {@const sync = syncState[account.id]}
       <section>
@@ -252,6 +268,11 @@
             title={sync.outboxError ? errorText(sync.outboxError) : undefined}
           >
             {sync.outboxError ? `${plural(sync.queued, "message")} waiting to send` : `Sending ${plural(sync.queued, "message")}…`}
+          </button>
+        {/if}
+        {#if sync?.scheduled}
+          <button class="outbox-line quiet" onclick={() => onOutbox(account.id)}>
+            {plural(sync.scheduled, "message")} scheduled
           </button>
         {/if}
         {#if !collapsed[account.id]}
@@ -399,6 +420,9 @@
   }
   .folder.active :global(.icon) {
     color: var(--accent-ink);
+  }
+  .count {
+    font-size: 12px;
   }
   .badge {
     font-size: 12px;

@@ -10,6 +10,7 @@
     onMailto,
     onUpdateReady,
     type Account,
+    type ComposerOutcome,
     type Draft,
     type FlagKind,
     type Folder,
@@ -36,6 +37,8 @@
   import CalendarView from "./CalendarView.svelte";
   import CrashReport from "./CrashReport.svelte";
   import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
+  import { laterChoices, laterText } from "./later";
+  import PickTime from "./PickTime.svelte";
 
   interface Props {
     accounts: Account[];
@@ -49,6 +52,11 @@
   /** The folder shown, unless all inboxes or a search are. */
   let selectedFolder = $state<Folder | null>(null);
   let allInboxes = $state(false);
+  /** The Snoozed list is shown. */
+  let snoozedView = $state(false);
+  let snoozedCount = $state(0);
+  /** "Pick a date and time" for Snooze is open. */
+  let pickingSnooze = $state(false);
   let searchQuery = $state("");
   /** The selected row of the list: a message or a conversation. */
   let selected = $state<MessageSummary | null>(null);
@@ -93,7 +101,9 @@
       ? { kind: "search", query: searchQuery }
       : allInboxes
         ? { kind: "allInboxes" }
-        : selectedFolder
+        : snoozedView
+          ? { kind: "snoozed" }
+          : selectedFolder
           ? { kind: "folder", id: selectedFolder.id }
           : null,
   );
@@ -103,13 +113,21 @@
       ? "Search results"
       : allInboxes
         ? "All inboxes"
-        : selectedFolder
+        : snoozedView
+          ? "Snoozed"
+          : selectedFolder
           ? folderLabel(selectedFolder.name, selectedFolder.role, selectedFolder.delimiter)
           : "",
   );
 
   const emptyText = $derived(
-    searchQuery ? "No messages match your search." : allInboxes ? "No mail yet." : "This folder is empty.",
+    searchQuery
+      ? "No messages match your search."
+      : allInboxes
+        ? "No mail yet."
+        : snoozedView
+          ? "Nothing is snoozed. Snoozed mail comes back to its folder at the time you pick."
+          : "This folder is empty.",
   );
 
   function accountEmail(id: number): string {
@@ -123,11 +141,12 @@
       const folder = folderLabel(item.folderName, item.folderRole, null);
       return several ? `${folder} · ${accountEmail(item.accountId)}` : folder;
     }
-    if (allInboxes && several) return accountEmail(item.accountId);
+    if ((allInboxes || snoozedView) && several) return accountEmail(item.accountId);
     return null;
   }
 
   onMount(async () => {
+    refreshSnoozed();
     try {
       settings = await api.getSettings();
       applyTheme(settings.theme);
@@ -149,7 +168,7 @@
   const unlistenUpdate = onUpdateReady((found) => (update = found));
   const unlistenMailto = onMailto(openMailto);
   // A message window closed (see ComposerWindow).
-  const unlistenWindows = listen<{ account: number; outcome: "sent" | "saved" | "discarded" }>(
+  const unlistenWindows = listen<{ account: number; outcome: ComposerOutcome }>(
     "composer-closed",
     (e) => ended(e.payload.account, e.payload.outcome),
   );
@@ -192,6 +211,7 @@
         pendingError: null,
         queued: 0,
         failed: 0,
+        scheduled: 0,
         outboxError: null,
         progress: null,
       }
@@ -219,8 +239,8 @@
         api.pendingChanges(account.id).then((pending) => {
           syncState[account.id] = { ...stateOf(account.id), pending };
         });
-        api.outboxStatus(account.id).then(([queued, failed]) => {
-          syncState[account.id] = { ...stateOf(account.id), queued, failed };
+        api.outboxStatus(account.id).then(([queued, failed, scheduled]) => {
+          syncState[account.id] = { ...stateOf(account.id), queued, failed, scheduled };
         });
       }
     }
@@ -274,7 +294,7 @@
     } else if (e.type === "pendingChanges") {
       syncState[e.account] = { ...current, pending: e.pending, pendingError: e.error };
     } else if (e.type === "outboxChanged") {
-      syncState[e.account] = { ...current, queued: e.queued, failed: e.failed, outboxError: e.error };
+      syncState[e.account] = { ...current, queued: e.queued, failed: e.failed, scheduled: e.scheduled, outboxError: e.error };
       outboxVersion += 1;
       if (sending.has(e.account) && e.queued === 0) {
         sending.delete(e.account);
@@ -283,6 +303,8 @@
       }
     } else {
       scheduleRefresh(e.account);
+      // Snoozed mail may have come back.
+      refreshSnoozed();
     }
   });
   onDestroy(() => {
@@ -294,16 +316,56 @@
   });
 
   function selectFolder(folder: Folder) {
-    if (selectedFolder?.id !== folder.id || allInboxes || searchQuery) selected = null;
+    if (selectedFolder?.id !== folder.id || allInboxes || snoozedView || searchQuery) selected = null;
     selectedFolder = folder;
     allInboxes = false;
+    snoozedView = false;
     sidebar?.clearSearch();
   }
 
   function selectAllInboxes() {
     if (!allInboxes || searchQuery) selected = null;
     allInboxes = true;
+    snoozedView = false;
     sidebar?.clearSearch();
+  }
+
+  function selectSnoozed() {
+    if (!snoozedView || searchQuery) selected = null;
+    snoozedView = true;
+    allInboxes = false;
+    sidebar?.clearSearch();
+  }
+
+  async function refreshSnoozed() {
+    snoozedCount = await api.snoozedCount().catch(() => snoozedCount);
+  }
+
+  /** Hides the selected row until `at`. */
+  function snooze(at: Date) {
+    act(
+      (ids) => api.snoozeMessages(ids, Math.floor(at.getTime() / 1000)),
+      true,
+      (many) => `${what(many)} snoozed until ${laterText(at)}`,
+    ).then(refreshSnoozed);
+  }
+
+  function unsnooze() {
+    act((ids) => api.unsnoozeMessages(ids), true, (many) => `${what(many)} is back`).then(refreshSnoozed);
+  }
+
+  /** The Snooze menu: the usual times, or one picked. */
+  function snoozeChoices(): MenuItem[] {
+    return [
+      ...laterChoices(new Date(), true).map((c) => ({
+        label: c.label,
+        shortcut: c.when,
+        icon: "clock" as const,
+        run: () => snooze(c.at),
+      })),
+      "separator",
+      { label: "Pick a date and time…", icon: "calendar", run: () => (pickingSnooze = true) },
+    ];
   }
 
   function search(query: string) {
@@ -414,6 +476,8 @@
           run: () => toggle("seen", !seen),
         },
         !draft && { label: flagged ? "Remove flag" : "Flag", icon: flagged ? "unflag" : "flag", shortcut: "S", run: () => toggle("flagged", !flagged) },
+        !draft && snoozedView && { label: "Unsnooze", icon: "clock", shortcut: "B", run: unsnooze },
+        !draft && !snoozedView && { label: "Snooze", icon: "clock", items: snoozeChoices() },
         "separator",
         !draft && moveTo.length > 0 && { label: "Move to", icon: "move", items: moveTo },
         !draft && item.folderRole === "inbox" && sender && {
@@ -508,7 +572,7 @@
     selected = item;
   }
 
-  function composerClosed(outcome: "sent" | "saved" | "discarded") {
+  function composerClosed(outcome: ComposerOutcome) {
     const draft = composing;
     composing = null;
     if (selected?.folderRole === "drafts") selected = null;
@@ -516,10 +580,12 @@
   }
 
   /** A composer here or in its own window is done. */
-  function ended(account: number, outcome: "sent" | "saved" | "discarded") {
+  function ended(account: number, outcome: ComposerOutcome) {
     if (outcome === "sent") {
       sending.add(account);
       say("Sending…", "info");
+    } else if (outcome === "scheduled") {
+      say("Scheduled. It waits in the Outbox until then.", "info");
     } else if (outcome === "discarded") {
       say("Draft deleted", "info");
     }
@@ -650,7 +716,7 @@
 
   function shortcut(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
-    const dialog = showHelp || showSettings || rulesFor || signingIn;
+    const dialog = showHelp || showSettings || rulesFor || signingIn || pickingSnooze;
     // Ctrl+1 and Ctrl+2 switch between mail and the calendar.
     if (event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "1" || event.key === "2")) {
       if (dialog) return;
@@ -674,7 +740,7 @@
       }
       return;
     }
-    if (showSettings || rulesFor || signingIn || typing(event)) return;
+    if (showSettings || rulesFor || signingIn || pickingSnooze || typing(event)) return;
     const key = event.key;
     if (key === "?") showHelp = true;
     else if (view !== "mail") return;
@@ -693,6 +759,7 @@
     } else if (key === "e") archive();
     else if (key === "#" || key === "Delete") remove();
     else if (key === "s" && selected) toggle("flagged", !(reader?.rowFlags().flagged ?? selected.flags.flagged));
+    else if (key === "b" && selected && selected.folderRole !== "drafts") reader?.openSnooze();
     else if (key === "U" && selected) toggle("seen", false);
     else if (key === "I" && selected) toggle("seen", true);
     else return;
@@ -716,11 +783,14 @@
     {folders}
     {syncState}
     bind:this={sidebar}
-    selected={allInboxes || searchQuery ? null : selectedFolder}
+    selected={allInboxes || snoozedView || searchQuery ? null : selectedFolder}
     allInboxes={allInboxes && !searchQuery}
     onSelect={selectFolder}
     onFolderMenu={folderMenu}
     onAllInboxes={selectAllInboxes}
+    {snoozedCount}
+    snoozedActive={snoozedView && !searchQuery}
+    onSnoozed={selectSnoozed}
     onSearch={search}
     onRules={(account) => (rulesFor = { account })}
     onSync={(id) => api.syncAccount(id)}
@@ -810,6 +880,9 @@
     onMove={move}
     onReply={(message, all) => openComposer(() => api.replyDraft(message, all))}
     onForward={(message) => openComposer(() => api.forwardDraft(message))}
+    {snoozeChoices}
+    snoozed={snoozedView && !searchQuery}
+    onUnsnooze={unsnooze}
   />
   {/if}
 </div>
@@ -838,6 +911,18 @@
   {/if}
   {#if crashReport}
     <CrashReport report={crashReport} onClose={crashClosed} />
+  {/if}
+  {#if pickingSnooze}
+    <PickTime
+      title="Snooze until"
+      action="Snooze"
+      start={laterChoices(new Date(), true)[0].at}
+      onPick={(at) => {
+        pickingSnooze = false;
+        snooze(at);
+      }}
+      onCancel={() => (pickingSnooze = false)}
+    />
   {/if}
   {#if showHelp}
     <ShortcutHelp onClose={() => (showHelp = false)} />
