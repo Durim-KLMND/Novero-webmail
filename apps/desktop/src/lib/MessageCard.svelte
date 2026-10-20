@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import InviteCard from "./InviteCard.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { closeMenu, fallbackMenu, items, openMenu } from "./menus.svelte";
   import { api, errorText, type MessageSummary, type ParsedMessage } from "./api";
@@ -130,6 +131,9 @@
         {#if message.to}<dt>To</dt><dd>{message.to}</dd>{/if}
         {#if message.cc}<dt>Cc</dt><dd>{message.cc}</dd>{/if}
       </dl>
+      {#if message.invite}
+        <InviteCard id={summary.id} />
+      {/if}
       {#if message.attachments.length}
         <ul class="attachments">
           {#each message.attachments as a}

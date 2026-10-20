@@ -155,7 +155,7 @@ pub fn build_message(
     })
 }
 
-fn address(mailbox: &Mailbox) -> BuilderAddress<'static> {
+pub(crate) fn address(mailbox: &Mailbox) -> BuilderAddress<'static> {
     match &mailbox.name {
         Some(name) => BuilderAddress::new_address(Some(name.clone()), mailbox.email.clone()),
         None => BuilderAddress::new_address(None::<String>, mailbox.email.clone()),
@@ -167,7 +167,7 @@ fn address_list(list: &[Mailbox]) -> BuilderAddress<'static> {
 }
 
 /// Mail lines end in CRLF; the editor gives bare LF.
-fn crlf(text: &str) -> String {
+pub(crate) fn crlf(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
