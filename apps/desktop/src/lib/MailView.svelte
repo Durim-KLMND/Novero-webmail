@@ -921,6 +921,7 @@
       {onAddAccount}
       onSignInAgain={(account) => (signingIn = account)}
       onRemoveAccount={removeAccount}
+      onAccountChanged={onAccountsChanged}
     />
   {/if}
   {#if rulesFor && accounts.length}

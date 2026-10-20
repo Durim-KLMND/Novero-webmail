@@ -14,6 +14,7 @@
   import Icon, { type IconName } from "./Icon.svelte";
   import SignatureSettings from "./SignatureSettings.svelte";
   import TemplateSettings from "./TemplateSettings.svelte";
+  import AccountServers from "./AccountServers.svelte";
 
   interface Props {
     accounts: Account[];
@@ -29,9 +30,20 @@
     onSignInAgain: (account: Account) => void;
     /** Asks first; Settings stays open. */
     onRemoveAccount: (account: Account) => void;
+    /** An account's server settings were changed. */
+    onAccountChanged: () => void;
   }
-  let { accounts, settings, onClose, onUpdate, onRules, onAddAccount, onSignInAgain, onRemoveAccount }: Props =
-    $props();
+  let {
+    accounts,
+    settings,
+    onClose,
+    onUpdate,
+    onRules,
+    onAddAccount,
+    onSignInAgain,
+    onRemoveAccount,
+    onAccountChanged,
+  }: Props = $props();
 
   type Category = "general" | "mail" | "accounts" | "signatures" | "templates" | "updates" | "privacy";
   const categories: { id: Category; label: string; icon: IconName }[] = [
@@ -129,6 +141,57 @@
       checkResult = `Couldn't check for updates. ${errorText(err)}`;
     } finally {
       checking = false;
+    }
+  }
+
+  /** The account whose servers are being edited. */
+  let editing = $state<number | null>(null);
+  let serversSaved = $state("");
+
+  function serversChanged(account: Account) {
+    editing = null;
+    serversSaved = `${account.email} now uses ${account.imap.host} and ${account.smtp.host}.`;
+    onAccountChanged();
+  }
+
+  let testKind = $state<"one" | "several">("one");
+  let testDelay = $state(0);
+  let testing = $state(false);
+  let testResult = $state("");
+  let testFailed = $state(false);
+  let countdown: ReturnType<typeof setInterval> | undefined;
+
+  async function testNotification() {
+    testing = true;
+    testFailed = false;
+    let left = testDelay;
+    const tickDown = () => (testResult = `Sending in ${left}… switch to another window to see it as you would new mail.`);
+    if (left > 0) {
+      tickDown();
+      countdown = setInterval(() => {
+        left = Math.max(0, left - 1);
+        tickDown();
+      }, 1000);
+    }
+    try {
+      await api.testNotification(testKind === "several", testDelay);
+      testResult = "Sent. It should appear in the corner of your screen.";
+    } catch (err) {
+      testFailed = true;
+      testResult = errorText(err);
+    } finally {
+      clearInterval(countdown);
+      testing = false;
+    }
+  }
+  onMount(() => () => clearInterval(countdown));
+
+  async function notificationSettings() {
+    try {
+      await api.openNotificationSettings();
+    } catch (err) {
+      testFailed = true;
+      testResult = errorText(err);
     }
   }
 
@@ -237,6 +300,25 @@
               <small class="quiet">Shown by Windows while Novero Mail is in the background.</small>
             </span>
           </label>
+          <div class="row test">
+            <select bind:value={testKind} aria-label="What the test shows" disabled={testing}>
+              <option value="one">One new message</option>
+              <option value="several">Several new messages</option>
+            </select>
+            <select bind:value={testDelay} aria-label="When to send it" disabled={testing}>
+              <option value={0}>Now</option>
+              <option value={5}>In 5 seconds</option>
+              <option value={10}>In 10 seconds</option>
+            </select>
+            <button onclick={testNotification} disabled={testing}><Icon name="bell" /> Send a test</button>
+          </div>
+          {#if testResult}
+            <small class:error={testFailed} class:quiet={!testFailed} role="status">{testResult}</small>
+          {/if}
+          <small class="quiet">
+            Nothing appeared? Check that Novero Mail is allowed and Do not disturb is off in
+            <button class="link" onclick={notificationSettings}>Windows notification settings</button>.
+          </small>
         </fieldset>
         <fieldset>
           <legend>Default email app</legend>
@@ -267,21 +349,35 @@
         <ul class="accounts">
           {#each accounts as a (a.id)}
             <li>
-              <span class="who">
-                <strong>{a.displayName}</strong>
-                <small class="quiet">{a.email} · {signIn(a)}</small>
-              </span>
-              <button onclick={() => saveThen(() => onSignInAgain(a))} disabled={saving}>Sign in again</button>
-              <button
-                class="icon-only danger"
-                onclick={() => onRemoveAccount(a)}
-                disabled={saving}
-                title="Remove {a.email}"
-                aria-label="Remove {a.email}"
-              ><Icon name="remove-account" /></button>
+              <div class="line">
+                <span class="who">
+                  <strong>{a.displayName}</strong>
+                  <small class="quiet">{a.email} · {signIn(a)}</small>
+                </span>
+                <button
+                  onclick={() => {
+                    serversSaved = "";
+                    editing = editing === a.id ? null : a.id;
+                  }}
+                  disabled={saving}
+                  aria-expanded={editing === a.id}
+                >Server settings</button>
+                <button onclick={() => saveThen(() => onSignInAgain(a))} disabled={saving}>Sign in again</button>
+                <button
+                  class="icon-only danger"
+                  onclick={() => onRemoveAccount(a)}
+                  disabled={saving}
+                  title="Remove {a.email}"
+                  aria-label="Remove {a.email}"
+                ><Icon name="remove-account" /></button>
+              </div>
+              {#if editing === a.id}
+                <AccountServers account={a} onSaved={serversChanged} onCancel={() => (editing = null)} />
+              {/if}
             </li>
           {/each}
         </ul>
+        {#if serversSaved}<small class="quiet saved" role="status">{serversSaved}</small>{/if}
         <div class="row">
           <button onclick={() => saveThen(onAddAccount)} disabled={saving}><Icon name="plus" /> Add account</button>
         </div>
@@ -450,7 +546,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
   }
-  .accounts li {
+  .accounts .line {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -480,6 +576,17 @@
   }
   .row button {
     white-space: nowrap;
+  }
+  .test select {
+    width: auto;
+  }
+  .saved {
+    display: block;
+    margin-top: 6px;
+  }
+  small .link {
+    font-size: inherit;
+    padding: 0;
   }
   .row {
     display: flex;
