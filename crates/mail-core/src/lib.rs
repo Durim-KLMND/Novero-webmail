@@ -396,6 +396,8 @@ pub enum Event {
         account: AccountId,
         queued: u32,
         failed: u32,
+        /// Scheduled messages waiting for their time.
+        scheduled: u32,
         error: Option<String>,
     },
 }

@@ -154,7 +154,15 @@ pub async fn flush_outbox(
 ) -> Result<OutboxOutcome> {
     let mut outcome = OutboxOutcome::default();
     let items = store.lock().unwrap().outbox(account.id)?;
-    for item in items.iter().filter(|i| i.state == OutboxState::Queued) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default();
+    // Scheduled messages wait for their time.
+    for item in items
+        .iter()
+        .filter(|i| i.state == OutboxState::Queued && !i.waiting(now))
+    {
         let raw = store.lock().unwrap().outbox_file(item, false)?;
         let result = send_raw(
             &account.smtp,

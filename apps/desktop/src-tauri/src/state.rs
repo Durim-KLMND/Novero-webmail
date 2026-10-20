@@ -194,7 +194,7 @@ pub fn report_pending(app: &AppHandle, id: AccountId, error: Option<String>) {
 
 /// Tells the UI how many messages wait to send or were refused.
 pub fn report_outbox(app: &AppHandle, id: AccountId, error: Option<String>) {
-    let (queued, failed) = app
+    let (queued, failed, scheduled) = app
         .state::<AppState>()
         .store
         .lock()
@@ -207,6 +207,7 @@ pub fn report_outbox(app: &AppHandle, id: AccountId, error: Option<String>) {
             account: id,
             queued,
             failed,
+            scheduled,
             error,
         },
     );
@@ -218,9 +219,11 @@ fn has_outgoing(app: &AppHandle, id: AccountId) -> bool {
     let store = state.store.lock().unwrap();
     store.pending_count(id).unwrap_or(0) > 0
         || store.drafts_to_upload(id).is_ok_and(|d| !d.is_empty())
-        || store
-            .outbox(id)
-            .is_ok_and(|o| o.iter().any(|i| i.state != OutboxState::Failed))
+        || store.outbox(id).is_ok_and(|o| {
+            let now = crate::compose::now();
+            o.iter()
+                .any(|i| i.state != OutboxState::Failed && !i.waiting(now))
+        })
 }
 
 /// Sends queued changes, drafts and mail whenever woken, retrying with backoff

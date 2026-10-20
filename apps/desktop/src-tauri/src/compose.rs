@@ -267,7 +267,10 @@ pub fn send_draft(
     state: State<'_, AppState>,
     id: i64,
     fields: DraftFields,
+    send_at: Option<i64>,
 ) -> Result<()> {
+    // A time already past sends now.
+    let send_at = send_at.filter(|t| *t > now());
     let draft = state.store.lock().unwrap().save_draft_fields(id, &fields)?;
     let account = state.account(draft.account)?;
     let files = state.store.lock().unwrap().draft_files(id)?;
@@ -275,13 +278,18 @@ pub fn send_draft(
         name: &account.display_name,
         email: &account.email,
     };
-    let built = mail_mime::build_message(sender, &draft, &files, now(), true)?;
-    state.store.lock().unwrap().queue_outgoing(
-        &draft,
-        &built.raw,
-        &built.copy,
-        &built.recipients,
-    )?;
+    // A scheduled message is dated when it goes.
+    let built =
+        mail_mime::build_message(sender, &draft, &files, send_at.unwrap_or_else(now), true)?;
+    {
+        // One lock for both, so the outbox is never seen holding the
+        // message without its time.
+        let mut store = state.store.lock().unwrap();
+        let queued = store.queue_outgoing(&draft, &built.raw, &built.copy, &built.recipients)?;
+        if send_at.is_some() {
+            store.schedule_outbox(queued, send_at)?;
+        }
+    }
     let mut recipients = mail_core::address::parse_lenient(&draft.fields.to);
     recipients.extend(mail_core::address::parse_lenient(&draft.fields.cc));
     recipients.extend(mail_core::address::parse_lenient(&draft.fields.bcc));
@@ -330,7 +338,7 @@ pub fn list_outbox(state: State<'_, AppState>, account: AccountId) -> Result<Vec
 
 /// Counts for the sidebar: waiting to send, and refused.
 #[tauri::command]
-pub fn outbox_status(state: State<'_, AppState>, account: AccountId) -> Result<(u32, u32)> {
+pub fn outbox_status(state: State<'_, AppState>, account: AccountId) -> Result<(u32, u32, u32)> {
     state.store.lock().unwrap().outbox_counts(account)
 }
 
@@ -351,6 +359,35 @@ pub fn delete_outbox(app: AppHandle, state: State<'_, AppState>, id: i64) -> Res
     state.store.lock().unwrap().outbox_remove(id)?;
     report_outbox(&app, item.account_id, None);
     Ok(())
+}
+
+/// Sends a scheduled message now instead of at its time.
+#[tauri::command]
+pub fn send_outbox_now(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<()> {
+    let item = unsent_item(&state, id)?;
+    state.store.lock().unwrap().schedule_outbox(id, None)?;
+    report_outbox(&app, item.account_id, None);
+    push_now(&app, item.account_id);
+    Ok(())
+}
+
+/// Sends queued scheduled messages as their time comes.
+pub fn start_scheduler(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(20));
+        loop {
+            ticker.tick().await;
+            let due = {
+                let state = app.state::<AppState>();
+                let store = state.store.lock().unwrap();
+                store.due_scheduled(now()).unwrap_or_default()
+            };
+            for account in due {
+                push_now(&app, account);
+            }
+        }
+    });
 }
 
 /// Takes a message out of the outbox and reopens it as a draft.
@@ -390,7 +427,7 @@ fn unsent_item(state: &AppState, id: i64) -> Result<OutboxItem> {
     Ok(item)
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

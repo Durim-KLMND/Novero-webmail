@@ -181,6 +181,8 @@
   .menu {
     position: fixed;
     z-index: 100;
+    /* Its own width, even when opened near the right edge. */
+    width: max-content;
     min-width: 200px;
     max-width: 320px;
     max-height: calc(100vh - 8px);

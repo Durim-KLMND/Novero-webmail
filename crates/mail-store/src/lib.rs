@@ -8,6 +8,7 @@ mod contacts;
 mod mailbox;
 mod outgoing;
 mod rules;
+mod snooze;
 mod store;
 
 use std::path::Path;
@@ -19,6 +20,7 @@ pub use mailbox::{MAX_RESULTS, Mailbox, MessagePage, MessageSummary, SearchQuery
 pub use outgoing::{DraftUpload, NewDraft, OutboxItem, OutboxState};
 pub use rules::RuleMessage;
 use rusqlite::Connection;
+pub use snooze::Woken;
 pub use store::{Folder, FolderState, MessageLocation, MessageSource, QueuedOp, Store};
 
 /// Migrations in order. Never edit one that has shipped; add a new file.
@@ -30,6 +32,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_search_threads_settings.sql"),
     include_str!("../migrations/0006_contacts_signatures.sql"),
     include_str!("../migrations/0007_calendar.sql"),
+    include_str!("../migrations/0008_send_later_snooze.sql"),
 ];
 
 /// Schema version a fully migrated database has.

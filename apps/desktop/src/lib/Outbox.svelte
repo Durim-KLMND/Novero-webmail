@@ -2,6 +2,10 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, errorText, type Account, type Draft, type OutboxItem } from "./api";
   import { listDate } from "./format";
+  import { laterText } from "./later";
+
+  /** A scheduled message whose time hasn't come. */
+  const waiting = (item: OutboxItem) => item.state === "queued" && item.sendAt != null && item.sendAt * 1000 > Date.now();
 
   interface Props {
     account: Account;
@@ -67,7 +71,9 @@
             <span class="quiet">{listDate(item.createdAt)}</span>
           </div>
           <div class="quiet to">To {item.recipients.join(", ")}</div>
-          {#if item.state === "failed"}
+          {#if waiting(item)}
+            <p class="scheduled">Scheduled to send {laterText(new Date(item.sendAt! * 1000))}.</p>
+          {:else if item.state === "failed"}
             <p class="error">The server refused this message: {item.lastError}</p>
           {:else if item.lastError}
             <p class="quiet">Waiting to send. Last try: {errorText(item.lastError)}</p>
@@ -77,6 +83,9 @@
           <div class="buttons">
             {#if item.state === "failed"}
               <button onclick={() => run(() => api.retryOutbox(item.id))}>Try again</button>
+            {/if}
+            {#if waiting(item)}
+              <button class="primary" onclick={() => run(() => api.sendOutboxNow(item.id))}>Send now</button>
             {/if}
             <button onclick={() => run(async () => onEdit(await api.editOutbox(item.id)))}>Edit</button>
             <button onclick={() => remove(item)}>Delete</button>
@@ -99,6 +108,9 @@
     gap: 12px;
     padding: 10px 24px;
     border-bottom: 1px solid var(--border);
+  }
+  .scheduled {
+    color: var(--accent-ink);
   }
   .actions button {
     width: auto;

@@ -8,6 +8,7 @@ mod files;
 mod links;
 mod rules;
 mod settings;
+mod snooze;
 mod state;
 mod updates;
 
@@ -50,6 +51,8 @@ pub fn run() {
             }
             updates::start(app.handle());
             calendar::start_reminders(app.handle());
+            compose::start_scheduler(app.handle());
+            snooze::start(app.handle());
 
             let handle = app.handle().clone();
             state::start_all(&handle);
@@ -111,6 +114,10 @@ pub fn run() {
             calendar::save_event,
             calendar::delete_event,
             calendar::skip_occurrence,
+            snooze::snooze_messages,
+            snooze::unsnooze_messages,
+            snooze::snoozed_count,
+            snooze::snoozed_until,
             rules::list_rules,
             rules::save_rule,
             rules::delete_rule,
@@ -120,6 +127,7 @@ pub fn run() {
             compose::retry_outbox,
             compose::delete_outbox,
             compose::edit_outbox,
+            compose::send_outbox_now,
             settings::get_settings,
             settings::save_settings,
             settings::set_signature,

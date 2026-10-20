@@ -297,7 +297,7 @@ async fn a_refused_message_waits_and_the_rest_still_send() {
     assert!(item.last_error.is_some());
     assert_eq!(
         store.lock().unwrap().outbox_counts(account.id).unwrap(),
-        (0, 1)
+        (0, 1, 0)
     );
 
     // It stays put on the next pass until the user retries it.

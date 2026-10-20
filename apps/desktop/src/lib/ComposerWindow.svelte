@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import { emit } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { api, errorText, type Account, type Draft } from "./api";
+  import { api, errorText, type Account, type ComposerOutcome, type Draft } from "./api";
   import Composer from "./Composer.svelte";
   import { applyTheme } from "./theme";
 
@@ -19,7 +19,7 @@
   let composer = $state<Composer>();
   let done = false;
 
-  async function finish(outcome: "sent" | "saved" | "discarded") {
+  async function finish(outcome: ComposerOutcome) {
     if (done) return;
     done = true;
     if (draft) await emit("composer-closed", { account: draft.account, outcome }).catch(() => {});

@@ -21,6 +21,7 @@
     ["E", "Archive"],
     ["# / Delete", "Delete"],
     ["S", "Flag or unflag"],
+    ["B", "Snooze, or unsnooze"],
     ["Shift+U", "Mark unread"],
     ["Shift+I", "Mark read"],
     ["/", "Search"],

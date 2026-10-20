@@ -3,7 +3,8 @@
   import { api, errorText, type FlagKind, type Folder, type MessageSummary } from "./api";
   import { folderLabel } from "./format";
   import MessageCard from "./MessageCard.svelte";
-  import { toggleMenuUnder } from "./menus.svelte";
+  import { toggleMenuUnder, type MenuItem } from "./menus.svelte";
+  import { laterText } from "./later";
 
   interface Props {
     /** The selected row of the message list: a message or a conversation. */
@@ -20,9 +21,42 @@
     onMove: (folder: number) => void;
     onReply: (message: number, all: boolean) => void;
     onForward: (message: number) => void;
+    /** The times offered by Snooze. */
+    snoozeChoices: () => MenuItem[];
+    /** The row is snoozed (the Snoozed list is shown); Unsnooze brings it back. */
+    snoozed?: boolean;
+    onUnsnooze: () => void;
   }
-  let { row, folders, version, onOpened, onArchive, onDelete, onToggle, onMove, onReply, onForward }: Props =
-    $props();
+  let {
+    row,
+    folders,
+    version,
+    onOpened,
+    onArchive,
+    onDelete,
+    onToggle,
+    onMove,
+    onReply,
+    onForward,
+    snoozeChoices,
+    snoozed = false,
+    onUnsnooze,
+  }: Props = $props();
+
+  let snoozeButton = $state<HTMLElement>();
+  /** When the snoozed row comes back. */
+  let until = $state<number | null>(null);
+  $effect(() => {
+    const id = rowId;
+    until = null;
+    if (snoozed && id != null) api.snoozedUntil(id).then((t) => rowId === id && (until = t)).catch(() => {});
+  });
+
+  /** Opens the Snooze menu, for the B shortcut. */
+  export function openSnooze() {
+    if (snoozed) onUnsnooze();
+    else if (snoozeButton) toggleMenuUnder(snoozeButton, snoozeChoices());
+  }
 
   const rowId = $derived(row?.id ?? null);
   const canArchive = $derived(row?.folderRole !== "archive" && folders.some((f) => f.role === "archive"));
@@ -142,6 +176,21 @@
       <button aria-pressed={flagged} onclick={() => onToggle("flagged", !flagged)} title="Flag (S)" aria-label="Flag">
         <Icon name="flag" filled={flagged} /><span class="text">{flagged ? "Flagged" : "Flag"}</span>
       </button>
+      {#if snoozed}
+        <button onclick={onUnsnooze} title="Bring it back now (B)" aria-label="Unsnooze">
+          <Icon name="clock" /><span class="text">Unsnooze</span>
+        </button>
+      {:else}
+        <button
+          bind:this={snoozeButton}
+          aria-haspopup="menu"
+          title="Snooze until later (B)"
+          aria-label="Snooze"
+          onclick={(e) => toggleMenuUnder(e.currentTarget, snoozeChoices())}
+        >
+          <Icon name="clock" /><span class="text">Snooze</span>
+        </button>
+      {/if}
       {#if moveTargets.length}
         <button aria-haspopup="menu" title="Move to folder" aria-label="Move to folder" onclick={moveMenu}>
           <Icon name="move" /><span class="text">Move to</span><Icon name="chevron-down" size={14} />
@@ -152,6 +201,9 @@
       <h1>{row.subject || "(no subject)"}</h1>
       {#if messages.length > 1}<span class="quiet">{messages.length} messages</span>{/if}
     </header>
+    {#if snoozed && until}
+      <p class="snoozed-note"><Icon name="clock" size={14} /> Snoozed until {laterText(new Date(until * 1000))}</p>
+    {/if}
     {#if error}
       <div class="pad">
         <p class="error">Could not open this conversation: {error}</p>
@@ -178,6 +230,14 @@
 </article>
 
 <style>
+  .snoozed-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 24px 8px;
+    color: var(--accent-ink);
+    font-size: 13px;
+  }
   .reader {
     overflow-y: auto;
     min-width: 0;

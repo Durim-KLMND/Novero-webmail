@@ -22,6 +22,8 @@ pub enum Mailbox {
     },
     /// The inboxes of every account, merged.
     AllInboxes,
+    /// Snoozed messages of every account, until they come back.
+    Snoozed,
     /// Messages matching a search (see [`SearchQuery::parse`]).
     Search {
         query: String,
@@ -262,8 +264,16 @@ impl Store {
         limit: u32,
     ) -> Result<MessagePage> {
         let (filter, args): (&str, Vec<Value>) = match mailbox {
-            Mailbox::Folder { id } => ("m.folder_id = ?", vec![Value::Integer(id.0)]),
-            Mailbox::AllInboxes => ("f.role = 'inbox'", Vec::new()),
+            // Snoozed messages are away from their folder until they wake.
+            Mailbox::Folder { id } => (
+                "m.folder_id = ? AND m.id NOT IN (SELECT message FROM snoozes)",
+                vec![Value::Integer(id.0)],
+            ),
+            Mailbox::AllInboxes => (
+                "f.role = 'inbox' AND m.id NOT IN (SELECT message FROM snoozes)",
+                Vec::new(),
+            ),
+            Mailbox::Snoozed => ("m.id IN (SELECT message FROM snoozes)", Vec::new()),
             Mailbox::Search { query } => {
                 return self.search(&SearchQuery::parse(query), offset, limit);
             }
@@ -771,6 +781,49 @@ mod tests {
                 r.get(0)
             })
             .unwrap()
+    }
+
+    #[test]
+    fn snoozed_mail_leaves_the_inbox_until_it_wakes() {
+        let (_dir, mut store) = store();
+        let acc = account(&store, "a@example.test");
+        let inbox = folders(&mut store, acc, &[("INBOX", FolderRole::Inbox)])[0];
+        let ids = insert(
+            &mut store,
+            inbox,
+            &[msg(1, "a", &[], 1), msg(2, "b", &[], 2)],
+        );
+        let shown = |store: &Store, mailbox: &Mailbox, threaded: bool| -> Vec<i64> {
+            store
+                .list(mailbox, threaded, 0, 50)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|m| m.id)
+                .collect()
+        };
+        let folder = Mailbox::Folder { id: inbox };
+
+        store.snooze(&[ids[1]], 100).unwrap();
+        for threaded in [false, true] {
+            assert_eq!(shown(&store, &folder, threaded), [ids[0]]);
+            assert_eq!(shown(&store, &Mailbox::AllInboxes, threaded), [ids[0]]);
+            assert_eq!(shown(&store, &Mailbox::Snoozed, threaded), [ids[1]]);
+        }
+        assert_eq!(store.snoozed_until(ids[1]).unwrap(), Some(100));
+        assert_eq!(store.snoozed_count().unwrap(), 1);
+
+        assert!(store.wake_snoozed(99).unwrap().is_empty());
+        let woken = store.wake_snoozed(100).unwrap();
+        assert_eq!(woken.len(), 1);
+        assert_eq!((woken[0].id, woken[0].account), (ids[1], acc));
+        assert_eq!(woken[0].subject.as_deref(), Some("Subject b"));
+        assert_eq!(shown(&store, &folder, true), [ids[1], ids[0]]);
+        assert_eq!(store.snoozed_count().unwrap(), 0);
+
+        store.snooze(&ids, 500).unwrap();
+        store.unsnooze(&[ids[0]]).unwrap();
+        assert_eq!(shown(&store, &folder, false), [ids[0]]);
     }
 
     #[test]

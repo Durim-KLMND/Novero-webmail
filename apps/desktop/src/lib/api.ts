@@ -152,9 +152,13 @@ export interface Flags {
 }
 
 /** Which messages the list shows. */
+/** How a composer ended. */
+export type ComposerOutcome = "sent" | "scheduled" | "saved" | "discarded";
+
 export type Mailbox =
   | { kind: "folder"; id: number }
   | { kind: "allInboxes" }
+  | { kind: "snoozed" }
   | { kind: "search"; query: string };
 
 /** One row of the message list: a message, or a conversation shown by its
@@ -303,6 +307,8 @@ export interface OutboxItem {
   attempts: number;
   lastError: string | null;
   createdAt: number;
+  /** When a scheduled message goes (UTC seconds). */
+  sendAt: number | null;
 }
 
 /** "messages": the message lists of every folder; "bodies": recent messages
@@ -338,6 +344,8 @@ export type MailEvent =
       account: number;
       queued: number;
       failed: number;
+      /** Scheduled messages waiting for their time. */
+      scheduled: number;
       error: string | null;
     };
 
@@ -398,15 +406,21 @@ export const api = {
   removeAttachment: (id: number, index: number) =>
     invoke<Draft>("remove_attachment", { id, index }),
   discardDraft: (id: number) => invoke<void>("discard_draft", { id }),
-  sendDraft: (id: number, fields: DraftFields) =>
-    invoke<void>("send_draft", { id, fields }),
+  /** Sends now, or at `sendAt` (UTC seconds). */
+  sendDraft: (id: number, fields: DraftFields, sendAt: number | null = null) =>
+    invoke<void>("send_draft", { id, fields, sendAt }),
+  sendOutboxNow: (id: number) => invoke<void>("send_outbox_now", { id }),
+  snoozeMessages: (ids: number[], until: number) => invoke<void>("snooze_messages", { ids, until }),
+  unsnoozeMessages: (ids: number[]) => invoke<void>("unsnooze_messages", { ids }),
+  snoozedCount: () => invoke<number>("snoozed_count"),
+  snoozedUntil: (id: number) => invoke<number | null>("snoozed_until", { id }),
   suggestContacts: (query: string) =>
     invoke<Contact[]>("suggest_contacts", { query }),
   hideContact: (email: string) => invoke<void>("hide_contact", { email }),
   listOutbox: (account: number) =>
     invoke<OutboxItem[]>("list_outbox", { account }),
   outboxStatus: (account: number) =>
-    invoke<[number, number]>("outbox_status", { account }),
+    invoke<[number, number, number]>("outbox_status", { account }),
   retryOutbox: (id: number) => invoke<void>("retry_outbox", { id }),
   deleteOutbox: (id: number) => invoke<void>("delete_outbox", { id }),
   editOutbox: (id: number) => invoke<Draft>("edit_outbox", { id }),
