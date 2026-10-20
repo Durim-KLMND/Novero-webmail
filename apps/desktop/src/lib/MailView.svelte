@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
@@ -32,6 +32,8 @@
   import RulesDialog from "./RulesDialog.svelte";
   import ShortcutHelp from "./ShortcutHelp.svelte";
   import Toasts from "./Toasts.svelte";
+  import AppRail, { type AppView } from "./AppRail.svelte";
+  import CalendarView from "./CalendarView.svelte";
   import CrashReport from "./CrashReport.svelte";
   import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
 
@@ -62,6 +64,19 @@
   /** The rules dialog: the account it shows, and a sender to make a rule for. */
   let rulesFor = $state<{ account: number; from?: string } | null>(null);
   let showHelp = $state(false);
+  /** Mail or the calendar, picked on the rail. */
+  let view = $state<AppView>("mail");
+  /** The calendar stays loaded once opened, to come back to where it was. */
+  let calendarOpened = $state(false);
+  $effect(() => {
+    if (view === "calendar") calendarOpened = true;
+  });
+  const unreadInboxes = $derived(
+    Object.values(folders)
+      .flat()
+      .filter((f) => f.role === "inbox")
+      .reduce((n, f) => n + f.unread, 0),
+  );
   /** The right pane shows the composer, an account's outbox, or the reader. */
   let composing = $state<Draft | null>(null);
   let composer = $state<ReturnType<typeof Composer>>();
@@ -444,6 +459,7 @@
 
   async function openComposer(make: () => Promise<Draft>) {
     try {
+      view = "mail";
       await leaveComposer();
       composing = await make();
       outboxAccount = null;
@@ -634,11 +650,20 @@
 
   function shortcut(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
-    // Ctrl+K searches from anywhere, even while typing a message.
-    if (event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
-      if (showHelp || showSettings || rulesFor || signingIn) return;
+    const dialog = showHelp || showSettings || rulesFor || signingIn;
+    // Ctrl+1 and Ctrl+2 switch between mail and the calendar.
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "1" || event.key === "2")) {
+      if (dialog) return;
       event.preventDefault();
-      sidebar?.focusSearch();
+      view = event.key === "1" ? "mail" : "calendar";
+      return;
+    }
+    // Ctrl+K searches mail from anywhere, even while typing a message.
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+      if (dialog) return;
+      event.preventDefault();
+      view = "mail";
+      tick().then(() => sidebar?.focusSearch());
       return;
     }
     if (event.ctrlKey || event.altKey || event.metaKey) return;
@@ -652,6 +677,7 @@
     if (showSettings || rulesFor || signingIn || typing(event)) return;
     const key = event.key;
     if (key === "?") showHelp = true;
+    else if (view !== "mail") return;
     else if (key === "/") sidebar?.focusSearch();
     else if (key === "Escape" && searchQuery) sidebar?.clearSearch();
     else if (composing || outboxAccount != null) return;
@@ -676,7 +702,15 @@
 
 <svelte:window onkeydown={shortcut} />
 
-<div class="layout" style:--side="{panes.side}px" style:--list="{panes.list}px" class:resizing={dragging != null}>
+<div class="shell">
+<AppRail
+  {view}
+  unread={unreadInboxes}
+  onView={(v) => (view = v)}
+  onSettings={() => (showSettings = true)}
+  onHelp={() => (showHelp = true)}
+/>
+<div class="layout" class:hidden={view !== "mail"} style:--side="{panes.side}px" style:--list="{panes.list}px" class:resizing={dragging != null}>
   <Sidebar
     {accounts}
     {folders}
@@ -688,9 +722,7 @@
     onFolderMenu={folderMenu}
     onAllInboxes={selectAllInboxes}
     onSearch={search}
-    onSettings={() => (showSettings = true)}
     onRules={(account) => (rulesFor = { account })}
-    onHelp={() => (showHelp = true)}
     onSync={(id) => api.syncAccount(id)}
     onRemove={removeAccount}
     onSignInAgain={(account) => (signingIn = account)}
@@ -780,6 +812,12 @@
     onForward={(message) => openComposer(() => api.forwardDraft(message))}
   />
   {/if}
+</div>
+{#if calendarOpened}
+  <div class="pane" class:hidden={view !== "calendar"}>
+    <CalendarView active={view === "calendar"} blocked={!!(showHelp || showSettings || rulesFor || signingIn)} />
+  </div>
+{/if}
   {#if signingIn}
     <SignInAgain account={signingIn} onDone={signInDone} />
   {/if}
@@ -808,6 +846,19 @@
 </div>
 
 <style>
+  .shell {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    height: 100%;
+  }
+  .pane {
+    min-width: 0;
+    height: 100%;
+  }
+  .hidden {
+    display: none !important;
+  }
   .layout {
     display: grid;
     grid-template-columns: var(--side) var(--list) minmax(320px, 1fr);

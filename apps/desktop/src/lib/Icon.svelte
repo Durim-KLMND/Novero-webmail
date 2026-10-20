@@ -5,13 +5,17 @@
   import Archive from "@lucide/svelte/icons/archive";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import Bell from "@lucide/svelte/icons/bell";
   import Bold from "@lucide/svelte/icons/bold";
+  import CalendarDays from "@lucide/svelte/icons/calendar-days";
   import Check from "@lucide/svelte/icons/check";
+  import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
   import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
   import Copy from "@lucide/svelte/icons/copy";
+  import Clock from "@lucide/svelte/icons/clock";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import FilePen from "@lucide/svelte/icons/file-pen";
@@ -29,9 +33,11 @@
   import ListFilter from "@lucide/svelte/icons/list-filter";
   import ListOrdered from "@lucide/svelte/icons/list-ordered";
   import LogIn from "@lucide/svelte/icons/log-in";
+  import MapPin from "@lucide/svelte/icons/map-pin";
   import Mail from "@lucide/svelte/icons/mail";
   import MailOpen from "@lucide/svelte/icons/mail-open";
   import Mails from "@lucide/svelte/icons/mails";
+  import Palette from "@lucide/svelte/icons/palette";
   import Paperclip from "@lucide/svelte/icons/paperclip";
   import PenLine from "@lucide/svelte/icons/pen-line";
   import Pencil from "@lucide/svelte/icons/pencil";
@@ -39,6 +45,7 @@
   import Plus from "@lucide/svelte/icons/plus";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import RemoveFormatting from "@lucide/svelte/icons/remove-formatting";
+  import Repeat from "@lucide/svelte/icons/repeat";
   import Reply from "@lucide/svelte/icons/reply";
   import ReplyAll from "@lucide/svelte/icons/reply-all";
   import Scissors from "@lucide/svelte/icons/scissors";
@@ -58,13 +65,17 @@
     archive: Archive,
     "move-down": ArrowDown,
     "move-up": ArrowUp,
+    bell: Bell,
     bold: Bold,
+    calendar: CalendarDays,
     check: Check,
+    "chevron-left": ChevronLeft,
     "chevron-down": ChevronDown,
     "chevron-right": ChevronRight,
     alert: CircleAlert,
     paste: ClipboardPaste,
     copy: Copy,
+    clock: Clock,
     more: Ellipsis,
     "external-link": ExternalLink,
     drafts: FilePen,
@@ -82,9 +93,12 @@
     rules: ListFilter,
     "list-ordered": ListOrdered,
     "sign-in": LogIn,
+    location: MapPin,
     unread: Mail,
+    mail: Mail,
     read: MailOpen,
     "all-inboxes": Mails,
+    palette: Palette,
     attachment: Paperclip,
     signature: PenLine,
     edit: Pencil,
@@ -92,6 +106,7 @@
     plus: Plus,
     refresh: RefreshCw,
     "clear-formatting": RemoveFormatting,
+    repeat: Repeat,
     reply: Reply,
     "reply-all": ReplyAll,
     cut: Scissors,

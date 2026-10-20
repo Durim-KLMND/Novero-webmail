@@ -903,6 +903,7 @@ version = "0.2.0-beta.1"
 dependencies = [
  "base64 0.22.1",
  "mail-auth",
+ "mail-calendar",
  "mail-core",
  "mail-mime",
  "mail-send",
@@ -2610,6 +2611,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mail-calendar"
+version = "0.2.0-beta.1"
+dependencies = [
+ "jiff",
+ "mail-core",
+ "uuid",
+]
+
+[[package]]
 name = "mail-core"
 version = "0.2.0-beta.1"
 dependencies = [
@@ -2657,6 +2667,7 @@ dependencies = [
 name = "mail-store"
 version = "0.2.0-beta.1"
 dependencies = [
+ "mail-calendar",
  "mail-core",
  "rusqlite",
  "serde",

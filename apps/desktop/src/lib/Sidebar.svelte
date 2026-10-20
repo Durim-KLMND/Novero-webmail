@@ -42,10 +42,8 @@
     onAllInboxes: () => void;
     /** The search box changed; an empty query ends the search. */
     onSearch: (query: string) => void;
-    onSettings: () => void;
     /** Open an account's rules. */
     onRules: (account: number) => void;
-    onHelp: () => void;
     onSync: (account: number) => void;
     onRemove: (account: Account) => void;
     onSignInAgain: (account: Account) => void;
@@ -66,9 +64,7 @@
     onFolderMenu,
     onAllInboxes,
     onSearch,
-    onSettings,
     onRules,
-    onHelp,
     onSync,
     onRemove,
     onSignInAgain,
@@ -290,10 +286,6 @@
       <button class="primary" onclick={onInstallUpdate}>Restart to update</button>
     </div>
   {/if}
-  <div class="footer">
-    <button class="settings" onclick={onSettings} aria-label="Settings" title="Settings and accounts"><Icon name="settings" /> Settings</button>
-    <button class="tool" onclick={onHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"><Icon name="keyboard" size={18} /></button>
-  </div>
 </nav>
 
 <style>
@@ -425,20 +417,6 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     font-size: 13px;
-  }
-  .footer {
-    display: flex;
-    gap: 6px;
-    margin: 8px;
-  }
-  .settings {
-    flex: 1;
-    white-space: nowrap;
-    padding: 7px 8px;
-  }
-  .tool {
-    padding: 6px 9px;
-    color: var(--text-quiet);
   }
   .search {
     position: relative;

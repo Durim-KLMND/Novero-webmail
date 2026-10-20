@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod address;
+pub mod calendar;
 pub mod rules;
 
 /// Local identifier of a configured account.

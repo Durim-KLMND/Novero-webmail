@@ -3,6 +3,7 @@
 //! Migrations are plain SQL files applied in order and tracked with
 //! `PRAGMA user_version`, so a database records which ones it has.
 
+mod calendar;
 mod contacts;
 mod mailbox;
 mod outgoing;
@@ -11,6 +12,7 @@ mod store;
 
 use std::path::Path;
 
+pub use calendar::Reminder;
 pub use contacts::Contact;
 pub use mail_core::{Error, Result};
 pub use mailbox::{MAX_RESULTS, Mailbox, MessagePage, MessageSummary, SearchQuery};
@@ -27,6 +29,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_oauth_provider.sql"),
     include_str!("../migrations/0005_search_threads_settings.sql"),
     include_str!("../migrations/0006_contacts_signatures.sql"),
+    include_str!("../migrations/0007_calendar.sql"),
 ];
 
 /// Schema version a fully migrated database has.

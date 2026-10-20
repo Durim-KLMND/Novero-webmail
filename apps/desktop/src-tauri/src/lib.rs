@@ -1,5 +1,6 @@
 //! Tauri host: registers commands and forwards core events to the UI.
 
+mod calendar;
 mod commands;
 mod compose;
 mod crash;
@@ -48,6 +49,7 @@ pub fn run() {
                 links::opened(app.handle(), link);
             }
             updates::start(app.handle());
+            calendar::start_reminders(app.handle());
 
             let handle = app.handle().clone();
             state::start_all(&handle);
@@ -101,6 +103,14 @@ pub fn run() {
             compose::hide_contact,
             compose::get_draft,
             compose::open_composer_window,
+            calendar::list_calendars,
+            calendar::save_calendar,
+            calendar::delete_calendar,
+            calendar::calendar_occurrences,
+            calendar::get_event,
+            calendar::save_event,
+            calendar::delete_event,
+            calendar::skip_occurrence,
             rules::list_rules,
             rules::save_rule,
             rules::delete_rule,
