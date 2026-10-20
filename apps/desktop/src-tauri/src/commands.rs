@@ -203,6 +203,77 @@ pub async fn sign_in_again(
     Ok(account)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsInput {
+    imap: Endpoint,
+    smtp: Endpoint,
+    /// Password accounts only; empty for the email address.
+    #[serde(default)]
+    username: String,
+    /// A new password, when the server change needs one.
+    #[serde(default)]
+    password: String,
+}
+
+/// Changes an account's incoming and outgoing servers. Both are tried with
+/// the account's sign-in first, so a typo can't leave it unable to sync.
+#[tauri::command]
+pub async fn update_account_servers(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: AccountId,
+    input: ServerSettingsInput,
+) -> Result<Account> {
+    let account = state.account(id)?;
+    let trimmed = |e: Endpoint| Endpoint {
+        host: e.host.trim().to_owned(),
+        ..e
+    };
+    let (imap, smtp) = (trimmed(input.imap), trimmed(input.smtp));
+    if imap.host.is_empty() || smtp.host.is_empty() {
+        return Err(Error::Invalid("enter both server addresses".into()));
+    }
+    if imap.port == 0 || smtp.port == 0 {
+        return Err(Error::Invalid("enter a port between 1 and 65535".into()));
+    }
+    let (username, password) = match account.auth {
+        // The provider's sign-in always uses the address it signed in as.
+        AuthMethod::OAuth2 { .. } => (account.username.clone(), None),
+        AuthMethod::Password => (
+            match input.username.trim() {
+                "" => account.email.clone(),
+                name => name.to_owned(),
+            },
+            Some(input.password).filter(|p| !p.is_empty()),
+        ),
+    };
+    let secret = match &password {
+        Some(password) => Secret::Password(password.clone()),
+        None => state.secret(&account).await?,
+    };
+
+    let session = ImapSession::connect(&imap, &username, &secret).await?;
+    let _ = session.logout().await;
+    mail_send::check_login(&smtp, &username, &secret)
+        .await
+        .map_err(sending_failed)?;
+
+    let updated = state
+        .store
+        .lock()
+        .unwrap()
+        .update_servers(id, &username, &imap, &smtp)?;
+    if let Some(password) = &password {
+        state.secrets.set(&secret_key(id), password)?;
+    }
+    // Connections to the old servers close; everything reconnects to the new ones.
+    stop_account(&app, id);
+    start_account(&app, id);
+    request_sync(&app, id, true);
+    Ok(updated)
+}
+
 /// Stops waiting for the browser sign-in.
 #[tauri::command]
 pub fn cancel_sign_in(state: State<'_, AppState>) {

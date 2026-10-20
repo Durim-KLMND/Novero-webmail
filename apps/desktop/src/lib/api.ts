@@ -310,6 +310,15 @@ export interface NewAccountInput {
   auth: AuthMethod;
 }
 
+/** New servers for an account; username and password apply to password accounts. */
+export interface ServerSettingsInput {
+  imap: Endpoint;
+  smtp: Endpoint;
+  username: string;
+  /** Empty to keep the saved password. */
+  password: string;
+}
+
 export type FlagKind = "seen" | "flagged" | "answered";
 
 /** What the user edits in the composer. Addresses are comma separated. */
@@ -402,6 +411,8 @@ export const api = {
   signInAgain: (id: number, password: string | null) =>
     invoke<Account>("sign_in_again", { id, password }),
   cancelSignIn: () => invoke<void>("cancel_sign_in"),
+  updateAccountServers: (id: number, input: ServerSettingsInput) =>
+    invoke<Account>("update_account_servers", { id, input }),
   listAccounts: () => invoke<Account[]>("list_accounts"),
   removeAccount: (id: number) => invoke<void>("remove_account", { id }),
   listFolders: (account: number) =>
@@ -483,6 +494,10 @@ export const api = {
     invoke<Draft>("mailto_draft", { account, link }),
   takeMailto: () => invoke<string | null>("take_mailto"),
   openDefaultApps: () => invoke<void>("open_default_apps"),
+  /** Shows a sample new-mail notification after `delay` seconds. */
+  testNotification: (several: boolean, delay: number) =>
+    invoke<void>("test_notification", { several, delay }),
+  openNotificationSettings: () => invoke<void>("open_notification_settings"),
   crashReport: () => invoke<string | null>("crash_report"),
   discardCrashReport: () => invoke<void>("discard_crash_report"),
   sendCrashReport: () => invoke<void>("send_crash_report"),

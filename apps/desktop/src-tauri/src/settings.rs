@@ -101,6 +101,27 @@ pub fn save_settings(
     Ok(settings)
 }
 
+/// Shows a sample new-mail notification (see `state::test_notification`).
+#[tauri::command]
+pub async fn test_notification(app: AppHandle, several: bool, delay: u64) -> Result<()> {
+    crate::state::test_notification(&app, several, delay).await
+}
+
+/// Opens the Windows settings page for notifications, where they can be
+/// allowed, silenced or changed.
+#[tauri::command]
+pub fn open_notification_settings(app: AppHandle) -> Result<()> {
+    use tauri_plugin_opener::OpenerExt;
+    if !cfg!(windows) {
+        return Err(mail_core::Error::Invalid(
+            "Notification settings can only be opened on Windows.".into(),
+        ));
+    }
+    app.opener()
+        .open_url("ms-settings:notifications", None::<&str>)
+        .map_err(|e| mail_core::Error::Invalid(format!("could not open Windows settings: {e}")))
+}
+
 /// Every account's signatures.
 #[tauri::command]
 pub fn list_signatures(state: State<'_, AppState>) -> Result<Vec<Signature>> {

@@ -156,6 +156,41 @@ impl Store {
             .map_err(storage)
     }
 
+    /// Changes where an account's mail comes from and goes to, and the name
+    /// it signs in with. Cached mail stays; the next sync sorts out any
+    /// folder the new server doesn't have.
+    pub fn update_servers(
+        &self,
+        id: AccountId,
+        username: &str,
+        imap: &Endpoint,
+        smtp: &Endpoint,
+    ) -> Result<Account> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE accounts SET username = ?2, imap_host = ?3, imap_port = ?4, \
+                 imap_security = ?5, smtp_host = ?6, smtp_port = ?7, smtp_security = ?8 \
+                 WHERE id = ?1",
+                params![
+                    id.0,
+                    username,
+                    imap.host,
+                    imap.port,
+                    imap.security.as_str(),
+                    smtp.host,
+                    smtp.port,
+                    smtp.security.as_str(),
+                ],
+            )
+            .map_err(storage)?;
+        if changed == 0 {
+            return Err(Error::Storage("that account no longer exists".into()));
+        }
+        self.account(id)?
+            .ok_or_else(|| Error::Storage("that account no longer exists".into()))
+    }
+
     /// Deletes the account, its folders and messages, and its message files.
     pub fn remove_account(&self, id: AccountId) -> Result<()> {
         self.conn
@@ -850,6 +885,30 @@ mod tests {
         assert_eq!(all, vec![a.clone(), b]);
         store.remove_account(a.id).unwrap();
         assert_eq!(store.list_accounts().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn server_settings_can_be_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory(dir.path()).unwrap();
+        let a = store.add_account(&new_account("a@example.test")).unwrap();
+        let imap = Endpoint {
+            host: "mail.example.test".into(),
+            port: 143,
+            security: Security::StartTls,
+        };
+        let smtp = Endpoint {
+            host: "out.example.test".into(),
+            port: 587,
+            security: Security::StartTls,
+        };
+        let changed = store.update_servers(a.id, "alice", &imap, &smtp).unwrap();
+        assert_eq!((changed.imap, changed.smtp), (imap.clone(), smtp.clone()));
+        assert_eq!(changed.username, "alice");
+        assert_eq!((changed.email, changed.auth), (a.email, a.auth));
+        assert_eq!(store.account(a.id).unwrap().unwrap().username, "alice");
+        store.remove_account(a.id).unwrap();
+        assert!(store.update_servers(a.id, "alice", &imap, &smtp).is_err());
     }
 
     #[test]

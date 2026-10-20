@@ -7,9 +7,9 @@
     type Account,
     type AuthMethod,
     type Endpoint,
-    type Security,
     type SetupInfo,
   } from "./api";
+  import { imapPorts, portFor, securityChoices, serverProblem, smtpPorts } from "./servers";
 
   interface Props {
     onAdded: (account: Account) => void;
@@ -37,9 +37,6 @@
   let stopped = false;
   let error = $state("");
   let passwordInput = $state<HTMLInputElement>();
-
-  const imapPorts: Record<Security, number> = { implicitTls: 993, startTls: 143, insecure: 143 };
-  const smtpPorts: Record<Security, number> = { implicitTls: 465, startTls: 587, insecure: 25 };
 
   /** The provider sign-in page this build can open for the address, if any. */
   const provider = $derived(info?.oauth && info.oauthAvailable ? info.oauth : null);
@@ -90,12 +87,8 @@
   }
 
   function securityChanged(which: "imap" | "smtp") {
-    // Keep a custom port; only swap one of the standard ports.
-    if (which === "imap") {
-      if (Object.values(imapPorts).includes(imap.port)) imap.port = imapPorts[imap.security];
-    } else if (Object.values(smtpPorts).includes(smtp.port)) {
-      smtp.port = smtpPorts[smtp.security];
-    }
+    if (which === "imap") imap.port = portFor(imap, imapPorts);
+    else smtp.port = portFor(smtp, smtpPorts);
   }
 
   const canSignIn = $derived(
@@ -124,7 +117,7 @@
     } catch (err) {
       if (stopped) return;
       error = errorText(err);
-      if (/could not reach|timed out|secure connection|STARTTLS/i.test(error)) showServers = true;
+      if (serverProblem.test(error)) showServers = true;
     } finally {
       busy = false;
       waitingForBrowser = false;
@@ -223,9 +216,7 @@
             <input bind:value={imap.host} placeholder="imap.example.com" aria-label="IMAP server" />
             <input type="number" bind:value={imap.port} min="1" max="65535" aria-label="IMAP port" class="port" />
             <select bind:value={imap.security} onchange={() => securityChanged("imap")} aria-label="IMAP security">
-              <option value="implicitTls">SSL/TLS</option>
-              <option value="startTls">STARTTLS</option>
-              <option value="insecure">None (unsafe)</option>
+              {#each securityChoices as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
             </select>
           </div>
         </fieldset>
@@ -235,9 +226,7 @@
             <input bind:value={smtp.host} placeholder="smtp.example.com" aria-label="SMTP server" />
             <input type="number" bind:value={smtp.port} min="1" max="65535" aria-label="SMTP port" class="port" />
             <select bind:value={smtp.security} onchange={() => securityChanged("smtp")} aria-label="SMTP security">
-              <option value="implicitTls">SSL/TLS</option>
-              <option value="startTls">STARTTLS</option>
-              <option value="insecure">None (unsafe)</option>
+              {#each securityChoices as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
             </select>
           </div>
         </fieldset>

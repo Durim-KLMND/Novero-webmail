@@ -497,6 +497,55 @@ fn announce(app: &AppHandle, id: AccountId, new_mail: &[NewMail]) {
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
+/// Shows a sample new-mail notification, after `delay` seconds so there is
+/// time to switch to another window. Shown even when Novero Mail is in front
+/// or notifications are off, since that is what is being tried.
+pub async fn test_notification(app: &AppHandle, several: bool, delay: u64) -> Result<()> {
+    if delay > 0 {
+        tokio::time::sleep(Duration::from_secs(delay.min(60))).await;
+    }
+    let account = app
+        .state::<AppState>()
+        .store
+        .lock()
+        .unwrap()
+        .list_accounts()?
+        .into_iter()
+        .next()
+        .map(|a| a.email)
+        .unwrap_or_else(|| "you@example.com".into());
+    let (title, body) = notification_text(&account, &sample_mail(several));
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| Error::Protocol(format!("Windows didn't show the notification: {e}")))
+}
+
+/// Made-up mail for a test notification: one message, or a handful.
+fn sample_mail(several: bool) -> Vec<NewMail> {
+    let samples = [
+        (
+            "Novero Mail <hello@noveromail.com>",
+            "This is how new mail looks",
+        ),
+        ("Ann Lee <ann@example.com>", "Lunch on Friday?"),
+        ("Sam Patel <sam@example.com>", "Notes from today's meeting"),
+        ("Billing <billing@example.com>", "Your receipt"),
+        ("Jo Kim <jo@example.com>", "Photos from the weekend"),
+    ];
+    samples
+        .iter()
+        .take(if several { samples.len() } else { 1 })
+        .map(|(from, subject)| NewMail {
+            id: 0,
+            from: Some((*from).into()),
+            subject: Some((*subject).into()),
+        })
+        .collect()
+}
+
 /// The title and text of a new-mail notification: the message itself when
 /// one arrived, else a count and the newest few subjects.
 fn notification_text(account: &str, new_mail: &[NewMail]) -> (String, String) {
@@ -576,6 +625,18 @@ mod tests {
         assert_eq!((title.as_str(), body.as_str()), ("Ann Lee", "Lunch?"));
         let (title, _) = notification_text("me@x", &[mail("ann@x", "")]);
         assert_eq!(title, "ann@x");
+    }
+
+    #[test]
+    fn test_notifications_look_like_real_ones() {
+        let (title, body) = notification_text("me@x", &sample_mail(false));
+        assert_eq!(
+            (title.as_str(), body.as_str()),
+            ("Novero Mail", "This is how new mail looks")
+        );
+        let (title, body) = notification_text("me@x", &sample_mail(true));
+        assert_eq!(title, "5 new messages for me@x");
+        assert!(body.ends_with("and 2 more"));
     }
 
     #[test]
