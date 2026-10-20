@@ -4,7 +4,7 @@
 use mail_core::{AccountId, Result, Signature, Template};
 use mail_store::Store;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::state::AppState;
 
@@ -41,6 +41,8 @@ pub struct Settings {
     pub update_channel: Channel,
     /// After a crash, offer to send a report. Nothing is sent without asking.
     pub crash_reports: bool,
+    /// Windows draw Novero Mail's own title bar instead of the Windows one.
+    pub custom_titlebar: bool,
 }
 
 impl Default for Settings {
@@ -52,6 +54,7 @@ impl Default for Settings {
             auto_update: true,
             update_channel: Channel::Stable,
             crash_reports: true,
+            custom_titlebar: true,
         }
     }
 }
@@ -81,8 +84,20 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<Settings> {
-    settings.save(&state.store.lock().unwrap())?;
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<Settings> {
+    let before = {
+        let store = state.store.lock().unwrap();
+        let before = Settings::load(&store);
+        settings.save(&store)?;
+        before
+    };
+    if before.custom_titlebar != settings.custom_titlebar {
+        crate::window::set_custom_titlebar(&app, settings.custom_titlebar);
+    }
     Ok(settings)
 }
 
@@ -181,6 +196,7 @@ mod tests {
         let loaded = Settings::load(&store);
         assert_eq!(loaded.theme, Theme::Dark);
         assert!(loaded.conversations && loaded.notifications && loaded.auto_update);
+        assert!(loaded.custom_titlebar);
         assert_eq!(loaded.update_channel, Channel::Stable);
         let off = Settings {
             notifications: false,

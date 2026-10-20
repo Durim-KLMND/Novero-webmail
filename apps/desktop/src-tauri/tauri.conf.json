@@ -10,16 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Novero Mail",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 500,
-        "label": "main"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-src 'self' about:; connect-src ipc: http://ipc.localhost"
     }

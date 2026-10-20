@@ -34,6 +34,7 @@
   import ListFilter from "@lucide/svelte/icons/list-filter";
   import ListOrdered from "@lucide/svelte/icons/list-ordered";
   import LogIn from "@lucide/svelte/icons/log-in";
+  import Maximize from "@lucide/svelte/icons/square";
   import MapPin from "@lucide/svelte/icons/map-pin";
   import Mail from "@lucide/svelte/icons/mail";
   import MailOpen from "@lucide/svelte/icons/mail-open";
@@ -44,6 +45,7 @@
   import PenLine from "@lucide/svelte/icons/pen-line";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Power from "@lucide/svelte/icons/power";
+  import Minus from "@lucide/svelte/icons/minus";
   import Plus from "@lucide/svelte/icons/plus";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import RemoveFormatting from "@lucide/svelte/icons/remove-formatting";
@@ -107,6 +109,9 @@
     edit: Pencil,
     power: Power,
     plus: Plus,
+    minimize: Minus,
+    maximize: Maximize,
+    restore: Copy,
     run: Play,
     refresh: RefreshCw,
     "clear-formatting": RemoveFormatting,

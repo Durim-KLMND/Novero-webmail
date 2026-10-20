@@ -6,6 +6,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api, errorText, type Account, type ComposerOutcome, type Draft } from "./api";
   import Composer from "./Composer.svelte";
+  import TitleBar from "./TitleBar.svelte";
   import Toasts from "./Toasts.svelte";
   import { applyTheme } from "./theme";
 
@@ -60,6 +61,7 @@
     <div class="center"><span class="spinner"></span></div>
   {/if}
 </main>
+<TitleBar title={draft?.subject.trim() || "New message"} />
 <Toasts />
 
 <style>

@@ -222,6 +222,8 @@ export interface Settings {
   updateChannel: UpdateChannel;
   /** After a crash, offer to send a report. */
   crashReports: boolean;
+  /** Draw Novero Mail's own title bar instead of the Windows one. */
+  customTitlebar: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -231,6 +233,7 @@ export const defaultSettings: Settings = {
   autoUpdate: true,
   updateChannel: "stable",
   crashReports: true,
+  customTitlebar: true,
 };
 
 /** A newer version, downloaded and ready to install. */

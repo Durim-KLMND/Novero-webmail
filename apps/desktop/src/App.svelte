@@ -5,6 +5,7 @@
   import MailView from "./lib/MailView.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
   import ComposerWindow from "./lib/ComposerWindow.svelte";
+  import TitleBar from "./lib/TitleBar.svelte";
 
   /** Set in a window opened for one draft ("New message in a new window"). */
   const composeId = Number(new URLSearchParams(location.search).get("compose")) || null;
@@ -50,6 +51,9 @@
   {/if}
 {/if}
 
+{#if composeId == null}
+  <TitleBar title="Novero Mail" />
+{/if}
 <ContextMenu />
 
 <style>
