@@ -13,7 +13,7 @@ use mail_core::{
     Security,
 };
 use mail_store::{NewDraft, Store};
-use mail_sync::{ImapSession, push_changes, sync_folder};
+use mail_sync::{IdleChange, ImapSession, push_changes, sync_folder};
 
 /// Alice's password on the test servers.
 fn secret() -> Secret {
@@ -353,7 +353,11 @@ async fn idle_wakes_when_mail_arrives() {
     assert!(session.has("IDLE"));
     session.select(&folder).await.unwrap();
     let (session, changed) = session.idle(Duration::from_millis(300)).await.unwrap();
-    assert!(!changed, "nothing happened, so the wait times out");
+    assert_eq!(
+        changed,
+        IdleChange::Nothing,
+        "nothing happened, so the wait times out"
+    );
 
     let name = folder.clone();
     let deliver = tokio::spawn(async move {
@@ -362,9 +366,23 @@ async fn idle_wakes_when_mail_arrives() {
         other.append(&name, None, &raw("idle-1")).await.unwrap();
         other.logout().await.unwrap();
     });
-    let (session, changed) = session.idle(Duration::from_secs(10)).await.unwrap();
+    let (mut session, changed) = session.idle(Duration::from_secs(10)).await.unwrap();
     deliver.await.unwrap();
-    assert!(changed, "new mail ends the wait");
+    assert_eq!(changed, IdleChange::Mail, "new mail ends the wait");
+
+    // A message marked read elsewhere is only a flag change.
+    session.select(&folder).await.unwrap();
+    let name = folder.clone();
+    let mark = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let mut other = connect().await;
+        other.select(&name).await.unwrap();
+        other.set_flag("1", FlagKind::Seen, true).await.unwrap();
+        other.logout().await.unwrap();
+    });
+    let (session, changed) = session.idle(Duration::from_secs(10)).await.unwrap();
+    mark.await.unwrap();
+    assert_eq!(changed, IdleChange::Flags);
     session.logout().await.unwrap();
 
     drop_folder(&folder).await;

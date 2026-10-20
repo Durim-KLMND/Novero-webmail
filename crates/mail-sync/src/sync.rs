@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use mail_core::{
     Account, AccountId, Error, Event, FolderId, FolderRole, Op, Result, Secret, SyncStage,
 };
-use mail_store::Store;
+use mail_store::{QueuedOp, Store};
 
 use crate::ImapSession;
 use crate::drafts::upload_drafts;
@@ -326,32 +326,77 @@ pub async fn replay_ops(
 ) -> Result<ReplayOutcome> {
     let queued = store.lock().unwrap().pending_ops(account)?;
     let mut outcome = ReplayOutcome::default();
-    for item in queued {
-        match apply(session, &item.op).await {
+    for (ids, op) in batch_ops(queued) {
+        let finish = |store: &Mutex<Store>| -> Result<()> {
+            let store = store.lock().unwrap();
+            ids.iter().try_for_each(|id| store.finish_op(*id))
+        };
+        match apply(session, &op).await {
             Ok(applied) => {
-                store.lock().unwrap().finish_op(item.id)?;
+                finish(store)?;
                 if applied {
-                    outcome.applied += 1;
-                    if let Op::Move { to, .. } = &item.op {
+                    outcome.applied += ids.len() as u32;
+                    if let Op::Move { to, .. } = &op {
                         touch(&mut outcome.touched, to);
                     }
                 }
             }
             Err(Error::Rejected(reason)) => {
-                store.lock().unwrap().finish_op(item.id)?;
+                finish(store)?;
                 outcome.rejected.push(reason);
-                touch(&mut outcome.touched, item.op.folder());
-                if let Op::SetFlag { folder, uids, .. } = &item.op {
+                touch(&mut outcome.touched, op.folder());
+                if let Op::SetFlag { folder, uids, .. } = &op {
                     restore_flags(store, session, account, folder, uids).await?;
                 }
             }
             Err(err) => {
-                store.lock().unwrap().op_failed(item.id, &err.to_string())?;
+                let store = store.lock().unwrap();
+                for id in &ids {
+                    store.op_failed(*id, &err.to_string())?;
+                }
                 return Err(err);
             }
         }
     }
     Ok(outcome)
+}
+
+/// Joins runs of the same flag change in the same folder, such as messages
+/// marked read one by one, into one command; everything else stays in order.
+/// Returns each batch with the queue ids it covers.
+fn batch_ops(queued: Vec<QueuedOp>) -> Vec<(Vec<i64>, Op)> {
+    let mut batches: Vec<(Vec<i64>, Op)> = Vec::new();
+    for item in queued {
+        if let Some((
+            ids,
+            Op::SetFlag {
+                folder,
+                uid_validity,
+                uids,
+                flag,
+                value,
+            },
+        )) = batches.last_mut()
+            && let Op::SetFlag {
+                folder: f,
+                uid_validity: v,
+                uids: more,
+                flag: k,
+                value: on,
+            } = &item.op
+            && (f, v, k, on) == (&*folder, &*uid_validity, &*flag, &*value)
+        {
+            ids.push(item.id);
+            for uid in more {
+                if !uids.contains(uid) {
+                    uids.push(*uid);
+                }
+            }
+            continue;
+        }
+        batches.push((vec![item.id], item.op));
+    }
+    batches
 }
 
 /// Runs one change on the server. Returns false when it no longer applies
@@ -565,4 +610,53 @@ pub async fn fetch_message(
     save_and_index(store, message, &raw)?;
     let _ = session.logout().await;
     Ok(raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use mail_core::{FlagKind, Op};
+    use mail_store::QueuedOp;
+
+    use super::batch_ops;
+
+    fn seen(id: i64, folder: &str, uid: u32, value: bool) -> QueuedOp {
+        QueuedOp {
+            id,
+            op: Op::SetFlag {
+                folder: folder.into(),
+                uid_validity: Some(1),
+                uids: vec![uid],
+                flag: FlagKind::Seen,
+                value,
+            },
+            attempts: 0,
+        }
+    }
+
+    #[test]
+    fn messages_read_one_by_one_go_as_one_command() {
+        let moved = QueuedOp {
+            id: 4,
+            op: Op::Move {
+                folder: "INBOX".into(),
+                uid_validity: Some(1),
+                uids: vec![9],
+                to: "Archive".into(),
+            },
+            attempts: 0,
+        };
+        let batches = batch_ops(vec![
+            seen(1, "INBOX", 5, true),
+            seen(2, "INBOX", 6, true),
+            seen(3, "INBOX", 5, true),
+            moved.clone(),
+            seen(5, "INBOX", 7, true),
+            seen(6, "INBOX", 7, false),
+            seen(7, "Work", 8, false),
+        ]);
+        let ids: Vec<Vec<i64>> = batches.iter().map(|(ids, _)| ids.clone()).collect();
+        assert_eq!(ids, [vec![1, 2, 3], vec![4], vec![5], vec![6], vec![7]]);
+        assert_eq!(batches[0].1.uids(), [5, 6]);
+        assert_eq!(batches[1].1, moved.op);
+    }
 }
