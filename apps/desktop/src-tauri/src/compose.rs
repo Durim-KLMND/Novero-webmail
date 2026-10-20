@@ -54,8 +54,13 @@ pub fn with_signature(body: &str, signature: &str) -> String {
 
 /// A reply to a cached message, from the account it arrived in.
 #[tauri::command]
-pub async fn reply_draft(state: State<'_, AppState>, message: i64, all: bool) -> Result<Draft> {
-    let (account, raw) = raw_message(&state, message).await?;
+pub async fn reply_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    message: i64,
+    all: bool,
+) -> Result<Draft> {
+    let (account, raw) = raw_message(&app, message).await?;
     let own: Vec<String> = state
         .store
         .lock()
@@ -77,8 +82,12 @@ pub async fn reply_draft(state: State<'_, AppState>, message: i64, all: bool) ->
 
 /// A forward of a cached message, attachments included.
 #[tauri::command]
-pub async fn forward_draft(state: State<'_, AppState>, message: i64) -> Result<Draft> {
-    let (account, raw) = raw_message(&state, message).await?;
+pub async fn forward_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    message: i64,
+) -> Result<Draft> {
+    let (account, raw) = raw_message(&app, message).await?;
     let mut prefill = mail_mime::forward(&raw)?;
     prefill.fields.body = with_signature(&prefill.fields.body, &account.reply_signature);
     create(&state, account.id, &account.email, prefill, None)
@@ -87,8 +96,8 @@ pub async fn forward_draft(state: State<'_, AppState>, message: i64) -> Result<D
 /// Opens a message from the Drafts folder for editing. If this device has a
 /// newer version of it, that one opens instead.
 #[tauri::command]
-pub async fn open_draft(state: State<'_, AppState>, message: i64) -> Result<Draft> {
-    let (account, raw) = raw_message(&state, message).await?;
+pub async fn open_draft(app: AppHandle, state: State<'_, AppState>, message: i64) -> Result<Draft> {
+    let (account, raw) = raw_message(&app, message).await?;
     let message_id = mail_mime::message_id_of(&raw);
     if let Some(id) = &message_id
         && let Some(draft) = state

@@ -56,6 +56,8 @@ pub struct AppState {
     /// When each account last sent changes to the server, so the server
     /// telling us about them again can be ignored.
     pushed: Mutex<HashMap<AccountId, tokio::time::Instant>>,
+    /// The connection each account keeps open to download messages as they open.
+    pub readers: crate::reader::Readers,
     /// Ends the browser sign-in that is waiting, when the person cancels.
     pub sign_in: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
@@ -77,6 +79,7 @@ impl AppState {
             workers: Mutex::new(HashMap::new()),
             tokens: Mutex::new(HashMap::new()),
             pushed: Mutex::new(HashMap::new()),
+            readers: Default::default(),
             sign_in: Mutex::new(None),
         })
     }
@@ -175,6 +178,7 @@ pub fn stop_account(app: &AppHandle, id: AccountId) {
             task.abort();
         }
     }
+    state.readers.close(id);
 }
 
 /// Asks the account's push task to send queued changes now.

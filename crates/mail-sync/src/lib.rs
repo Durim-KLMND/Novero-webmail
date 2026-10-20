@@ -12,6 +12,6 @@ pub use drafts::upload_drafts;
 pub use imap::{FolderStatus, IdleChange, ImapSession};
 pub use mail_core::{Error, Result};
 pub use sync::{
-    NewMail, ReplayOutcome, Scope, SyncReport, fetch_message, push_changes, replay_ops,
-    sync_account, sync_folder,
+    NewMail, ReplayOutcome, Scope, SyncReport, cached_message, download_message, download_messages,
+    fetch_message, push_changes, replay_ops, sync_account, sync_folder,
 };
