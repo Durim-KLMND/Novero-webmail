@@ -346,25 +346,41 @@ impl Store {
         copy: &[u8],
         recipients: &[String],
     ) -> Result<i64> {
+        let id = self.queue_message(
+            draft.account,
+            &draft.message_id,
+            &draft.fields.subject,
+            raw,
+            copy,
+            recipients,
+        )?;
+        self.discard_draft(draft.id)?;
+        Ok(id)
+    }
+
+    /// Queues a message that isn't a draft, such as an answer to an invitation.
+    pub fn queue_message(
+        &mut self,
+        account: AccountId,
+        message_id: &str,
+        subject: &str,
+        raw: &[u8],
+        copy: &[u8],
+        recipients: &[String],
+    ) -> Result<i64> {
         let tx = self.conn.transaction().map_err(storage)?;
         tx.execute(
             "INSERT INTO outbox (account_id, message_id, subject, recipients) \
              VALUES (?1, ?2, ?3, ?4)",
-            params![
-                draft.account.0,
-                draft.message_id,
-                draft.fields.subject.trim(),
-                to_json(&recipients)?
-            ],
+            params![account.0, message_id, subject.trim(), to_json(&recipients)?],
         )
         .map_err(storage)?;
         let id = tx.last_insert_rowid();
-        let dir = self.files.join(draft.account.0.to_string()).join("outbox");
+        let dir = self.files.join(account.0.to_string()).join("outbox");
         fs::create_dir_all(&dir).map_err(io)?;
         fs::write(dir.join(format!("{id}.eml")), raw).map_err(io)?;
         fs::write(dir.join(format!("{id}.copy.eml")), copy).map_err(io)?;
         tx.commit().map_err(storage)?;
-        self.discard_draft(draft.id)?;
         Ok(id)
     }
 

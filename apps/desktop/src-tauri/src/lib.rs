@@ -5,6 +5,7 @@ mod commands;
 mod compose;
 mod crash;
 mod files;
+mod invites;
 mod links;
 mod rules;
 mod settings;
@@ -111,6 +112,8 @@ pub fn run() {
             calendar::save_event,
             calendar::delete_event,
             calendar::skip_occurrence,
+            invites::message_invite,
+            invites::answer_invite,
             rules::list_rules,
             rules::save_rule,
             rules::delete_rule,

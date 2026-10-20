@@ -390,7 +390,7 @@ fn unsent_item(state: &AppState, id: i64) -> Result<OutboxItem> {
     Ok(item)
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

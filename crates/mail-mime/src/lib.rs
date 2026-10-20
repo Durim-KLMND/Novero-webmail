@@ -7,6 +7,7 @@
 
 mod compose;
 mod html;
+mod invite;
 mod mailto;
 mod parse;
 
@@ -18,6 +19,7 @@ pub use html::{
     InlineImage, SanitizedHtml, clean_compose_html, inline_images, restore_inline_images,
     sanitize_html,
 };
+pub use invite::{InviteAnswer, build_invite_answer, calendar_text};
 pub use mail_core::{Error, Result};
 pub use mailto::parse_mailto;
 pub use parse::{
