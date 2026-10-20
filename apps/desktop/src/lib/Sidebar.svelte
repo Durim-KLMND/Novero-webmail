@@ -171,7 +171,6 @@
 </script>
 
 <nav class="sidebar" aria-label="Accounts and folders">
-  <div class="brand">Novero Mail</div>
   <div class="compose" role="group" aria-label="New message">
     <button class="primary main" onclick={() => onCompose(false)} title="New message (C)">New message</button>
     <button
@@ -335,11 +334,6 @@
     flex-direction: column;
     min-height: 0;
   }
-  .brand {
-    font-weight: 700;
-    font-size: 15px;
-    padding: 16px 16px 8px;
-  }
   .scroll {
     flex: 1;
     overflow-y: auto;
@@ -496,9 +490,10 @@
   .all {
     margin-bottom: 8px;
   }
+  /* The title bar already names the app, so the list starts here. */
   .compose {
     display: flex;
-    margin: 4px 12px 12px;
+    margin: 12px 12px 12px;
   }
   .compose .main {
     flex: 1;
