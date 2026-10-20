@@ -639,7 +639,8 @@
     background: none;
     padding: 0;
     height: 26px;
-    border-radius: 13px;
+    margin: 1px;
+    border-radius: 4px;
     font-size: 12px;
   }
   .mini-day.other {
@@ -820,7 +821,7 @@
     border: none;
     background: none;
     padding: 2px 6px;
-    border-radius: 12px;
+    border-radius: 4px;
     font-size: 12px;
   }
   .cell.today .date,
@@ -917,7 +918,7 @@
   .day-head .num {
     font-size: 16px;
     padding: 0 6px;
-    border-radius: 12px;
+    border-radius: 4px;
   }
   .allday-row {
     border-bottom: 1px solid var(--border);
