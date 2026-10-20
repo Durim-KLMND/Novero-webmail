@@ -493,12 +493,17 @@
     place-items: center;
     z-index: 15;
   }
+  /* The window buttons stay usable while Settings is open. */
+  :global(:root.titlebar) .backdrop {
+    top: var(--titlebar-height);
+  }
   .dialog {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 12px;
-    width: min(760px, calc(100vw - 32px));
-    height: min(560px, calc(100vh - 48px));
+    /* Grows with the window, within reason, and always fits inside it. */
+    width: min(1040px, max(760px, 76vw), calc(100vw - 32px));
+    height: min(820px, max(560px, 82vh), calc(100% - 32px));
     display: grid;
     grid-template-columns: 180px 1fr;
     grid-template-rows: 1fr auto;
@@ -645,6 +650,7 @@
   }
   .row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     margin: 10px 0 6px;
