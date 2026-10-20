@@ -6,7 +6,7 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import Icon from "./Icon.svelte";
-  import { titlebar } from "./titlebar.svelte";
+  import { titlebar } from "./frame.svelte";
 
   interface Props {
     title: string;

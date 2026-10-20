@@ -2,7 +2,7 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 import "./app.css";
 import { applyTheme, cachedTheme } from "./lib/theme";
-import { watchTitlebar } from "./lib/titlebar.svelte";
+import { watchTitlebar } from "./lib/frame.svelte";
 
 applyTheme(cachedTheme());
 watchTitlebar();
