@@ -236,10 +236,24 @@ export const defaultSettings: Settings = {
   customTitlebar: true,
 };
 
-/** A newer version, downloaded and ready to install. */
+/** A newer version. */
 export interface UpdateInfo {
   version: string;
+  /** The release notes, as written on GitHub (see notes.ts). */
   notes: string | null;
+}
+
+export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready" | "installing";
+
+/** Where updates are at (src-tauri/src/updates.rs). */
+export interface UpdateStatus {
+  phase: UpdatePhase;
+  /** The version found, from "available" on. */
+  update: UpdateInfo | null;
+  downloaded: number;
+  total: number | null;
+  /** When a check last reached the server, in seconds since 1970. */
+  lastChecked: number | null;
 }
 
 export interface MessagePage {
@@ -504,7 +518,8 @@ export const api = {
   updatesAvailable: () => invoke<boolean>("updates_available"),
   checkForUpdate: (channel: UpdateChannel) =>
     invoke<UpdateInfo | null>("check_for_update", { channel }),
-  readyUpdate: () => invoke<UpdateInfo | null>("ready_update"),
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  downloadUpdate: () => invoke<void>("download_update"),
   installUpdate: () => invoke<void>("install_update"),
   listCalendars: () => invoke<Calendar[]>("list_calendars"),
   saveCalendar: (calendar: Calendar) => invoke<Calendar>("save_calendar", { calendar }),
@@ -537,9 +552,9 @@ export function onFileDrop(handler: (event: FileDrop) => void): Promise<Unlisten
   return getCurrentWebviewWindow().listen<FileDrop>("file-drop", (e) => handler(e.payload));
 }
 
-/** A downloaded update is ready to install. */
-export function onUpdateReady(handler: (update: UpdateInfo) => void): Promise<UnlistenFn> {
-  return listen<UpdateInfo>("update-ready", (e) => handler(e.payload));
+/** Updates were looked for, found, downloaded or installed. */
+export function onUpdateStatus(handler: (status: UpdateStatus) => void): Promise<UnlistenFn> {
+  return listen<UpdateStatus>("update-status", (e) => handler(e.payload));
 }
 
 /** A mailto: link was opened; `api.takeMailto` returns it. */

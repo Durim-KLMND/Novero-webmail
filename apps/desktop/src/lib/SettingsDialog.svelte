@@ -8,8 +8,10 @@
     type Settings,
     type Theme,
     type UpdateChannel,
-    type UpdateInfo,
+    type UpdateStatus,
   } from "./api";
+  import { listDate } from "./format";
+  import { downloadText } from "./notes";
   import { applyTheme } from "./theme";
   import Icon, { type IconName } from "./Icon.svelte";
   import SignatureSettings from "./SignatureSettings.svelte";
@@ -21,8 +23,10 @@
     settings: Settings;
     /** Closed; `saved` holds the new settings when anything was saved. */
     onClose: (saved: Settings | null, signaturesChanged: boolean) => void;
-    /** An update was found with Check now. */
-    onUpdate: (update: UpdateInfo) => void;
+    /** Where updates are at, and what to do with a newer version. */
+    update: UpdateStatus | null;
+    onInstallUpdate: () => void;
+    onWhatsNew: () => void;
     /** Open the rules, over this dialog. */
     onRules: () => void;
     /** These leave Settings (after saving it) for a screen of their own. */
@@ -37,7 +41,9 @@
     accounts,
     settings,
     onClose,
-    onUpdate,
+    update,
+    onInstallUpdate,
+    onWhatsNew,
     onRules,
     onAddAccount,
     onSignInAgain,
@@ -126,23 +132,46 @@
     tick().then(() => dialog?.querySelector<HTMLElement>(".nav button.active")?.focus());
   }
 
+  /** Check now downloads what it finds, whatever the setting says. */
   async function checkNow() {
     checking = true;
     checkResult = "";
     try {
-      const found = await api.checkForUpdate(draft.updateChannel);
-      if (found) {
-        checkResult = `Version ${found.version} is ready to install.`;
-        onUpdate(found);
-      } else {
-        checkResult = "You have the newest version.";
-      }
+      await api.checkForUpdate(draft.updateChannel);
     } catch (err) {
       checkResult = `Couldn't check for updates. ${errorText(err)}`;
     } finally {
       checking = false;
     }
   }
+
+  async function download() {
+    checkResult = "";
+    try {
+      await api.downloadUpdate();
+    } catch (err) {
+      checkResult = `Couldn't download the update. ${errorText(err)}`;
+    }
+  }
+
+  const updateText = $derived.by(() => {
+    const version = update?.update?.version;
+    switch (update?.phase) {
+      case "checking":
+        return "Looking for updates…";
+      case "available":
+        return `Version ${version} is out.`;
+      case "downloading":
+        return `Downloading version ${version}… ${downloadText(update.downloaded, update.total)}`;
+      case "ready":
+        return `Version ${version} is ready. Restarting installs it.`;
+      case "installing":
+        return "Restarting…";
+      default:
+        return update?.lastChecked ? "You have the newest version." : "";
+    }
+  });
+  const busy = $derived(checking || update?.phase === "checking" || update?.phase === "downloading" || update?.phase === "installing");
 
   /** The account whose servers are being edited. */
   let editing = $state<number | null>(null);
@@ -391,7 +420,11 @@
               <input type="checkbox" bind:checked={draft.autoUpdate} />
               <span>
                 Download updates automatically
-                <small class="quiet">You choose when to restart and install them.</small>
+                <small class="quiet">
+                  {draft.autoUpdate
+                    ? "You choose when to restart and install them."
+                    : "You're told when a new version is out, and download it when you like."}
+                </small>
               </span>
             </label>
             <div class="choices channel">
@@ -403,10 +436,24 @@
               {/each}
             </div>
             <small class="quiet">{channels.find((c) => c.value === draft.updateChannel)?.hint}</small>
-            <div class="row">
-              <button onclick={checkNow} disabled={checking}>{checking ? "Checking…" : "Check now"}</button>
-              <span class="quiet" role="status">{checkResult}</span>
+            <div class="update-state" role="status">
+              {#if checkResult}<span class="error">{checkResult}</span>{:else if updateText}<span>{updateText}</span>{/if}
+              {#if update?.phase === "downloading"}
+                <progress max={update.total ?? undefined} value={update.total ? update.downloaded : undefined} aria-label="Download progress"></progress>
+              {/if}
             </div>
+            <div class="row">
+              {#if update?.phase === "available"}
+                <button class="primary" onclick={download}>Download</button>
+              {:else if update?.phase === "ready"}
+                <button class="primary" onclick={() => saveThen(onInstallUpdate)}>Restart to update</button>
+              {/if}
+              <button onclick={checkNow} disabled={busy}>{busy && update?.phase !== "installing" ? "Checking…" : "Check now"}</button>
+              {#if update?.update && update.phase !== "idle" && update.phase !== "checking"}
+                <button class="link" onclick={onWhatsNew}>What's new</button>
+              {/if}
+            </div>
+            {#if update?.lastChecked}<small class="quiet">Last checked {listDate(update.lastChecked)}</small>{/if}
           {:else}
             <p class="quiet">This copy of Novero Mail can't update itself. Download new versions from the releases page.</p>
           {/if}
@@ -587,6 +634,14 @@
   small .link {
     font-size: inherit;
     padding: 0;
+  }
+  .update-state {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .update-state:empty {
+    display: none;
   }
   .row {
     display: flex;

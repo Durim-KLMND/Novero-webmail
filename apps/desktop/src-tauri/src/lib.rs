@@ -154,7 +154,8 @@ pub fn run() {
             crash::send_crash_report,
             updates::updates_available,
             updates::check_for_update,
-            updates::ready_update,
+            updates::update_status,
+            updates::download_update,
             updates::install_update,
         ])
         .run(tauri::generate_context!())
