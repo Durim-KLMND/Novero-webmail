@@ -189,12 +189,49 @@ pub struct Account {
     pub imap: Endpoint,
     pub smtp: Endpoint,
     pub auth: AuthMethod,
-    /// Plain-text signature for new messages, replies and forwards.
+    /// Plain-text signature for new messages.
     #[serde(default)]
     pub signature: String,
     /// The same signature with formatting, or empty when it has none.
     #[serde(default)]
     pub signature_html: String,
+    /// The signature for replies and forwards, plain and formatted.
+    #[serde(default)]
+    pub reply_signature: String,
+    #[serde(default)]
+    pub reply_signature_html: String,
+    /// Which of the account's signatures new messages and replies start
+    /// with; `None` for no signature.
+    #[serde(default)]
+    pub signature_new: Option<i64>,
+    #[serde(default)]
+    pub signature_reply: Option<i64>,
+}
+
+/// One of an account's signatures. `id` is 0 for one not saved yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Signature {
+    pub id: i64,
+    pub account: AccountId,
+    pub name: String,
+    /// Plain text.
+    pub text: String,
+    /// With formatting, or empty when it has none.
+    pub html: String,
+}
+
+/// A saved message to start new ones from. `id` is 0 for one not saved yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Template {
+    pub id: i64,
+    pub name: String,
+    pub subject: String,
+    /// Plain text.
+    pub text: String,
+    /// With formatting, or empty when it has none.
+    pub html: String,
 }
 
 /// What is needed to create an account.

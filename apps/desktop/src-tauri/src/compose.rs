@@ -71,7 +71,7 @@ pub async fn reply_draft(state: State<'_, AppState>, message: i64, all: bool) ->
         ReplyMode::Sender
     };
     let mut prefill = mail_mime::reply(&raw, mode, &own)?;
-    prefill.fields.body = with_signature(&prefill.fields.body, &account.signature);
+    prefill.fields.body = with_signature(&prefill.fields.body, &account.reply_signature);
     create(&state, account.id, &account.email, prefill, Some(message))
 }
 
@@ -80,7 +80,7 @@ pub async fn reply_draft(state: State<'_, AppState>, message: i64, all: bool) ->
 pub async fn forward_draft(state: State<'_, AppState>, message: i64) -> Result<Draft> {
     let (account, raw) = raw_message(&state, message).await?;
     let mut prefill = mail_mime::forward(&raw)?;
-    prefill.fields.body = with_signature(&prefill.fields.body, &account.signature);
+    prefill.fields.body = with_signature(&prefill.fields.body, &account.reply_signature);
     create(&state, account.id, &account.email, prefill, None)
 }
 

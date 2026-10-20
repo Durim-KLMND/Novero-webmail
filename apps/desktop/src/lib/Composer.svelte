@@ -2,13 +2,26 @@
   import Icon from "./Icon.svelte";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
-  import { api, errorText, onFileDrop, type Account, type ComposerOutcome, type Draft, type DraftFields, type FileDrop } from "./api";
+  import {
+    api,
+    errorText,
+    onFileDrop,
+    type Account,
+    type ComposerOutcome,
+    type Draft,
+    type DraftFields,
+    type FileDrop,
+    type Signature,
+    type Template,
+  } from "./api";
   import { fileSize } from "./format";
   import RichEditor from "./RichEditor.svelte";
   import AddressInput from "./AddressInput.svelte";
   import { openMenu, toggleMenuUnder } from "./menus.svelte";
   import { laterChoices } from "./later";
   import PickTime from "./PickTime.svelte";
+  import NameDialog from "./NameDialog.svelte";
+  import { toast } from "./toast.svelte";
   import { textToHtml } from "./richtext";
 
   interface Props {
@@ -57,12 +70,39 @@
 
   const account = $derived(accounts.find((a) => a.id === draft.account));
 
+  /** Every account's signatures, and the templates, for the menus. */
+  let signatures = $state<Signature[]>([]);
+  let templates = $state<Template[]>([]);
+  /** The signature in the text now: its id, plain text and formatted text. */
+  let signature = $state<{ id: number | null; text: string; html: string }>({ id: null, text: "", html: "" });
+  let naming = $state(false);
+  const mySignatures = $derived(signatures.filter((s) => s.account === draft.account));
+
+  /** The signature a new message (or, for `reply`, a reply) from `a` starts with. */
+  function startingSignature(a: Account | undefined, reply: boolean) {
+    if (!a) return { id: null, text: "", html: "" };
+    return reply
+      ? { id: a.signatureReply, text: a.replySignature, html: a.replySignatureHtml }
+      : { id: a.signatureNew, text: a.signature, html: a.signatureHtml };
+  }
+
   onMount(async () => {
     await tick();
-    // A new draft has the plain signature; a formatted one takes its place.
-    if (!start.html && account?.signatureHtml) {
-      editor?.replaceSignature(account.signature, account.signature, account.signatureHtml);
+    // Which signature the draft started with: replies and forwards have
+    // their own. A new draft has it as plain text; formatting takes its place.
+    const reply = Boolean(draft.inReplyTo);
+    const found = [startingSignature(account, reply), startingSignature(account, !reply)].find(
+      (s) => s.id != null && editor?.hasSignature(s.text),
+    );
+    if (found) {
+      signature = found;
+      if (!start.html && found.html) editor?.replaceSignature(found.text, found.text, found.html);
     }
+    Promise.all([api.listSignatures(), api.listTemplates()])
+      .then(([s, t]) => ([signatures, templates] = [s, t]))
+      .catch(() => {
+        // The menus just have less in them.
+      });
     if (draft.inReplyTo && fields.to) {
       // A reply: start typing above the quoted text.
       editor?.focusStart();
@@ -258,15 +298,61 @@
     }
   }
 
-  /** Replaces the old sender's signature with the new one's, if it is still in the text. */
-  function swapSignature(from: Account | undefined, to: Account | undefined) {
-    editor?.replaceSignature(from?.signature ?? "", to?.signature ?? "", to?.signatureHtml ?? "");
+  /** Puts another signature in place of the one in the text, or adds it. */
+  function useSignature(next: { id: number | null; text: string; html: string }) {
+    editor?.replaceSignature(signature.text, next.text, next.html);
+    signature = next;
+  }
+
+  function signatureMenu(event: MouseEvent) {
+    toggleMenuUnder(event.currentTarget as Element, [
+      ...mySignatures.map((s) => ({
+        label: s.name,
+        icon: signature.id === s.id ? ("check" as const) : undefined,
+        run: () => useSignature(s),
+      })),
+      "separator" as const,
+      {
+        label: "No signature",
+        icon: signature.id == null ? ("check" as const) : undefined,
+        run: () => useSignature({ id: null, text: "", html: "" }),
+      },
+    ]);
+  }
+
+  /** Starts from a template: its text at the cursor, and its subject if there is none yet. */
+  function useTemplate(template: Template) {
+    if (!fields.subject.trim() && template.subject) fields.subject = template.subject;
+    editor?.insertHtml(template.html || textToHtml(template.text));
+    edited();
+  }
+
+  function templateMenu(event: MouseEvent) {
+    toggleMenuUnder(event.currentTarget as Element, [
+      ...templates.map((t) => ({ label: t.name, icon: "template" as const, run: () => useTemplate(t) })),
+      ...(templates.length ? ["separator" as const] : []),
+      { label: "Save as template…", icon: "plus", run: () => (naming = true) },
+    ]);
+  }
+
+  /** Keeps the subject and what was written (not the signature or quote) as a template. */
+  async function saveTemplate(name: string) {
+    naming = false;
+    const { text, html } = editor?.ownText(signature.text) ?? { text: "", html: "" };
+    try {
+      const saved = await api.saveTemplate({ id: 0, name, subject: fields.subject.trim(), text, html });
+      templates = [...templates, saved].sort((a, b) => a.name.localeCompare(b.name));
+      toast(`Saved the template "${saved.name}".`);
+    } catch (err) {
+      error = errorText(err);
+    }
   }
 
   /** Moves the draft to another account: a new draft there, this one deleted. */
   async function changeSender(accountId: number) {
     if (accountId === draft.account) return;
-    swapSignature(account, accounts.find((a) => a.id === accountId));
+    // The old sender's signature gives way to the new one's.
+    useSignature(startingSignature(accounts.find((a) => a.id === accountId), Boolean(draft.inReplyTo)));
     try {
       const moved = await api.newDraft(accountId);
       const saved = await api.saveDraft(moved.id, $state.snapshot(fields), false);
@@ -307,6 +393,24 @@
       ><Icon name="chevron-down" size={14} /></button>
     </div>
     <button onclick={attach} disabled={busy}><Icon name="attachment" />Attach</button>
+    {#if mySignatures.length}
+      <button
+        class="icon-only"
+        onclick={signatureMenu}
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-label="Signature"
+        title="Change the signature"><Icon name="signature" /></button
+      >
+    {/if}
+    <button
+      class="icon-only"
+      onclick={templateMenu}
+      disabled={busy}
+      aria-haspopup="menu"
+      aria-label="Templates"
+      title="Start from a template, or save this message as one"><Icon name="template" /></button
+    >
     <span class="status quiet" aria-live="polite">{status}</span>
     <button onclick={discard} disabled={busy} title="Delete this draft"><Icon name="trash" />Discard</button>
     {#if onPopOut}
@@ -494,3 +598,13 @@
     border-top: 1px solid var(--border);
   }
 </style>
+
+{#if naming}
+  <NameDialog
+    title="Save as template"
+    action="Save"
+    start={fields.subject.trim()}
+    onName={saveTemplate}
+    onCancel={() => (naming = false)}
+  />
+{/if}

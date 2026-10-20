@@ -1,7 +1,7 @@
 //! App preferences, kept in the database so they survive reinstalls of the
 //! UI and are read by the background tasks too.
 
-use mail_core::{AccountId, Result};
+use mail_core::{AccountId, Result, Signature, Template};
 use mail_store::Store;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -86,26 +86,83 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<S
     Ok(settings)
 }
 
-/// Sets the signature added to the account's new messages.
-/// Sets an account's signature: the plain text, and the formatted version
+/// Every account's signatures.
+#[tauri::command]
+pub fn list_signatures(state: State<'_, AppState>) -> Result<Vec<Signature>> {
+    state.store.lock().unwrap().signatures()
+}
+
+/// Adds or changes a signature: the plain text, and the formatted version
 /// when it has formatting (empty otherwise).
 #[tauri::command]
-pub fn set_signature(
+pub fn save_signature(state: State<'_, AppState>, signature: Signature) -> Result<Signature> {
+    let signature = Signature {
+        name: named(&signature.name, "Signature"),
+        // Trailing blank lines would only push the quote further down.
+        text: signature.text.trim_end().replace("\r\n", "\n"),
+        html: cleaned(&signature.html),
+        ..signature
+    };
+    state.store.lock().unwrap().save_signature(&signature)
+}
+
+#[tauri::command]
+pub fn delete_signature(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.store.lock().unwrap().delete_signature(id)
+}
+
+/// Picks the signatures an account's new messages and replies start with.
+#[tauri::command]
+pub fn set_default_signatures(
     state: State<'_, AppState>,
     account: AccountId,
-    signature: String,
-    html: Option<String>,
+    new: Option<i64>,
+    reply: Option<i64>,
 ) -> Result<()> {
-    // Trailing blank lines would only push the quote further down.
-    let signature = signature.trim_end().replace("\r\n", "\n");
-    let html = html
-        .map(|h| mail_mime::clean_compose_html(&h))
-        .unwrap_or_default();
     state
         .store
         .lock()
         .unwrap()
-        .set_signature(account, &signature, html.trim())
+        .set_default_signatures(account, new, reply)
+}
+
+#[tauri::command]
+pub fn list_templates(state: State<'_, AppState>) -> Result<Vec<Template>> {
+    state.store.lock().unwrap().templates()
+}
+
+/// Adds or changes a template.
+#[tauri::command]
+pub fn save_template(state: State<'_, AppState>, template: Template) -> Result<Template> {
+    let template = Template {
+        name: named(&template.name, "Template"),
+        subject: template.subject.trim().to_owned(),
+        text: template.text.trim_end().replace("\r\n", "\n"),
+        html: cleaned(&template.html),
+        ..template
+    };
+    state.store.lock().unwrap().save_template(&template)
+}
+
+#[tauri::command]
+pub fn delete_template(state: State<'_, AppState>, id: i64) -> Result<()> {
+    state.store.lock().unwrap().delete_template(id)
+}
+
+/// The name typed, or `fallback` when none was.
+fn named(name: &str, fallback: &str) -> String {
+    match name.trim() {
+        "" => fallback.to_owned(),
+        name => name.to_owned(),
+    }
+}
+
+/// Formatted text made safe to keep and send; "" stays "".
+fn cleaned(html: &str) -> String {
+    if html.trim().is_empty() {
+        return String::new();
+    }
+    mail_mime::clean_compose_html(html).trim().to_owned()
 }
 
 #[cfg(test)]

@@ -287,6 +287,10 @@ mod tests {
             auth: Default::default(),
             signature: String::new(),
             signature_html: String::new(),
+            reply_signature: String::new(),
+            reply_signature_html: String::new(),
+            signature_new: None,
+            signature_reply: None,
         };
         assert!(saves_sent_itself(&account("imap.gmail.com")));
         assert!(saves_sent_itself(&account("IMAP.GoogleMail.com")));

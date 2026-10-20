@@ -12,8 +12,8 @@
   } from "./api";
   import { applyTheme } from "./theme";
   import Icon, { type IconName } from "./Icon.svelte";
-  import RichEditor from "./RichEditor.svelte";
-  import { textToHtml } from "./richtext";
+  import SignatureSettings from "./SignatureSettings.svelte";
+  import TemplateSettings from "./TemplateSettings.svelte";
 
   interface Props {
     accounts: Account[];
@@ -33,12 +33,13 @@
   let { accounts, settings, onClose, onUpdate, onRules, onAddAccount, onSignInAgain, onRemoveAccount }: Props =
     $props();
 
-  type Category = "general" | "mail" | "accounts" | "signatures" | "updates" | "privacy";
+  type Category = "general" | "mail" | "accounts" | "signatures" | "templates" | "updates" | "privacy";
   const categories: { id: Category; label: string; icon: IconName }[] = [
     { id: "general", label: "General", icon: "settings" },
     { id: "mail", label: "Mail", icon: "inbox" },
     { id: "accounts", label: "Accounts", icon: "contacts" },
     { id: "signatures", label: "Signatures", icon: "signature" },
+    { id: "templates", label: "Templates", icon: "template" },
     { id: "updates", label: "Updates", icon: "refresh" },
     { id: "privacy", label: "Privacy", icon: "junk" },
   ];
@@ -65,10 +66,8 @@
 
   // svelte-ignore state_referenced_locally
   let draft = $state<Settings>({ ...settings });
-  // svelte-ignore state_referenced_locally
-  let signatures = $state<Record<number, { text: string; html: string }>>(
-    Object.fromEntries(accounts.map((a) => [a.id, { text: a.signature, html: a.signatureHtml }])),
-  );
+  let signatures = $state<SignatureSettings>();
+  let templates = $state<TemplateSettings>();
   let saving = $state(false);
   let error = $state("");
   let dialog = $state<HTMLDivElement>();
@@ -154,13 +153,10 @@
     saving = true;
     error = "";
     try {
-      const changed = accounts.filter((a) => {
-        const sig = signatures[a.id];
-        return sig && (sig.text !== a.signature || sig.html !== a.signatureHtml);
-      });
-      for (const a of changed) await api.setSignature(a.id, signatures[a.id].text, signatures[a.id].html);
+      const changed = (await signatures?.save()) ?? false;
+      await templates?.save();
       const saved = await api.saveSettings($state.snapshot(draft));
-      onClose(saved, changed.length > 0);
+      onClose(saved, changed);
       return true;
     } catch (err) {
       error = errorText(err);
@@ -280,23 +276,8 @@
           <button onclick={() => saveThen(onAddAccount)} disabled={saving}><Icon name="plus" /> Add account</button>
         </div>
         <small class="quiet">Removing an account only removes it from Novero Mail. Mail on the server is not touched.</small>
-      {:else if category === "signatures"}
-        <p class="quiet intro">Added below new messages and replies. Pictures and formatting are kept.</p>
-        {#each accounts as a (a.id)}
-          <div class="sig">
-            <span>
-              {a.displayName}
-              {#if a.displayName !== a.email}<small class="quiet">{a.email}</small>{/if}
-            </span>
-            <RichEditor
-              compact
-              label="Signature for {a.email}"
-              html={signatures[a.id]?.html || textToHtml(signatures[a.id]?.text ?? a.signature)}
-              placeholder="Added below new messages and replies"
-              onChange={(text, html) => (signatures[a.id] = { text, html })}
-            />
-          </div>
-        {/each}
+      {:else if category === "signatures" || category === "templates"}
+        <!-- Shown below, so edits survive switching categories. -->
       {:else if category === "updates"}
         <fieldset>
           {#if canUpdate}
@@ -336,6 +317,8 @@
           </label>
         </fieldset>
       {/if}
+      <div hidden={category !== "signatures"}><SignatureSettings {accounts} bind:this={signatures} /></div>
+      <div hidden={category !== "templates"}><TemplateSettings bind:this={templates} /></div>
     </div>
 
     <div class="footer">
@@ -429,9 +412,6 @@
     font-weight: 600;
     margin-bottom: 8px;
   }
-  .intro {
-    margin: 0 0 12px;
-  }
   .choices {
     display: flex;
     gap: 16px;
@@ -484,13 +464,6 @@
   }
   .danger:hover:not(:disabled) {
     color: var(--danger);
-  }
-  .sig {
-    display: grid;
-    gap: 4px;
-  }
-  .sig + .sig {
-    margin-top: 14px;
   }
   .channel {
     margin: 10px 0 2px;
