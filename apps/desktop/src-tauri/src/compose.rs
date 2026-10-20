@@ -167,6 +167,7 @@ pub async fn open_composer_window(app: AppHandle, id: i64) -> Result<()> {
     .title("New message")
     .inner_size(760.0, 680.0)
     .min_inner_size(480.0, 400.0)
+    .decorations(!crate::window::custom_titlebar(&app))
     .build()
     .map_err(|e| Error::Invalid(format!("The message window could not open: {e}")))?;
     Ok(())

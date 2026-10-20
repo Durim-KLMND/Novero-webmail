@@ -17,6 +17,7 @@
   --note-bg: #fff7e0;
   --success: #15803d;
   --radius: 8px;
+  --titlebar-height: 32px;
   --font: "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   color-scheme: light;
 }
@@ -81,6 +82,11 @@ body {
 
 #app {
   height: 100%;
+}
+
+/* Room for Novero Mail's own title bar (lib/TitleBar.svelte) when it is on. */
+:root.titlebar #app {
+  padding-top: var(--titlebar-height);
 }
 
 button {

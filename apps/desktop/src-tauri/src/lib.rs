@@ -13,6 +13,7 @@ mod settings;
 mod snooze;
 mod state;
 mod updates;
+mod window;
 
 use std::time::Duration;
 
@@ -46,6 +47,7 @@ pub fn run() {
             crash::install(crash::folder(&dir));
             let state = state::AppState::open(&dir)?;
             app.manage(state);
+            window::open_main(app.handle())?;
             app.manage(links::PendingLink::default());
             app.manage(files::Drops::default());
             if let Some(link) = links::from_args(std::env::args()) {

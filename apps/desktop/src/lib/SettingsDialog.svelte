@@ -219,6 +219,16 @@
           </div>
         </fieldset>
         <fieldset>
+          <legend>Title bar</legend>
+          <label class="check">
+            <input type="checkbox" bind:checked={draft.customTitlebar} />
+            <span>
+              Use the Novero Mail title bar
+              <small class="quiet">Matches the app's colours. Turn it off to use the standard Windows title bar.</small>
+            </span>
+          </label>
+        </fieldset>
+        <fieldset>
           <legend>Notifications</legend>
           <label class="check">
             <input type="checkbox" bind:checked={draft.notifications} />
