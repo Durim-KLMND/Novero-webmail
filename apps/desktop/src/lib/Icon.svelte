@@ -39,6 +39,7 @@
   import MailOpen from "@lucide/svelte/icons/mail-open";
   import Mails from "@lucide/svelte/icons/mails";
   import Palette from "@lucide/svelte/icons/palette";
+  import Play from "@lucide/svelte/icons/play";
   import Paperclip from "@lucide/svelte/icons/paperclip";
   import PenLine from "@lucide/svelte/icons/pen-line";
   import Pencil from "@lucide/svelte/icons/pencil";
@@ -106,6 +107,7 @@
     edit: Pencil,
     power: Power,
     plus: Plus,
+    run: Play,
     refresh: RefreshCw,
     "clear-formatting": RemoveFormatting,
     repeat: Repeat,

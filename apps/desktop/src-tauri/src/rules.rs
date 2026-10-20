@@ -1,10 +1,10 @@
 //! Rules on new mail: the commands that edit them, and running them as mail
-//! arrives in the inbox.
+//! arrives in the inbox or, when asked, on the mail already in a folder.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mail_core::rules::{Rule, RuleAction};
-use mail_core::{AccountId, Error, FlagKind, FolderRole, Op, Result};
+use mail_core::{AccountId, Error, FlagKind, FolderId, FolderRole, Op, Result};
 use mail_sync::NewMail;
 use tauri::{AppHandle, Manager, State};
 
@@ -93,8 +93,70 @@ pub fn apply(app: &AppHandle, account: AccountId, new_mail: &[NewMail]) -> Vec<N
         _ => return new_mail.to_vec(),
     };
     let plan = plan(&rules, &messages);
+    let failed = act(app, &state, &plan);
+    new_mail
+        .iter()
+        .filter(|m| {
+            failed.contains(&m.id) || !(plan.read.contains(&m.id) || plan.moves.contains_key(&m.id))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Runs rules on the mail already in a folder: one rule (on or off), or
+/// every rule of the account that is on. Returns how many messages matched.
+#[tauri::command]
+pub async fn run_rules(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    folder: FolderId,
+    rule: Option<i64>,
+) -> Result<usize> {
+    let (source, messages, rules) = {
+        let store = state.store.lock().unwrap();
+        let source = store
+            .folder(folder)?
+            .ok_or_else(|| Error::Invalid("that folder no longer exists".into()))?;
+        let rules: Vec<Rule> = store
+            .list_rules(source.account_id)?
+            .into_iter()
+            .filter(|r| match rule {
+                Some(id) => r.id == id,
+                None => r.enabled,
+            })
+            .collect();
+        (source, store.folder_rule_messages(folder)?, rules)
+    };
+    let mut plan = plan(&rules, &messages);
+    // Mail that is already where a rule would put it stays.
+    plan.moves
+        .retain(|_, action| !already_there(action, source.id, source.role));
+    let failed = act(&app, &state, &plan);
+    let acted: BTreeSet<i64> = plan
+        .read
+        .iter()
+        .chain(&plan.flag)
+        .chain(plan.moves.keys())
+        .filter(|id| !failed.contains(id))
+        .copied()
+        .collect();
+    Ok(acted.len())
+}
+
+/// Whether a moving action would leave mail in `folder` where it is.
+fn already_there(action: &RuleAction, folder: FolderId, role: FolderRole) -> bool {
+    match action {
+        RuleAction::Move { folder: to } => *to == folder,
+        RuleAction::Archive => role == FolderRole::Archive,
+        RuleAction::Delete => role == FolderRole::Trash,
+        _ => false,
+    }
+}
+
+/// Carries out a plan; returns the messages it couldn't act on.
+fn act(app: &AppHandle, state: &AppState, plan: &Plan) -> Vec<i64> {
     let flag = |ids: &[i64], flag| {
-        change(app, &state, ids, |m| Op::SetFlag {
+        change(app, state, ids, |m| Op::SetFlag {
             folder: m.folder_name.clone(),
             uid_validity: m.uid_validity,
             uids: Vec::new(),
@@ -104,10 +166,12 @@ pub fn apply(app: &AppHandle, account: AccountId, new_mail: &[NewMail]) -> Vec<N
     };
     // A rule that can't act (its folder was removed, say) leaves the mail be.
     let mut failed = Vec::new();
-    if flag(&plan.read, FlagKind::Seen).is_err() {
+    if !plan.read.is_empty() && flag(&plan.read, FlagKind::Seen).is_err() {
         failed.extend(&plan.read);
     }
-    let _ = flag(&plan.flag, FlagKind::Flagged);
+    if !plan.flag.is_empty() {
+        let _ = flag(&plan.flag, FlagKind::Flagged);
+    }
     let mut groups: BTreeMap<String, (RuleAction, Vec<i64>)> = BTreeMap::new();
     for (id, action) in &plan.moves {
         let key = format!("{action:?}");
@@ -119,21 +183,15 @@ pub fn apply(app: &AppHandle, account: AccountId, new_mail: &[NewMail]) -> Vec<N
     }
     for (action, ids) in groups.into_values() {
         let done = match action {
-            RuleAction::Move { folder } => move_to(app, &state, &ids, folder),
-            RuleAction::Archive => to_role(app, &state, &ids, FolderRole::Archive),
-            _ => to_role(app, &state, &ids, FolderRole::Trash),
+            RuleAction::Move { folder } => move_to(app, state, &ids, folder),
+            RuleAction::Archive => to_role(app, state, &ids, FolderRole::Archive),
+            _ => to_role(app, state, &ids, FolderRole::Trash),
         };
         if done.is_err() {
             failed.extend(ids);
         }
     }
-    new_mail
-        .iter()
-        .filter(|m| {
-            failed.contains(&m.id) || !(plan.read.contains(&m.id) || plan.moves.contains_key(&m.id))
-        })
-        .cloned()
-        .collect()
+    failed
 }
 
 #[cfg(test)]
@@ -203,5 +261,29 @@ mod tests {
             ])
         );
         assert_eq!(super::plan(&rules[..1], &messages[2..]), Plan::default());
+    }
+
+    #[test]
+    fn mail_already_in_place_is_not_moved_again() {
+        let here = FolderId(4);
+        let to_here = RuleAction::Move { folder: here };
+        assert!(already_there(&to_here, here, FolderRole::Other));
+        assert!(!already_there(&to_here, FolderId(5), FolderRole::Inbox));
+        assert!(already_there(
+            &RuleAction::Archive,
+            here,
+            FolderRole::Archive
+        ));
+        assert!(!already_there(
+            &RuleAction::Archive,
+            here,
+            FolderRole::Inbox
+        ));
+        assert!(already_there(&RuleAction::Delete, here, FolderRole::Trash));
+        assert!(!already_there(
+            &RuleAction::MarkRead,
+            here,
+            FolderRole::Inbox
+        ));
     }
 }

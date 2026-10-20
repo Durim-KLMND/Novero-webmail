@@ -125,6 +125,7 @@ pub fn run() {
             rules::save_rule,
             rules::delete_rule,
             rules::order_rules,
+            rules::run_rules,
             compose::list_outbox,
             compose::outbox_status,
             compose::retry_outbox,
