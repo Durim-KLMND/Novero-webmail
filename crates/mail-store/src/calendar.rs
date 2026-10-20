@@ -281,6 +281,90 @@ impl Store {
         Ok(found)
     }
 
+    /// Puts an invitation in the calendar, or updates the copy already there.
+    /// A copy newer than the invitation (a higher SEQUENCE) keeps its details;
+    /// the user's answer and reminder are kept unless `response` gives a new one.
+    /// New invitations go in the account's calendar, else the first one.
+    pub fn take_invitation(
+        &self,
+        incoming: &Event,
+        response: Option<Response>,
+        account: AccountId,
+    ) -> Result<Event> {
+        let existing = self.event_by_uid(&incoming.uid)?;
+        let mut event = match &existing {
+            Some(old) if old.sequence > incoming.sequence => old.clone(),
+            Some(old) => Event {
+                id: old.id,
+                calendar: old.calendar,
+                reminder: old.reminder.or(incoming.reminder),
+                response: old.response,
+                ..incoming.clone()
+            },
+            None => {
+                let calendar: Option<i64> = self
+                    .conn
+                    .query_row(
+                        "SELECT id FROM calendars ORDER BY account_id IS NOT ?1, position, id LIMIT 1",
+                        [account.0],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(storage)?;
+                Event {
+                    id: 0,
+                    calendar: calendar
+                        .ok_or_else(|| Error::Invalid("Add a calendar first.".into()))?,
+                    ..incoming.clone()
+                }
+            }
+        };
+        if response.is_some() {
+            event.response = response;
+        }
+        self.save_event(&event)
+    }
+
+    /// Marks the event with this UID called off, if it is in the calendar.
+    pub fn cancel_invitation(&self, uid: &str, sequence: i64) -> Result<Option<Event>> {
+        let Some(mut event) = self.event_by_uid(uid)? else {
+            return Ok(None);
+        };
+        if sequence < event.sequence {
+            return Ok(Some(event));
+        }
+        event.cancelled = true;
+        event.sequence = sequence;
+        self.save_event(&event).map(Some)
+    }
+
+    /// Notes an attendee's answer to one of the user's own invitations.
+    pub fn record_answer(
+        &self,
+        uid: &str,
+        email: &str,
+        name: Option<&str>,
+        response: Response,
+    ) -> Result<Option<Event>> {
+        let Some(mut event) = self.event_by_uid(uid)? else {
+            return Ok(None);
+        };
+        match event
+            .attendees
+            .iter_mut()
+            .find(|a| a.email.eq_ignore_ascii_case(email))
+        {
+            Some(a) if a.response == response => return Ok(Some(event)),
+            Some(a) => a.response = response,
+            None => event.attendees.push(mail_core::calendar::Attendee {
+                email: email.to_owned(),
+                name: name.map(str::to_owned),
+                response,
+            }),
+        }
+        self.save_event(&event).map(Some)
+    }
+
     /// Reminders due at `now`: occurrences starting within their reminder
     /// time that haven't been reminded about yet. Each is returned once.
     pub fn due_reminders(&mut self, now: i64) -> Result<Vec<Reminder>> {
@@ -444,5 +528,48 @@ mod tests {
         assert!(store.due_reminders(T0 + 3600 - 5 * 60).unwrap().is_empty());
         // The next day's occurrence reminds again.
         assert_eq!(store.due_reminders(T0 + DAY + 3600 - 60).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn invitations_are_added_updated_answered_and_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let mut invite = event(0, "Planning", T0 + 14 * 3600, None);
+        invite.uid = "inv-1".into();
+        invite.sequence = 1;
+        invite.organizer = Some("Ann <ann@work.test>".into());
+
+        let added = store
+            .take_invitation(&invite, Some(Response::Tentative), AccountId(1))
+            .unwrap();
+        assert_eq!(added.calendar, store.list_calendars().unwrap()[0].id);
+        assert_eq!(added.response, Some(Response::Tentative));
+
+        // The organizer moves it: the time changes, the answer stays.
+        let mut moved = invite.clone();
+        moved.sequence = 2;
+        moved.starts += 3600;
+        moved.ends += 3600;
+        let updated = store.take_invitation(&moved, None, AccountId(1)).unwrap();
+        assert_eq!((updated.id, updated.starts), (added.id, moved.starts));
+        assert_eq!(updated.response, Some(Response::Tentative));
+
+        // An older copy arriving late changes nothing but the answer.
+        let late = store
+            .take_invitation(&invite, Some(Response::Accepted), AccountId(1))
+            .unwrap();
+        assert_eq!(late.starts, moved.starts);
+        assert_eq!(late.response, Some(Response::Accepted));
+
+        let cancelled = store.cancel_invitation("inv-1", 2).unwrap().unwrap();
+        assert!(cancelled.cancelled);
+        assert_eq!(store.cancel_invitation("nope", 0).unwrap(), None);
+
+        let answered = store
+            .record_answer("inv-1", "Bo@Work.test", Some("Bo"), Response::Declined)
+            .unwrap()
+            .unwrap();
+        assert_eq!(answered.attendees.len(), 1);
+        assert_eq!(answered.attendees[0].response, Response::Declined);
     }
 }

@@ -236,6 +236,23 @@ export interface ParsedMessage {
   html: string | null;
   blockedRemote: number;
   attachments: Attachment[];
+  /** Carries a calendar invitation; `api.messageInvite` reads it. */
+  invite: boolean;
+}
+
+/** A calendar invitation in a message. */
+export interface InviteView {
+  method: "request" | "reply" | "cancel" | "publish";
+  /** The event as the message describes it. */
+  event: CalendarEvent;
+  /** The event as the calendar has it, if it is there. */
+  saved: CalendarEvent | null;
+  /** For a reply: who answered, and how. */
+  answer: Attendee | null;
+  /** An invitation from someone else, which can be accepted or declined. */
+  canAnswer: boolean;
+  /** Titles of other events at the same time. */
+  conflicts: string[];
 }
 
 /** Server settings found for an email address. */
@@ -445,6 +462,9 @@ export const api = {
   getEvent: (id: number) => invoke<CalendarEvent | null>("get_event", { id }),
   saveEvent: (event: CalendarEvent) => invoke<CalendarEvent>("save_event", { event }),
   deleteEvent: (id: number) => invoke<void>("delete_event", { id }),
+  messageInvite: (id: number) => invoke<InviteView | null>("message_invite", { id }),
+  answerInvite: (id: number, response: InviteResponse, send: boolean) =>
+    invoke<CalendarEvent>("answer_invite", { id, response, send }),
   skipOccurrence: (id: number, starts: number) =>
     invoke<CalendarEvent>("skip_occurrence", { id, starts }),
 };

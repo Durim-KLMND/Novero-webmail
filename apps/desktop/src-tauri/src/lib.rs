@@ -5,6 +5,7 @@ mod commands;
 mod compose;
 mod crash;
 mod files;
+mod invites;
 mod links;
 mod rules;
 mod settings;
@@ -118,6 +119,8 @@ pub fn run() {
             snooze::unsnooze_messages,
             snooze::snoozed_count,
             snooze::snoozed_until,
+            invites::message_invite,
+            invites::answer_invite,
             rules::list_rules,
             rules::save_rule,
             rules::delete_rule,

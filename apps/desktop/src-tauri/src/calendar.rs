@@ -16,7 +16,7 @@ pub const CALENDAR_CHANGED: &str = "calendar-changed";
 /// How often reminders are looked for.
 const REMINDER_CHECK: Duration = Duration::from_secs(30);
 
-fn changed(app: &AppHandle) {
+pub(crate) fn changed(app: &AppHandle) {
     let _ = app.emit(CALENDAR_CHANGED, ());
 }
 
