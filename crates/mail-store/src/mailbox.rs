@@ -1106,7 +1106,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_and_signatures_round_trip() {
+    fn settings_round_trip() {
         let (_dir, store) = store();
         assert_eq!(store.setting("theme").unwrap(), None);
         store
@@ -1119,14 +1119,6 @@ mod tests {
             store.setting("theme").unwrap(),
             Some(serde_json::json!("light"))
         );
-        let acc = account(&store, "a@example.test");
-        assert_eq!(store.account(acc).unwrap().unwrap().signature, "");
-        store
-            .set_signature(acc, "Alice\nNovero", "<p><b>Alice</b></p>")
-            .unwrap();
-        let account = store.account(acc).unwrap().unwrap();
-        assert_eq!(account.signature, "Alice\nNovero");
-        assert_eq!(account.signature_html, "<p><b>Alice</b></p>");
     }
 
     /// The phase 5 target: search answers in under 200 ms across 100,000

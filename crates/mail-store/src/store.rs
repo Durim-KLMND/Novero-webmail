@@ -164,17 +164,6 @@ impl Store {
         remove_dir(&self.files.join(id.0.to_string()))
     }
 
-    /// Sets the signature: plain text, and the formatted version (or "").
-    pub fn set_signature(&self, id: AccountId, signature: &str, html: &str) -> Result<()> {
-        self.conn
-            .execute(
-                "UPDATE accounts SET signature = ?2, signature_html = ?3 WHERE id = ?1",
-                params![id.0, signature, html],
-            )
-            .map_err(storage)?;
-        Ok(())
-    }
-
     // Settings
 
     /// A stored preference, as JSON.
@@ -724,7 +713,12 @@ impl Store {
 }
 
 const ACCOUNT_SELECT: &str = "SELECT id, display_name, email, username, imap_host, imap_port, \
-     imap_security, smtp_host, smtp_port, smtp_security, oauth_provider, signature, signature_html FROM accounts";
+     imap_security, smtp_host, smtp_port, smtp_security, oauth_provider, \
+     COALESCE((SELECT text FROM signatures WHERE id = signature_new), ''), \
+     COALESCE((SELECT html FROM signatures WHERE id = signature_new), ''), \
+     COALESCE((SELECT text FROM signatures WHERE id = signature_reply), ''), \
+     COALESCE((SELECT html FROM signatures WHERE id = signature_reply), ''), \
+     signature_new, signature_reply FROM accounts";
 
 fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
     let security = |i: usize| -> rusqlite::Result<Security> {
@@ -766,6 +760,10 @@ fn account_row(r: &Row<'_>) -> rusqlite::Result<Account> {
         },
         signature: r.get(11)?,
         signature_html: r.get(12)?,
+        reply_signature: r.get(13)?,
+        reply_signature_html: r.get(14)?,
+        signature_new: r.get(15)?,
+        signature_reply: r.get(16)?,
     })
 }
 

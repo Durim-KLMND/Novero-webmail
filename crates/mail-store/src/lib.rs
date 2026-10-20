@@ -8,6 +8,7 @@ mod contacts;
 mod mailbox;
 mod outgoing;
 mod rules;
+mod signatures;
 mod snooze;
 mod store;
 
@@ -33,6 +34,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_contacts_signatures.sql"),
     include_str!("../migrations/0007_calendar.sql"),
     include_str!("../migrations/0008_send_later_snooze.sql"),
+    include_str!("../migrations/0009_signatures_templates.sql"),
 ];
 
 /// Schema version a fully migrated database has.
@@ -111,6 +113,36 @@ mod tests {
         let mut conn = open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
         assert_eq!(version(&conn), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn an_old_signature_becomes_the_first_of_several() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for sql in &MIGRATIONS[..8] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 8).unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (id, display_name, email, imap_host, imap_port, imap_security, \
+                 smtp_host, smtp_port, smtp_security, auth_kind, signature) \
+             VALUES (1, 'Alice', 'alice@example.test', 'imap.example.test', 993, 'implicit_tls', \
+                 'smtp.example.test', 465, 'implicit_tls', 'password', 'Alice'), \
+                 (2, 'Bob', 'bob@example.test', 'imap.example.test', 993, 'implicit_tls', \
+                 'smtp.example.test', 465, 'implicit_tls', 'password', '');",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let rows: Vec<(i64, Option<String>, Option<i64>)> = conn
+            .prepare(
+                "SELECT a.id, s.text, a.signature_reply FROM accounts a \
+                 LEFT JOIN signatures s ON s.id = a.signature_new ORDER BY a.id",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(rows, [(1, Some("Alice".into()), Some(1)), (2, None, None)]);
     }
 
     #[test]

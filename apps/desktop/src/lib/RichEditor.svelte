@@ -40,40 +40,124 @@
     changed();
   }
 
-  /** Swaps the signature block ("-- " and the signature) for another one,
-   *  formatted (`toHtml`) or plain (`to`); an empty one removes the block.
-   *  The block is found by the mark it was given when put in, or else by
-   *  the lines of the plain-text signature `from`, if they are unchanged. */
+  const plain = (el: Element | null | undefined) => (el?.textContent ?? "").replace(/\u00a0/g, " ");
+
+  /** The signature block ("-- " and the signature): found by the mark it
+   *  was given when put in, or else by the lines of the plain-text
+   *  signature `from`, if they are unchanged. */
+  function signatureBlock(from: string, root = editor): { block: Element[]; before: Element | null } {
+    const none = { block: [], before: null };
+    if (!root) return none;
+    const marked = root.querySelector(":scope > [data-signature]");
+    if (marked) return { block: [marked], before: marked.previousElementSibling };
+    if (!from.trim()) return none;
+    const old = from.replace(/\s+$/, "").split("\n");
+    const children = Array.from(root.children);
+    for (let at = children.length - 1; at >= 0; at--) {
+      if (plain(children[at]).trimEnd() !== "--") continue;
+      if (!old.every((line, i) => plain(children[at + 1 + i]) === line)) continue;
+      return { block: children.slice(at, at + 1 + old.length), before: children[at - 1] ?? null };
+    }
+    return none;
+  }
+
+  /** Where quoted or forwarded text starts: its "… wrote:" line, the quote
+   *  itself, or the forwarded message's header; -1 when there is none. */
+  function quoteStart(children: Element[]): number {
+    return children.findIndex(
+      (el) =>
+        el.tagName === "BLOCKQUOTE" ||
+        el.nextElementSibling?.tagName === "BLOCKQUOTE" ||
+        plain(el).startsWith("---------- Forwarded message"),
+    );
+  }
+
+  /** What was written above the signature and any quoted text, plain and
+   *  formatted ("" when it has no formatting), e.g. to keep as a template. */
+  export function ownText(signature: string): { text: string; html: string } {
+    if (!editor) return { text: "", html: "" };
+    const copy = editor.cloneNode(true) as HTMLDivElement;
+    const { block } = signatureBlock(signature, copy);
+    const children = Array.from(copy.children);
+    const cut = block.length ? children.indexOf(block[0]) : quoteStart(children);
+    if (cut >= 0) children.slice(cut).forEach((el) => el.remove());
+    // Blank lines at the end go too.
+    let last = copy.lastElementChild;
+    while (last && plain(last).trim() === "" && !last.querySelector("img")) {
+      last.remove();
+      last = copy.lastElementChild;
+    }
+    return { text: htmlToText(copy).trimEnd(), html: hasFormatting(copy) ? copy.innerHTML : "" };
+  }
+
+  /** Whether the text has a signature block, marked or matching `from`. */
+  export function hasSignature(from: string): boolean {
+    return signatureBlock(from).block.length > 0;
+  }
+
+  /** Swaps the signature block for another one, formatted (`toHtml`) or
+   *  plain (`to`); an empty one removes the block. With no block to swap,
+   *  the new one goes above the quoted or forwarded text, or at the end. */
   export function replaceSignature(from: string, to: string, toHtml = "") {
     if (!editor) return;
-    const text = (el: Element | undefined) => (el?.textContent ?? "").replace(/\u00a0/g, " ");
-    let block: Element[] = [];
-    let before: Element | null = null;
-    const marked = editor.querySelector(":scope > [data-signature]");
-    if (marked) {
-      block = [marked];
-      before = marked.previousElementSibling;
-    } else {
-      const old = from.replace(/\s+$/, "").split("\n");
-      const children = Array.from(editor.children);
-      for (let at = children.length - 1; at >= 0 && !block.length; at--) {
-        if (text(children[at]).trimEnd() !== "--") continue;
-        if (!old.every((line, i) => text(children[at + 1 + i]) === line)) continue;
-        block = children.slice(at, at + 1 + old.length);
-        before = children[at - 1] ?? null;
-      }
-    }
-    if (!block.length) return;
-    if (to.trim() || toHtml.trim()) {
+    const { block, before } = signatureBlock(from);
+    const adding = Boolean(to.trim() || toHtml.trim());
+    if (!block.length && !adding) return;
+    if (adding) {
       const sig = document.createElement("div");
       sig.dataset.signature = "";
       sig.innerHTML = `<div>-- </div>${toHtml.trim() || textToHtml(to.replace(/\s+$/, ""))}`;
-      block[0].before(sig);
-    } else if (before && text(before) === "") {
+      if (block.length) {
+        block[0].before(sig);
+      } else {
+        const blank = () => Object.assign(document.createElement("div"), { innerHTML: "<br>" });
+        const children = Array.from(editor.children);
+        const quote = quoteStart(children);
+        if (quote >= 0) {
+          // A blank line above the quote stays between it and the signature.
+          const above = children[quote - 1];
+          if (above && plain(above) === "") {
+            above.before(sig);
+          } else {
+            children[quote].before(sig);
+            sig.after(blank());
+          }
+        } else {
+          if (children.length && plain(children[children.length - 1]) !== "") editor.append(blank());
+          editor.append(sig);
+        }
+      }
+    } else if (before && plain(before) === "") {
       // The blank line above the block goes with it.
       before.remove();
     }
     block.forEach((el) => el.remove());
+    changed();
+  }
+
+  /** Puts formatted text in at the cursor, or at the very start. */
+  export function insertHtml(html: string) {
+    if (!editor) return;
+    const at = selection();
+    if (at) {
+      editor.focus();
+      const sel = getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(at);
+      run("insertHTML", html);
+      return;
+    }
+    // At the start, taking the place of a blank first line when another
+    // one follows, so a blank line stays above the signature or quote.
+    const blank = (el: Element | null | undefined) => el && plain(el) === "" && !el.querySelector("img");
+    const first = editor.firstElementChild;
+    if (blank(first) && blank(first?.nextElementSibling)) first?.remove();
+    const holder = document.createElement("div");
+    holder.innerHTML = html;
+    if (editor.firstElementChild && !blank(editor.firstElementChild)) {
+      holder.append(Object.assign(document.createElement("div"), { innerHTML: "<br>" }));
+    }
+    editor.prepend(...Array.from(holder.childNodes));
     changed();
   }
 

@@ -19,6 +19,7 @@
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import FilePen from "@lucide/svelte/icons/file-pen";
+  import FileText from "@lucide/svelte/icons/file-text";
   import Flag from "@lucide/svelte/icons/flag";
   import FlagOff from "@lucide/svelte/icons/flag-off";
   import Folder from "@lucide/svelte/icons/folder";
@@ -101,6 +102,7 @@
     palette: Palette,
     attachment: Paperclip,
     signature: PenLine,
+    template: FileText,
     edit: Pencil,
     power: Power,
     plus: Plus,

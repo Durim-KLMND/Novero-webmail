@@ -31,10 +31,35 @@ export interface Account {
   imap: Endpoint;
   smtp: Endpoint;
   auth: AuthMethod;
-  /** Added below new messages, replies and forwards. */
+  /** Added below new messages. */
   signature: string;
   /** The signature with formatting; empty when it has none. */
   signatureHtml: string;
+  /** Added to replies and forwards, plain and formatted. */
+  replySignature: string;
+  replySignatureHtml: string;
+  /** Which signatures new messages and replies start with; null for none. */
+  signatureNew: number | null;
+  signatureReply: number | null;
+}
+
+/** One of an account's signatures; id 0 until it is saved. */
+export interface Signature {
+  id: number;
+  account: number;
+  name: string;
+  text: string;
+  /** With formatting; empty when it has none. */
+  html: string;
+}
+
+/** A saved message to start new ones from; id 0 until it is saved. */
+export interface Template {
+  id: number;
+  name: string;
+  subject: string;
+  text: string;
+  html: string;
 }
 
 export type FolderRole =
@@ -390,8 +415,14 @@ export const api = {
   deleteRule: (id: number) => invoke<void>("delete_rule", { id }),
   orderRules: (account: number, ids: number[]) =>
     invoke<void>("order_rules", { account, ids }),
-  setSignature: (account: number, signature: string, html: string) =>
-    invoke<void>("set_signature", { account, signature, html }),
+  listSignatures: () => invoke<Signature[]>("list_signatures"),
+  saveSignature: (signature: Signature) => invoke<Signature>("save_signature", { signature }),
+  deleteSignature: (id: number) => invoke<void>("delete_signature", { id }),
+  setDefaultSignatures: (account: number, newMessages: number | null, replies: number | null) =>
+    invoke<void>("set_default_signatures", { account, new: newMessages, reply: replies }),
+  listTemplates: () => invoke<Template[]>("list_templates"),
+  saveTemplate: (template: Template) => invoke<Template>("save_template", { template }),
+  deleteTemplate: (id: number) => invoke<void>("delete_template", { id }),
   openMessage: (id: number, allowRemote: boolean) =>
     invoke<ParsedMessage>("open_message", { id, allowRemote }),
   syncAccount: (account: number) => invoke<void>("sync_account", { account }),
