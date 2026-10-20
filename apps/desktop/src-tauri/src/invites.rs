@@ -41,8 +41,8 @@ fn method_name(method: Method) -> &'static str {
     }
 }
 
-async fn invitation(state: &AppState, id: i64) -> Result<Option<(Account, Vec<u8>, Invitation)>> {
-    let (account, raw) = raw_message(state, id).await?;
+async fn invitation(app: &AppHandle, id: i64) -> Result<Option<(Account, Vec<u8>, Invitation)>> {
+    let (account, raw) = raw_message(app, id).await?;
     let found = mail_mime::calendar_text(&raw)
         .and_then(|text| mail_calendar::parse(&text))
         .filter(|i| !i.event.uid.is_empty());
@@ -64,7 +64,7 @@ pub async fn message_invite(
     state: State<'_, AppState>,
     id: i64,
 ) -> Result<Option<InviteView>> {
-    let Some((account, _, invite)) = invitation(&state, id).await? else {
+    let Some((account, _, invite)) = invitation(&app, id).await? else {
         return Ok(None);
     };
     let event = invite.event;
@@ -115,7 +115,7 @@ pub async fn answer_invite(
     response: Response,
     send: bool,
 ) -> Result<Event> {
-    let (account, raw, invite) = invitation(&state, id)
+    let (account, raw, invite) = invitation(&app, id)
         .await?
         .ok_or_else(|| Error::Invalid("This message has no invitation.".into()))?;
     if !matches!(invite.method, Method::Request | Method::Publish) {

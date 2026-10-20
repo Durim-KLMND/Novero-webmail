@@ -582,6 +582,28 @@ impl Store {
         Ok(())
     }
 
+    /// Messages next to `message` in its folder, older than it, whose bodies
+    /// aren't downloaded yet: likely the next ones opened. Newest first, as
+    /// `(id, uid)` pairs, none larger than `max_size`.
+    pub fn bodies_after(&self, message: i64, max_size: u32, limit: u32) -> Result<Vec<(i64, u32)>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT m.id, m.uid FROM messages m JOIN messages o ON o.id = ?1 \
+                 WHERE m.folder_id = o.folder_id AND m.id <> o.id AND m.body_state = 'none' \
+                 AND (coalesce(m.date, 0), m.id) < (coalesce(o.date, 0), o.id) \
+                 AND coalesce(m.size, 0) <= ?2 \
+                 ORDER BY m.date DESC, m.id DESC LIMIT ?3",
+            )
+            .map_err(storage)?;
+        stmt.query_map(params![message, max_size, limit], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .map_err(storage)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(storage)
+    }
+
     /// Recent messages whose bodies are not cached yet, newest first, for
     /// downloading ahead of time: those dated after `since` and no larger
     /// than `max_size`, in folders other than Trash and Junk.
@@ -1103,6 +1125,36 @@ mod tests {
         // Deleted messages leave the index.
         store.remove_uids(acc, f[0], &[2]).unwrap();
         assert!(found_in(&store, "pistachio").is_empty());
+    }
+
+    #[test]
+    fn the_next_older_messages_are_the_ones_to_download_ahead() {
+        let (_dir, mut store) = store();
+        let acc = account(&store, "a@example.test");
+        let f = folders(
+            &mut store,
+            acc,
+            &[("INBOX", FolderRole::Inbox), ("Work", FolderRole::Other)],
+        );
+        let ids = insert(
+            &mut store,
+            f[0],
+            &[
+                msg(1, "a", &[], 1),
+                msg(2, "b", &[], 2),
+                msg(3, "c", &[], 3),
+                msg(4, "d", &[], 4),
+                msg(5, "e", &[], 5),
+            ],
+        );
+        insert(&mut store, f[1], &[msg(1, "w", &[], 2)]);
+        store.save_raw(ids[2], b"Subject: c\r\n\r\nhi").unwrap();
+        // Opening "e": "d" next, then "b" ("c" is downloaded already).
+        assert_eq!(
+            store.bodies_after(ids[4], 1 << 20, 2).unwrap(),
+            [(ids[3], 4), (ids[1], 2)]
+        );
+        assert_eq!(store.bodies_after(ids[0], 1 << 20, 5).unwrap(), []);
     }
 
     #[test]

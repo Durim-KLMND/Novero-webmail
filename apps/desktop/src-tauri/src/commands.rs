@@ -302,7 +302,7 @@ pub async fn open_message(
     id: i64,
     allow_remote: bool,
 ) -> Result<ParsedMessage> {
-    let (_, raw) = raw_message(&state, id).await?;
+    let (_, raw) = raw_message(&app, id).await?;
     let parsed =
         tauri::async_runtime::spawn_blocking(move || mail_mime::parse_message(&raw, allow_remote))
             .await
@@ -329,16 +329,11 @@ pub async fn open_message(
 }
 
 /// A message's account and its raw bytes, from the cache or the server.
-pub(crate) async fn raw_message(state: &AppState, id: i64) -> Result<(Account, Vec<u8>)> {
+pub(crate) async fn raw_message(app: &AppHandle, id: i64) -> Result<(Account, Vec<u8>)> {
+    let state = app.state::<AppState>();
     let source = state.store.lock().unwrap().message_source(id)?;
     let account = state.account(source.account_id)?;
-    let secret = if source.raw_path.is_some() {
-        // Cached: read from disk without signing in.
-        Secret::password("")
-    } else {
-        state.secret(&account).await?
-    };
-    let raw = mail_sync::fetch_message(&state.store, &account, &secret, id).await?;
+    let raw = crate::reader::raw(app, &account, id).await?;
     Ok((account, raw))
 }
 

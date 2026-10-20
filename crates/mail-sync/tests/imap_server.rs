@@ -8,7 +8,10 @@ use std::sync::Mutex;
 
 use mail_core::{Endpoint, Event, FolderRole, NewAccount, Secret, Security, SyncStage};
 use mail_store::Store;
-use mail_sync::{ImapSession, Scope, fetch_message, sync_account};
+use mail_sync::{
+    ImapSession, Scope, cached_message, download_message, download_messages, fetch_message,
+    sync_account,
+};
 
 /// Alice's password on the test servers.
 fn secret() -> Secret {
@@ -248,6 +251,57 @@ async fn opening_a_message_fetches_and_caches_its_body() {
         .await
         .unwrap();
     assert_eq!(again, raw);
+}
+
+#[tokio::test]
+#[ignore = "needs the test IMAP server"]
+async fn one_connection_downloads_a_message_and_the_next_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, account) = store_with_alice(dir.path());
+    sync_account(&store, &account, &secret(), Scope::All, |_| {})
+        .await
+        .unwrap();
+    let inbox = store.lock().unwrap().list_folders(account.id).unwrap()[0].id;
+    let newest = store
+        .lock()
+        .unwrap()
+        .list_messages(inbox, 0, 1)
+        .unwrap()
+        .items[0]
+        .id;
+    let ahead = store
+        .lock()
+        .unwrap()
+        .bodies_after(newest, 1 << 20, 3)
+        .unwrap();
+    assert_eq!(ahead.len(), 3);
+    assert!(cached_message(&store, newest).unwrap().is_none());
+
+    let mut session = ImapSession::connect(&endpoint(), "alice", &secret())
+        .await
+        .unwrap();
+    let raw = download_message(&store, &mut session, newest)
+        .await
+        .unwrap();
+    download_messages(&store, &mut session, "INBOX", &ahead)
+        .await
+        .unwrap();
+    session.logout().await.unwrap();
+
+    assert_eq!(cached_message(&store, newest).unwrap(), Some(raw));
+    for (id, _) in &ahead {
+        let cached = cached_message(&store, *id)
+            .unwrap()
+            .expect("downloaded ahead");
+        assert!(String::from_utf8_lossy(&cached).contains("Body of test message"));
+    }
+    // The ones already downloaded are not picked again.
+    let next = store
+        .lock()
+        .unwrap()
+        .bodies_after(newest, 1 << 20, 3)
+        .unwrap();
+    assert!(next.iter().all(|n| !ahead.contains(n)));
 }
 
 /// An RFC 5322 date for a Unix time, e.g. "Mon, 19 Oct 2026 09:00:00 +0000".

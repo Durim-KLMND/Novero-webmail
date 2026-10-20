@@ -7,6 +7,7 @@ mod crash;
 mod files;
 mod invites;
 mod links;
+mod reader;
 mod rules;
 mod settings;
 mod snooze;

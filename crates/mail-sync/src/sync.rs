@@ -599,17 +599,44 @@ pub async fn fetch_message(
     secret: &Secret,
     message: i64,
 ) -> Result<Vec<u8>> {
-    let source = store.lock().unwrap().message_source(message)?;
-    if let Some(path) = &source.raw_path
-        && let Ok(raw) = std::fs::read(path)
-    {
+    if let Some(raw) = cached_message(store, message)? {
         return Ok(raw);
     }
     let mut session = ImapSession::connect(&account.imap, &account.username, secret).await?;
-    let raw = session.fetch_raw(&source.folder_name, source.uid).await?;
-    save_and_index(store, message, &raw)?;
+    let raw = download_message(store, &mut session, message).await?;
     let _ = session.logout().await;
     Ok(raw)
+}
+
+/// A message's raw bytes if they are cached on disk.
+pub fn cached_message(store: &Mutex<Store>, message: i64) -> Result<Option<Vec<u8>>> {
+    let source = store.lock().unwrap().message_source(message)?;
+    Ok(source.raw_path.and_then(|path| std::fs::read(path).ok()))
+}
+
+/// Downloads one message over an open session, caches it and indexes its text.
+pub async fn download_message(
+    store: &Mutex<Store>,
+    session: &mut ImapSession,
+    message: i64,
+) -> Result<Vec<u8>> {
+    let source = store.lock().unwrap().message_source(message)?;
+    let raw = session.fetch_raw(&source.folder_name, source.uid).await?;
+    save_and_index(store, message, &raw)?;
+    Ok(raw)
+}
+
+/// Downloads several messages of one folder (`(id, uid)` pairs) in one go,
+/// caching them and indexing their text.
+pub async fn download_messages(
+    store: &Mutex<Store>,
+    session: &mut ImapSession,
+    folder: &str,
+    wanted: &[(i64, u32)],
+) -> Result<()> {
+    let ignore = |_| {};
+    let progress = Progress::new(AccountId(0), SyncStage::Bodies, 0, &ignore);
+    prefetch_bodies(store, session, folder, wanted, &progress).await
 }
 
 #[cfg(test)]
