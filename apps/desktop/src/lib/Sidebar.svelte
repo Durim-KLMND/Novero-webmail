@@ -20,7 +20,8 @@
 </script>
 
 <script lang="ts">
-  import type { Account, Folder, UpdateInfo } from "./api";
+  import type { Account, Folder, UpdateStatus } from "./api";
+  import { downloadPercent } from "./notes";
   import { errorText } from "./api";
   import Icon, { type IconName } from "./Icon.svelte";
   import { items, openMenu, toggleMenuUnder, type MenuItem } from "./menus.svelte";
@@ -56,9 +57,11 @@
     /** Write a new message, here or in a window of its own. */
     onCompose: (newWindow: boolean) => void;
     onOutbox: (account: number) => void;
-    /** A downloaded update, offered at the bottom. */
-    update: UpdateInfo | null;
+    /** A newer version, offered at the bottom once found. */
+    update: UpdateStatus | null;
     onInstallUpdate: () => void;
+    onDownloadUpdate: () => void;
+    onWhatsNew: () => void;
   }
   let {
     accounts,
@@ -81,6 +84,8 @@
     onOutbox,
     update,
     onInstallUpdate,
+    onDownloadUpdate,
+    onWhatsNew,
   }: Props = $props();
 
   /** A refused password or an expired sign-in: fixed by signing in again. */
@@ -301,10 +306,23 @@
       </section>
     {/each}
   </div>
-  {#if update}
-    <div class="update" title={update.notes ?? ""}>
-      <span>Version {update.version} is ready</span>
-      <button class="primary" onclick={onInstallUpdate}>Restart to update</button>
+  {#if update?.update && update.phase !== "idle" && update.phase !== "checking"}
+    {@const version = update.update.version}
+    {@const percent = downloadPercent(update.downloaded, update.total)}
+    <div class="update" role="status">
+      {#if update.phase === "available"}
+        <span>Version {version} is out</span>
+        <button class="primary" onclick={onDownloadUpdate}>Download</button>
+      {:else if update.phase === "downloading"}
+        <span>Downloading the update{percent != null ? ` · ${percent}%` : "…"}</span>
+        <progress max="100" value={percent} aria-label="Download progress"></progress>
+      {:else}
+        <span>Version {version} is ready</span>
+        <button class="primary" onclick={onInstallUpdate} disabled={update.phase === "installing"}>
+          {update.phase === "installing" ? "Restarting…" : "Restart to update"}
+        </button>
+      {/if}
+      <button class="link" onclick={onWhatsNew}>What's new</button>
     </div>
   {/if}
 </nav>
@@ -441,6 +459,10 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     font-size: 13px;
+  }
+  .update .link {
+    justify-self: start;
+    font-size: 12px;
   }
   .search {
     position: relative;

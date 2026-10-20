@@ -8,7 +8,7 @@
     errorText,
     onMailEvent,
     onMailto,
-    onUpdateReady,
+    onUpdateStatus,
     type Account,
     type ComposerOutcome,
     type Draft,
@@ -18,7 +18,7 @@
     type MailEvent,
     type MessageSummary,
     type Settings,
-    type UpdateInfo,
+    type UpdateStatus,
   } from "./api";
   import { folderLabel } from "./format";
   import { toast } from "./toast.svelte";
@@ -36,6 +36,7 @@
   import AppRail, { type AppView } from "./AppRail.svelte";
   import CalendarView from "./CalendarView.svelte";
   import CrashReport from "./CrashReport.svelte";
+  import UpdateDialog from "./UpdateDialog.svelte";
   import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
   import { laterChoices, laterText } from "./later";
   import PickTime from "./PickTime.svelte";
@@ -66,7 +67,8 @@
   let sidebar = $state<ReturnType<typeof Sidebar>>();
   let settings = $state<Settings>({ ...defaultSettings });
   /** A downloaded update, and a crash report waiting for an answer. */
-  let update = $state<UpdateInfo | null>(null);
+  let update = $state<UpdateStatus | null>(null);
+  let showWhatsNew = $state(false);
   let crashReport = $state<string | null>(null);
   let showSettings = $state(false);
   /** The rules dialog: the account it shows, and a sender to make a rule for. */
@@ -150,7 +152,7 @@
     try {
       settings = await api.getSettings();
       applyTheme(settings.theme);
-      update = await api.readyUpdate();
+      update = await api.updateStatus();
       crashReport = await api.crashReport();
     } catch (err) {
       say(errorText(err));
@@ -165,7 +167,10 @@
   });
   onDestroy(() => setMailtoHandler(null));
 
-  const unlistenUpdate = onUpdateReady((found) => (update = found));
+  const unlistenUpdate = onUpdateStatus((status) => {
+    update = status;
+    if (status.phase === "idle") showWhatsNew = false;
+  });
   const unlistenMailto = onMailto(openMailto);
   // A message window closed (see ComposerWindow).
   const unlistenWindows = listen<{ account: number; outcome: ComposerOutcome }>(
@@ -186,7 +191,14 @@
       await api.installUpdate();
     } catch (err) {
       say(`The update could not be installed. ${errorText(err)}`);
-      update = null;
+    }
+  }
+
+  async function downloadUpdate() {
+    try {
+      await api.downloadUpdate();
+    } catch (err) {
+      say(`The update could not be downloaded. ${errorText(err)}`);
     }
   }
 
@@ -733,7 +745,7 @@
 
   function shortcut(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
-    const dialog = showHelp || showSettings || rulesFor || signingIn || pickingSnooze;
+    const dialog = showHelp || showSettings || rulesFor || signingIn || pickingSnooze || showWhatsNew;
     // Ctrl+1 and Ctrl+2 switch between mail and the calendar.
     if (event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "1" || event.key === "2")) {
       if (dialog) return;
@@ -757,7 +769,7 @@
       }
       return;
     }
-    if (showSettings || rulesFor || signingIn || pickingSnooze || typing(event)) return;
+    if (showSettings || rulesFor || signingIn || pickingSnooze || showWhatsNew || typing(event)) return;
     const key = event.key;
     if (key === "?") showHelp = true;
     else if (view !== "mail") return;
@@ -817,6 +829,8 @@
     onOutbox={showOutbox}
     {update}
     onInstallUpdate={installUpdate}
+    onDownloadUpdate={downloadUpdate}
+    onWhatsNew={() => (showWhatsNew = true)}
   />
   <!-- A focusable separator is the ARIA window splitter: arrows resize it. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -905,7 +919,7 @@
 </div>
 {#if calendarOpened}
   <div class="pane" class:hidden={view !== "calendar"}>
-    <CalendarView active={view === "calendar"} blocked={!!(showHelp || showSettings || rulesFor || signingIn)} />
+    <CalendarView active={view === "calendar"} blocked={!!(showHelp || showSettings || rulesFor || signingIn || showWhatsNew)} />
   </div>
 {/if}
   {#if signingIn}
@@ -916,7 +930,9 @@
       {accounts}
       {settings}
       onClose={settingsClosed}
-      onUpdate={(found) => (update = found)}
+      {update}
+      onInstallUpdate={installUpdate}
+      onWhatsNew={() => (showWhatsNew = true)}
       onRules={() => (rulesFor = { account: selectedFolder?.accountId ?? accounts[0].id })}
       {onAddAccount}
       onSignInAgain={(account) => (signingIn = account)}
@@ -926,6 +942,14 @@
   {/if}
   {#if rulesFor && accounts.length}
     <RulesDialog {accounts} {folders} start={rulesFor} onClose={() => (rulesFor = null)} />
+  {/if}
+  {#if showWhatsNew && update?.update}
+    <UpdateDialog
+      status={update}
+      onInstall={installUpdate}
+      onDownload={downloadUpdate}
+      onClose={() => (showWhatsNew = false)}
+    />
   {/if}
   {#if crashReport}
     <CrashReport report={crashReport} onClose={crashClosed} />

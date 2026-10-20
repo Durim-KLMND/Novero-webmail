@@ -2,7 +2,20 @@
 
 Releases are GitHub releases built by `.github/workflows/release.yml` when a version tag is
 pushed. Each one carries the Windows installer and a `latest.json` update manifest. Installed
-copies read that manifest and offer the update ("Version x is ready · Restart to update").
+copies read that manifest and offer the update.
+
+## How installed copies update
+
+- 30 seconds after start, and every six hours after that, the app reads its channel's manifest.
+- With **Download updates automatically** on (the default), a newer version is downloaded in the
+  background; the sidebar shows the progress and then "Version x is ready · Restart to update".
+  With it off, the sidebar says "Version x is out" and downloads it on **Download**.
+- **What's new** shows the release notes, without the pull request links and authors.
+- **Restart to update** first closes any message windows, which saves what was typed as drafts,
+  then runs the installer. It closes the app, shows its progress and opens the new version.
+- Settings → Updates shows the same state, when it last checked, and **Check now**.
+- A copy installed from a beta release starts on the beta channel; one from a stable release on
+  stable.
 
 ## Channels
 
@@ -92,6 +105,20 @@ Without them the workflow still releases, unsigned, with a warning in the run su
 
 Copies that download updates automatically find the release within six hours, or straight
 away with **Check now** in Settings.
+
+## The first release, and checking that updates work
+
+No release exists until the first tag is pushed, so until then installed copies find nothing.
+To see a real update end to end:
+
+1. Do the one-time setup above (the update key is required; the release fails without it).
+2. Release `v0.2.0-beta.1` (the current version) as described above, and install it from the
+   release's assets. (Installers from CI runs on `main` can update too, once
+   `NOVERO_UPDATER_PUBKEY` is set before they are built; `npm run tauri dev` builds can't.)
+3. Merge anything, set the version to `0.2.0-beta.2`, and release that too.
+4. In the installed copy, open Settings → Updates and press **Check now** (beta is already
+   picked). It downloads `0.2.0-beta.2`; **Restart to update** installs it, and Settings then
+   shows Novero Mail 0.2.0-beta.2.
 
 ## Trying an update before release
 
