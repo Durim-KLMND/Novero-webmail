@@ -72,7 +72,12 @@ jobs:
           AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
         run: |
           config=$(node -e '
-            const config = { bundle: { createUpdaterArtifacts: true } };
+            // The CLI checks each signature against this key after signing, so
+            // a key pair that does not match fails the release, not the update.
+            const config = {
+              bundle: { createUpdaterArtifacts: true },
+              plugins: { updater: { pubkey: process.env.NOVERO_UPDATER_PUBKEY.trim() } },
+            };
             if (process.env.SIGN === "true") {
               const e = process.env;
               config.bundle.windows = {

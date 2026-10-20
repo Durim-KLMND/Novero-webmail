@@ -51,7 +51,8 @@ variables → Actions**:
   - `TAURI_SIGNING_PRIVATE_KEY`: the whole contents of `novero-updater.key`
   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password you chose
 - **Variables** tab → **New repository variable**:
-  - `NOVERO_UPDATER_PUBKEY`: the whole contents of `novero-updater.key.pub`
+  - `NOVERO_UPDATER_PUBKEY`: the whole contents of `novero-updater.key.pub` (one line that starts
+    with `dW50cnVzdGVk`; paste it as it is, without decoding it)
 
 Keep `novero-updater.key` and its password somewhere safe outside the repository, such as a
 password manager. If it is lost, installed copies can't be updated any more and everyone has to
@@ -100,8 +101,10 @@ Without them the workflow still releases, unsigned, with a warning in the run su
    created on `main`), write notes if you like, tick **Set as a pre-release** for a beta, and
    publish. The workflow adds the installer to that release.
 3. Watch the **Release** run under **Actions**. It checks the tag matches the app version,
-   builds and signs the installer, publishes the release with notes generated from the merged
-   pull requests, and updates the channel manifests.
+   builds and signs the installer, checks the signature against `NOVERO_UPDATER_PUBKEY`,
+   publishes the release with notes generated from the merged pull requests, and updates the
+   channel manifests. If it fails (for example because a key is wrong), fix the cause, delete
+   the release and its tag on GitHub, and publish it again from `main`.
 
 Copies that download updates automatically find the release within six hours, or straight
 away with **Check now** in Settings.
