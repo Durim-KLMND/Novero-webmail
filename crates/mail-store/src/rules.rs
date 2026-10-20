@@ -1,7 +1,7 @@
 //! Saved rules, and what they need to know about new messages.
 
 use mail_core::rules::{Rule, RuleInput};
-use mail_core::{AccountId, Error, Result};
+use mail_core::{AccountId, Error, FolderId, Result};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::storage;
@@ -126,6 +126,29 @@ impl Store {
         tx.commit().map_err(storage)
     }
 
+    /// Every cached message in a folder, as rules see them, newest first.
+    pub fn folder_rule_messages(&self, folder: FolderId) -> Result<Vec<RuleMessage>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, from_addr, to_addrs, cc_addrs, subject FROM messages \
+                 WHERE folder_id = ?1 ORDER BY date DESC, id DESC",
+            )
+            .map_err(storage)?;
+        let rows = stmt
+            .query_map([folder.0], |r| {
+                Ok(RuleMessage {
+                    id: r.get(0)?,
+                    from: r.get(1)?,
+                    to: r.get(2)?,
+                    cc: r.get(3)?,
+                    subject: r.get(4)?,
+                })
+            })
+            .map_err(storage)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(storage)
+    }
+
     /// The cached messages among `ids`, as rules see them.
     pub fn rule_messages(&self, ids: &[i64]) -> Result<Vec<RuleMessage>> {
         let mut stmt = self
@@ -245,5 +268,47 @@ mod tests {
         store.remove_account(me).unwrap();
         assert_eq!(names(&store, other), ["x"]);
         assert!(names(&store, me).is_empty());
+    }
+
+    #[test]
+    fn rules_can_look_at_a_whole_folder() {
+        use mail_core::{FolderRole, MessageHeader, RemoteFolder};
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        let me = account(&store, "me@example.test");
+        let remote = |name: &str, role| RemoteFolder {
+            name: name.into(),
+            delimiter: Some("/".into()),
+            role,
+            selectable: true,
+        };
+        let ids = store
+            .sync_folders(
+                me,
+                &[
+                    remote("INBOX", FolderRole::Inbox),
+                    remote("Old", FolderRole::Other),
+                ],
+            )
+            .unwrap();
+        let header = |uid: u32, subject: &str, date: i64| MessageHeader {
+            uid,
+            subject: Some(subject.into()),
+            date: Some(date),
+            ..MessageHeader::default()
+        };
+        store
+            .insert_headers(ids[0].0, &[header(1, "older", 10), header(2, "newer", 20)])
+            .unwrap();
+        store
+            .insert_headers(ids[1].0, &[header(1, "elsewhere", 30)])
+            .unwrap();
+        let subjects: Vec<_> = store
+            .folder_rule_messages(ids[0].0)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.subject.unwrap())
+            .collect();
+        assert_eq!(subjects, ["newer", "older"]);
     }
 }

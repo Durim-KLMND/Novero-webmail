@@ -415,6 +415,9 @@ export const api = {
   deleteRule: (id: number) => invoke<void>("delete_rule", { id }),
   orderRules: (account: number, ids: number[]) =>
     invoke<void>("order_rules", { account, ids }),
+  /** Runs one rule, or every rule that is on, on the mail in a folder;
+   *  returns how many messages matched. */
+  runRules: (folder: number, rule: number | null) => invoke<number>("run_rules", { folder, rule }),
   listSignatures: () => invoke<Signature[]>("list_signatures"),
   saveSignature: (signature: Signature) => invoke<Signature>("save_signature", { signature }),
   deleteSignature: (id: number) => invoke<void>("delete_signature", { id }),

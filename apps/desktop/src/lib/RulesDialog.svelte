@@ -4,6 +4,7 @@
   import { items, openMenu, toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { folderLabel } from "./format";
   import Icon from "./Icon.svelte";
+  import { toast } from "./toast.svelte";
 
   interface Props {
     accounts: Account[];
@@ -21,6 +22,15 @@
   let error = $state("");
   let busy = $state(false);
   let dialog = $state<HTMLDivElement>();
+
+  /** Running rules on mail already in a folder: one rule, or all that are on. */
+  let runner = $state<{ rule: Rule | null; folder: number | null } | null>(null);
+  let running = $state(false);
+  /** After saving, the edited rule also runs on the inbox. */
+  let runAfterSave = $state(false);
+  /** Folders rules can run on; drafts are left alone. */
+  const sources = $derived((folders[account] ?? []).filter((f) => f.role !== "drafts"));
+  const inbox = $derived((folders[account] ?? []).find((f) => f.role === "inbox"));
 
   /** Where a rule sends mail, as one choice in the editor. */
   type Destination = "inbox" | "move" | "archive" | "delete";
@@ -92,6 +102,8 @@
     };
     // A new rule from a sender starts with something to do.
     if (!rule.id && !rule.actions.length) editing.destination = targets.length ? "move" : "inbox";
+    runAfterSave = false;
+    runner = null;
     error = "";
     await tick();
     dialog?.querySelector<HTMLElement>(".editor input")?.focus();
@@ -119,6 +131,7 @@
       if (at >= 0) rules[at] = saved;
       else rules.push(saved);
       editing = null;
+      if (runAfterSave && inbox) await runOn(saved, inbox.id);
     } catch (err) {
       error = errorText(err);
     } finally {
@@ -160,6 +173,31 @@
     run(() => api.orderRules(account, next.map((r) => r.id)));
   }
 
+  function startRun(rule: Rule | null) {
+    error = "";
+    runner = { rule, folder: inbox?.id ?? sources[0]?.id ?? null };
+  }
+
+  /** Runs a rule (or, with null, all that are on) and says how it went. */
+  async function runOn(rule: Rule | null, folder: number) {
+    running = true;
+    error = "";
+    try {
+      const matched = await api.runRules(folder, rule?.id ?? null);
+      const where = folderName(folder);
+      toast(
+        matched === 0
+          ? `No messages in ${where} matched.`
+          : `${matched} message${matched === 1 ? "" : "s"} in ${where} matched and ${matched === 1 ? "was" : "were"} sorted.`,
+      );
+      runner = null;
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      running = false;
+    }
+  }
+
   function folderName(id: number): string {
     const f = (folders[account] ?? []).find((f) => f.id === id);
     return f ? folderLabel(f.name, f.role, f.delimiter) : "a removed folder";
@@ -192,6 +230,7 @@
     return items(
       { label: "Edit", icon: "edit", run: () => edit(rule) },
       { label: rule.enabled ? "Turn off" : "Turn on", icon: "power", run: () => toggle(rule) },
+      { label: "Run now on existing mail…", icon: "run", run: () => startRun(rule) },
       "separator",
       at > 0 && { label: "Move up", icon: "move-up", run: () => shift(rule, -1) },
       at < rules.length - 1 && { label: "Move down", icon: "move-down", run: () => shift(rule, 1) },
@@ -282,6 +321,11 @@
           </div>
         </div>
         <small class="quiet">Runs on new mail as it arrives in the inbox.</small>
+        {#if inbox}
+          <label class="check">
+            <input type="checkbox" bind:checked={runAfterSave} /> Also run it now on the mail already in the inbox
+          </label>
+        {/if}
 
         {#if error}<p class="error" role="alert">{error}</p>{/if}
         <div class="buttons">
@@ -291,7 +335,7 @@
       </div>
     {:else}
       <p class="quiet intro">
-        Rules sort new mail as it arrives in the inbox. Every rule that matches a message acts on it, from the top down.
+        Rules sort new mail as it arrives in the inbox. Every rule that matches a message acts on it, from the top down. Run them now to sort mail you already have.
       </p>
       {#if loaded && rules.length === 0}
         <p class="empty quiet">No rules yet.</p>
@@ -316,9 +360,29 @@
           </li>
         {/each}
       </ul>
+      {#if runner}
+        <div class="runner" role="group" aria-label="Run rules now">
+          <span>
+            Run {runner.rule ? `“${runner.rule.name || "this rule"}”` : "every rule that is on"} on the mail in this
+            folder:
+          </span>
+          <select aria-label="Folder to run on" bind:value={runner.folder}>
+            {#each sources as f (f.id)}<option value={f.id}>{folderLabel(f.name, f.role, f.delimiter)}</option>{/each}
+          </select>
+          <button onclick={() => (runner = null)} disabled={running}>Cancel</button>
+          <button
+            class="primary"
+            disabled={running || runner.folder == null}
+            onclick={() => runner && runner.folder != null && runOn(runner.rule, runner.folder)}
+          >{running ? "Running…" : "Run"}</button>
+        </div>
+      {/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="buttons">
         <button onclick={() => edit(blank())} disabled={!loaded}><Icon name="plus" /> New rule</button>
+        {#if rules.some((r) => r.enabled)}
+          <button onclick={() => startRun(null)} disabled={!loaded || running}><Icon name="run" /> Run rules now…</button>
+        {/if}
         <span class="grow"></span>
         <button class="primary" onclick={onClose}>Done</button>
       </div>
@@ -461,6 +525,25 @@
     width: auto;
     margin: 0;
     accent-color: var(--accent-ink);
+  }
+  .runner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-side);
+  }
+  .runner span {
+    flex-basis: 100%;
+  }
+  .runner select {
+    width: auto;
+    flex: 1;
+    min-width: 140px;
   }
   .buttons {
     display: flex;
