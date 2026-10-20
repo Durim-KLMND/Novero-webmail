@@ -11,5 +11,6 @@ pub mod oauth;
 pub mod providers;
 mod secrets;
 
+pub use http::https_client;
 pub use mail_core::{Error, Result};
 pub use secrets::{MemoryStore, SecretStore, platform_store};

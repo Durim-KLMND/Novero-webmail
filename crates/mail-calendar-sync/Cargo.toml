@@ -1,0 +1,19 @@
+[package]
+name = "mail-calendar-sync"
+description = "Two-way sync with Google Calendar and Outlook calendars (Microsoft Graph)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mail-auth = { path = "../mail-auth" }
+mail-calendar = { path = "../mail-calendar" }
+mail-core.workspace = true
+jiff = "0.2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
+serde_json.workspace = true
+url = "2"
+
+[lints]
+workspace = true

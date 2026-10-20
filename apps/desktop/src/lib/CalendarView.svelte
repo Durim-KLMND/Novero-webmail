@@ -2,7 +2,17 @@
   // The calendar: a month, week or day at a time, with the list of calendars
   // and a small month to jump around on the left.
   import { onMount, tick } from "svelte";
-  import { api, errorText, onCalendarChanged, type Calendar, type CalendarEvent, type Occurrence } from "./api";
+  import {
+    api,
+    errorText,
+    onCalendarChanged,
+    type Calendar,
+    type CalendarAccount,
+    type CalendarAccounts,
+    type CalendarEvent,
+    type OAuthProvider,
+    type Occurrence,
+  } from "./api";
   import {
     COLORS,
     addDays,
@@ -20,7 +30,7 @@
     viewTitle,
     type CalendarMode,
   } from "./calendar";
-  import { items, openMenu, type MenuItem } from "./menus.svelte";
+  import { items, openMenu, toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { toast } from "./toast.svelte";
   import EventDialog from "./EventDialog.svelte";
   import Icon from "./Icon.svelte";
@@ -58,6 +68,14 @@
   let newCalendarName = $state("");
   let renaming = $state<number | null>(null);
   let renameText = $state("");
+  let online = $state<CalendarAccounts>({ accounts: [], syncing: false, providers: [] });
+  /** Waiting for the browser sign-in of this provider. */
+  let connecting = $state<OAuthProvider | null>(null);
+
+  const SERVICE: Record<OAuthProvider, string> = { google: "Google Calendar", microsoft: "Outlook" };
+  const localCalendars = $derived(calendars.filter((c) => c.source == null));
+  /** Calendars events can be added to or moved to. */
+  const writable = $derived(calendars.filter((c) => !c.readOnly));
 
   const days = $derived(viewDays(mode, anchor));
   const title = $derived(viewTitle(mode, anchor));
@@ -79,9 +97,14 @@
     const to = toSecs(last) + 86_400;
     const mine = ++loadCount;
     try {
-      const [cals, found] = await Promise.all([api.listCalendars(), api.calendarOccurrences(from, to)]);
+      const [cals, found, accounts] = await Promise.all([
+        api.listCalendars(),
+        api.calendarOccurrences(from, to),
+        api.listCalendarAccounts(),
+      ]);
       if (mine !== loadCount) return;
       calendars = cals;
+      online = accounts;
       occurrences = found;
       error = "";
     } catch (err) {
@@ -92,6 +115,11 @@
   $effect(() => {
     void days;
     load();
+  });
+
+  // Opening the calendar brings online calendars up to date.
+  $effect(() => {
+    if (active) api.syncCalendars().catch(() => {});
   });
 
   $effect(() => {
@@ -133,7 +161,7 @@
   }
 
   function defaultCalendar(): number {
-    return (calendars.find((c) => c.visible) ?? calendars[0])?.id ?? 1;
+    return (writable.find((c) => c.visible) ?? writable[0] ?? calendars[0])?.id ?? 1;
   }
 
   /** A new event at `start`, or at the next hour of the shown day. */
@@ -205,10 +233,11 @@
       e,
       items(
         { label: "Open", icon: "edit", run: () => open(o) },
-        calendars.length > 1 && {
+        writable.length > 1 &&
+          !calendars.find((c) => c.id === o.calendar)?.readOnly && {
           label: "Move to calendar",
           icon: "calendar",
-          items: calendars.map((c) => ({
+          items: writable.map((c) => ({
             label: c.name,
             icon: c.id === o.calendar ? ("check" as const) : undefined,
             disabled: c.id === o.calendar,
@@ -217,7 +246,7 @@
         },
         "separator",
         o.repeats && { label: "Delete only this time", icon: "trash", run: () => deleteOccurrence(o, false) },
-        {
+        !calendars.find((c) => c.id === o.calendar)?.readOnly && {
           label: o.repeats ? "Delete every time" : "Delete",
           icon: "trash",
           danger: true,
@@ -335,10 +364,11 @@
       swatch: color,
       run: () => saveCalendar({ ...calendar, color }),
     }));
+    const local = calendar.source == null;
     openMenu(
       e,
       items(
-        { label: "Rename", icon: "edit", run: () => startRename(calendar) },
+        local && { label: "Rename", icon: "edit", run: () => startRename(calendar) },
         { label: "Colour", icon: "palette", items: colors },
         {
           label: "Show only this calendar",
@@ -348,7 +378,7 @@
           },
         },
         "separator",
-        calendars.length > 1 && {
+        local && localCalendars.length > 1 && {
           label: "Delete calendar",
           icon: "trash",
           danger: true,
@@ -356,6 +386,73 @@
         },
       ),
     );
+  }
+
+  // Online calendars.
+
+  /** The add button: a calendar here, or an online account's. */
+  function addMenu(e: MouseEvent) {
+    toggleMenuUnder(
+      e.currentTarget as Element,
+      items(
+        { label: "New calendar on this computer", icon: "plus", run: () => (addingCalendar = true) },
+        online.providers.length > 0 && "separator",
+        online.providers.includes("google") && {
+          label: "Connect Google Calendar…",
+          icon: "cloud",
+          run: () => connect("google"),
+        },
+        online.providers.includes("microsoft") && {
+          label: "Connect Outlook or Hotmail…",
+          icon: "cloud",
+          run: () => connect("microsoft"),
+        },
+      ),
+    );
+  }
+
+  async function connect(provider: OAuthProvider, id: number | null = null) {
+    connecting = provider;
+    try {
+      const account = await api.connectCalendar(provider, id);
+      toast(`Syncing the calendars of ${account.email}.`);
+    } catch (err) {
+      const text = errorText(err);
+      if (!text.includes("cancelled")) toast(text, "error");
+    } finally {
+      connecting = null;
+    }
+  }
+
+  async function disconnect(account: CalendarAccount) {
+    try {
+      await api.disconnectCalendar(account.id);
+      toast(`Disconnected ${account.email}. Its calendars are still online.`);
+    } catch (err) {
+      toast(errorText(err), "error");
+    }
+  }
+
+  function accountMenu(e: MouseEvent, account: CalendarAccount) {
+    openMenu(
+      e,
+      items(
+        { label: "Sync now", icon: "refresh", run: () => api.syncCalendars() },
+        account.needsSignIn && { label: "Sign in again", icon: "sign-in", run: () => connect(account.provider, account.id) },
+        "separator",
+        { label: "Disconnect", icon: "remove-account", danger: true, run: () => disconnect(account) },
+      ),
+    );
+  }
+
+  function syncedText(): string {
+    const times = online.accounts.map((a) => a.syncedAt).filter((t): t is number => t != null);
+    if (!times.length) return "Not synced yet.";
+    const at = new Date(Math.min(...times) * 1000);
+    const minutes = Math.round((now.getTime() - at.getTime()) / 60_000);
+    if (minutes < 1) return "Synced just now.";
+    if (minutes < 60) return `Synced ${minutes} min ago.`;
+    return `Synced at ${timeText(at)}.`;
   }
 
   function typing(e: KeyboardEvent): boolean {
@@ -404,35 +501,40 @@
       </div>
     </div>
 
+    {#snippet row(c: Calendar)}
+      <li oncontextmenu={(e) => calendarMenu(e, c)}>
+        {#if renaming === c.id}
+          <span class="swatch" style:background={c.color}></span>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="rename"
+            aria-label="Calendar name"
+            bind:value={renameText}
+            onblur={() => finishRename(c)}
+            onkeydown={(e) => {
+              if (e.key === "Enter") finishRename(c);
+              else if (e.key === "Escape") renaming = null;
+            }}
+          />
+        {:else}
+          <label title={c.visible ? "Shown" : "Hidden"}>
+            <input type="checkbox" checked={c.visible} onchange={() => saveCalendar({ ...c, visible: !c.visible })} style:--swatch={c.color} />
+            <span class="name">{c.name}</span>
+            {#if c.readOnly}<span class="lock" title="Can only be looked at"><Icon name="lock" size={12} /></span>{/if}
+          </label>
+          <button class="icon-only more" aria-label="Options for {c.name}" onclick={(e) => calendarMenu(e, c)}><Icon name="more" size={14} /></button>
+        {/if}
+      </li>
+    {/snippet}
+
     <div class="calendars">
       <div class="heading">
-        <span>Calendars</span>
-        <button class="icon-only" aria-label="Add a calendar" title="Add a calendar" onclick={() => (addingCalendar = true)}><Icon name="plus" size={14} /></button>
+        <span>{online.accounts.length ? "On this computer" : "Calendars"}</span>
+        <button class="icon-only" aria-label="Add a calendar" title="Add a calendar" onclick={addMenu}><Icon name="plus" size={14} /></button>
       </div>
       <ul>
-        {#each calendars as c (c.id)}
-          <li oncontextmenu={(e) => calendarMenu(e, c)}>
-            {#if renaming === c.id}
-              <span class="swatch" style:background={c.color}></span>
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
-                class="rename"
-                aria-label="Calendar name"
-                bind:value={renameText}
-                onblur={() => finishRename(c)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter") finishRename(c);
-                  else if (e.key === "Escape") renaming = null;
-                }}
-              />
-            {:else}
-              <label title={c.visible ? "Shown" : "Hidden"}>
-                <input type="checkbox" checked={c.visible} onchange={() => saveCalendar({ ...c, visible: !c.visible })} style:--swatch={c.color} />
-                <span class="name">{c.name}</span>
-              </label>
-              <button class="icon-only more" aria-label="Options for {c.name}" onclick={(e) => calendarMenu(e, c)}><Icon name="more" size={14} /></button>
-            {/if}
-          </li>
+        {#each localCalendars as c (c.id)}
+          {@render row(c)}
         {/each}
         {#if addingCalendar}
           <li>
@@ -456,7 +558,43 @@
         {/if}
       </ul>
     </div>
-    <p class="quiet local">Kept on this computer.</p>
+
+    {#each online.accounts as a (a.id)}
+      <div class="calendars">
+        <div class="heading" oncontextmenu={(e) => (e.preventDefault(), accountMenu(e, a))} role="group" aria-label={a.email}>
+          <span>{SERVICE[a.provider]}</span>
+          <button class="icon-only" aria-label="Options for {a.email}" title="Options for {a.email}" onclick={(e) => accountMenu(e, a)}><Icon name="more" size={14} /></button>
+        </div>
+        <p class="account quiet" title={a.email}>{a.email}</p>
+        {#if a.error}
+          <p class="account-error">
+            {a.needsSignIn ? "The sign-in has expired." : a.error}
+            {#if a.needsSignIn}<button class="link" onclick={() => connect(a.provider, a.id)}>Sign in again</button>{/if}
+          </p>
+        {/if}
+        <ul>
+          {#each calendars.filter((c) => c.source === a.id) as c (c.id)}
+            {@render row(c)}
+          {/each}
+        </ul>
+      </div>
+    {/each}
+
+    <div class="quiet local">
+      {#if connecting}
+        <p>Finish signing in to {SERVICE[connecting]} in your browser.</p>
+        <button class="link" onclick={() => api.cancelSignIn()}>Cancel</button>
+      {:else if online.syncing}
+        <p>Syncing…</p>
+      {:else if online.accounts.length}
+        <p>{syncedText()}</p>
+      {:else}
+        <p>Kept on this computer.</p>
+        {#if online.providers.length}
+          <button class="link" onclick={addMenu}>Sync with Google or Outlook</button>
+        {/if}
+      {/if}
+    </div>
   </aside>
 
   <section class="main">
@@ -719,9 +857,42 @@
     border-radius: 4px;
     flex: none;
   }
+  .lock {
+    display: inline-flex;
+    color: var(--text-quiet);
+    flex: none;
+  }
+  .account {
+    margin: 2px 0 0;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .account-error {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--danger);
+  }
+  .link {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--accent-ink);
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+  }
   .local {
     margin: auto 0 0;
     font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: baseline;
+  }
+  .local p {
+    margin: 0;
   }
 
   .main {

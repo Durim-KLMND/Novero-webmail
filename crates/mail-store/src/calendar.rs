@@ -7,19 +7,22 @@ use rusqlite::{OptionalExtension, Row, params};
 use crate::storage;
 use crate::store::Store;
 
-const CALENDAR_SELECT: &str = "SELECT id, name, color, account_id, visible FROM calendars";
+pub(crate) const CALENDAR_SELECT: &str =
+    "SELECT id, name, color, account_id, visible, source, read_only FROM calendars";
 
-const EVENT_SELECT: &str = "SELECT id, calendar_id, uid, title, location, notes, starts, ends, \
-     all_day, tz, rrule, exdates, organizer, attendees, response, reminder, sequence, cancelled \
-     FROM events";
+pub(crate) const EVENT_SELECT: &str = "SELECT id, calendar_id, uid, title, location, notes, starts, ends, \
+     all_day, tz, rrule, exdates, organizer, attendees, response, reminder, sequence, cancelled, \
+     series FROM events";
 
-fn calendar_row(row: &Row<'_>) -> rusqlite::Result<Calendar> {
+pub(crate) fn calendar_row(row: &Row<'_>) -> rusqlite::Result<Calendar> {
     Ok(Calendar {
         id: row.get(0)?,
         name: row.get(1)?,
         color: row.get(2)?,
         account: row.get::<_, Option<i64>>(3)?.map(AccountId),
         visible: row.get(4)?,
+        source: row.get(5)?,
+        read_only: row.get(6)?,
     })
 }
 
@@ -35,7 +38,7 @@ fn response_text(response: Option<Response>) -> Option<&'static str> {
     response.map(Response::partstat)
 }
 
-fn event_row(row: &Row<'_>) -> rusqlite::Result<Event> {
+pub(crate) fn event_row(row: &Row<'_>) -> rusqlite::Result<Event> {
     Ok(Event {
         id: row.get(0)?,
         calendar: row.get(1)?,
@@ -57,10 +60,11 @@ fn event_row(row: &Row<'_>) -> rusqlite::Result<Event> {
         reminder: row.get(15)?,
         sequence: row.get(16)?,
         cancelled: row.get(17)?,
+        series: row.get(18)?,
     })
 }
 
-fn to_json<T: serde::Serialize>(value: &T) -> Result<String> {
+pub(crate) fn to_json<T: serde::Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|e| Error::Storage(e.to_string()))
 }
 
@@ -117,11 +121,28 @@ impl Store {
             .map_err(storage)
     }
 
-    /// Deletes a calendar and its events. The last one stays.
+    /// Deletes a calendar kept on this computer and its events. The last
+    /// one stays; online calendars go when their account is disconnected.
     pub fn delete_calendar(&self, id: i64) -> Result<()> {
+        let source: Option<Option<i64>> = self
+            .conn
+            .query_row("SELECT source FROM calendars WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(storage)?;
+        if source.flatten().is_some() {
+            return Err(Error::Invalid(
+                "Online calendars are removed by disconnecting their account.".into(),
+            ));
+        }
         let count: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM calendars", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM calendars WHERE source IS NULL",
+                [],
+                |r| r.get(0),
+            )
             .map_err(storage)?;
         if count <= 1 {
             return Err(Error::Invalid("The last calendar can't be deleted.".into()));
@@ -212,7 +233,8 @@ impl Store {
                     "UPDATE events SET calendar_id = ?1, uid = ?2, title = ?3, location = ?4, notes = ?5, \
                      starts = ?6, ends = ?7, all_day = ?8, tz = ?9, rrule = ?10, exdates = ?11, organizer = ?12, \
                      attendees = ?13, response = ?14, reminder = ?15, sequence = ?16, cancelled = ?17, \
-                     last_ends = ?18, reminded = NULL WHERE id = ?19",
+                     last_ends = ?18, \
+                     reminded = CASE WHEN starts = ?6 AND rrule IS ?10 THEN reminded END WHERE id = ?19",
                     rusqlite::params_from_iter(values.iter().copied().chain([&event.id as &dyn rusqlite::ToSql])),
                 )
                 .map_err(storage)?;
@@ -271,7 +293,7 @@ impl Store {
                         starts,
                         ends,
                         all_day: e.all_day,
-                        repeats: e.rrule.is_some(),
+                        repeats: e.rrule.is_some() || e.series.is_some(),
                         cancelled: e.cancelled,
                         response: e.response,
                     })
@@ -284,7 +306,8 @@ impl Store {
     /// Puts an invitation in the calendar, or updates the copy already there.
     /// A copy newer than the invitation (a higher SEQUENCE) keeps its details;
     /// the user's answer and reminder are kept unless `response` gives a new one.
-    /// New invitations go in the account's calendar, else the first one.
+    /// New invitations go in the account's calendar, else the first one kept
+    /// on this computer: the online account gets its own copy by itself.
     pub fn take_invitation(
         &self,
         incoming: &Event,
@@ -305,7 +328,8 @@ impl Store {
                 let calendar: Option<i64> = self
                     .conn
                     .query_row(
-                        "SELECT id FROM calendars ORDER BY account_id IS NOT ?1, position, id LIMIT 1",
+                        "SELECT id FROM calendars ORDER BY source IS NOT NULL, account_id IS NOT ?1, \
+                         position, id LIMIT 1",
                         [account.0],
                         |r| r.get(0),
                     )
@@ -445,6 +469,7 @@ mod tests {
             reminder: None,
             sequence: 0,
             cancelled: false,
+            series: None,
         }
     }
 

@@ -16,6 +16,7 @@ tauri-build = { version = "2.7", features = [] }
 [dependencies]
 mail-auth = { path = "../../../crates/mail-auth" }
 mail-calendar = { path = "../../../crates/mail-calendar" }
+mail-calendar-sync = { path = "../../../crates/mail-calendar-sync" }
 mail-core.workspace = true
 mail-mime = { path = "../../../crates/mail-mime" }
 mail-send = { path = "../../../crates/mail-send" }
