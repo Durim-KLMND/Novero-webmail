@@ -1,0 +1,15 @@
+[package]
+name = "mail-calendar"
+description = "iCalendar (.ics) reading and writing, and expanding repeating events."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mail-core.workspace = true
+jiff = "0.2"
+uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true

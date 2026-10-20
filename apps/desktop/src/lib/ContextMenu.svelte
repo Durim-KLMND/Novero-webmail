@@ -136,7 +136,7 @@
         onclick={(e) => (item.items ? showSub(item, e.currentTarget, true) : choose(item))}
         tabindex="-1"
       >
-        <span class="icon-slot">{#if item.icon}<Icon name={item.icon} />{/if}</span>
+        <span class="icon-slot">{#if item.swatch}<span class="swatch" style:background={item.swatch}></span>{:else if item.icon}<Icon name={item.icon} />{/if}</span>
         <span class="label">{item.label}</span>
         {#if item.shortcut}<span class="shortcut">{item.shortcut}</span>{/if}
         {#if item.items}<span class="shortcut"><Icon name="chevron-right" size={14} /></span>{/if}
@@ -221,6 +221,11 @@
     display: flex;
     width: 16px;
     color: var(--text-quiet);
+  }
+  .swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
   }
   .label {
     flex: 1;

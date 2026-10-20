@@ -46,6 +46,65 @@ export type FolderRole =
   | "archive"
   | "other";
 
+export interface Calendar {
+  id: number;
+  name: string;
+  /** A CSS colour, such as #2e7d6b. */
+  color: string;
+  account: number | null;
+  visible: boolean;
+}
+
+export type InviteResponse = "needsAction" | "accepted" | "tentative" | "declined";
+
+export interface Attendee {
+  email: string;
+  name: string | null;
+  response: InviteResponse;
+}
+
+/**
+ * An event; for a repeating one, its first occurrence and the rule. Times are
+ * UTC seconds; an all-day event runs from UTC midnight of its first day to UTC
+ * midnight after its last.
+ */
+export interface CalendarEvent {
+  id: number;
+  calendar: number;
+  uid: string;
+  title: string;
+  location: string;
+  notes: string;
+  starts: number;
+  ends: number;
+  allDay: boolean;
+  tz: string | null;
+  /** An iCalendar RRULE value, such as FREQ=WEEKLY;BYDAY=MO. */
+  rrule: string | null;
+  exdates: number[];
+  organizer: string | null;
+  attendees: Attendee[];
+  response: InviteResponse | null;
+  /** Minutes before the start to remind, if at all. */
+  reminder: number | null;
+  sequence: number;
+  cancelled: boolean;
+}
+
+/** One time an event happens. */
+export interface Occurrence {
+  event: number;
+  calendar: number;
+  title: string;
+  location: string;
+  starts: number;
+  ends: number;
+  allDay: boolean;
+  repeats: boolean;
+  cancelled: boolean;
+  response: InviteResponse | null;
+}
+
 export type RuleField = "from" | "to" | "subject";
 
 export interface RuleCondition {
@@ -364,7 +423,22 @@ export const api = {
     invoke<UpdateInfo | null>("check_for_update", { channel }),
   readyUpdate: () => invoke<UpdateInfo | null>("ready_update"),
   installUpdate: () => invoke<void>("install_update"),
+  listCalendars: () => invoke<Calendar[]>("list_calendars"),
+  saveCalendar: (calendar: Calendar) => invoke<Calendar>("save_calendar", { calendar }),
+  deleteCalendar: (id: number) => invoke<void>("delete_calendar", { id }),
+  calendarOccurrences: (from: number, to: number) =>
+    invoke<Occurrence[]>("calendar_occurrences", { from, to }),
+  getEvent: (id: number) => invoke<CalendarEvent | null>("get_event", { id }),
+  saveEvent: (event: CalendarEvent) => invoke<CalendarEvent>("save_event", { event }),
+  deleteEvent: (id: number) => invoke<void>("delete_event", { id }),
+  skipOccurrence: (id: number, starts: number) =>
+    invoke<CalendarEvent>("skip_occurrence", { id, starts }),
 };
+
+/** Calendars or events changed, in this window or another. */
+export function onCalendarChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("calendar-changed", () => handler());
+}
 
 /** Files dragged over the window (positions in CSS pixels), and dropped. */
 export type FileDrop =

@@ -8,6 +8,8 @@ import type { IconName } from "./Icon.svelte";
 export interface MenuAction {
   label: string;
   icon?: IconName;
+  /** A colour shown in place of the icon, as for picking a calendar's colour. */
+  swatch?: string;
   /** Shown on the right, e.g. "R". */
   shortcut?: string;
   danger?: boolean;
