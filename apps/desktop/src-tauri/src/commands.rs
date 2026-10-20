@@ -6,7 +6,7 @@ use mail_auth::discover::{Discovered, Discoverer};
 use mail_auth::oauth::{self, OAuthClient, Tokens};
 use mail_core::{
     Account, AccountId, AuthMethod, Endpoint, Error, Event, FlagKind, FolderId, FolderRole,
-    NewAccount, OAuthProvider, Op, Result, Secret,
+    NewAccount, Op, Result, Secret,
 };
 use mail_mime::ParsedMessage;
 use mail_store::{Folder, Mailbox, MessageLocation, MessagePage, MessageSummary};
@@ -89,7 +89,7 @@ pub async fn add_account(
         }
         AuthMethod::Password => Secret::Password(input.password),
         AuthMethod::OAuth2 { provider } => {
-            let signed_in = browser_sign_in(&app, &state, provider, &email).await?;
+            let signed_in = browser_sign_in(&app, &state, oauth_client(provider)?, &email).await?;
             // The account is whichever one was chosen on the sign-in page.
             if let Some(address) = &signed_in.email {
                 email = address.clone();
@@ -172,7 +172,8 @@ pub async fn sign_in_again(
             None => return Err(Error::Invalid("enter your password".into())),
         },
         AuthMethod::OAuth2 { provider } => {
-            let tokens = browser_sign_in(&app, &state, provider, &account.email).await?;
+            let tokens =
+                browser_sign_in(&app, &state, oauth_client(provider)?, &account.email).await?;
             if let Some(other) = tokens
                 .email
                 .as_ref()
@@ -284,13 +285,12 @@ pub fn cancel_sign_in(state: State<'_, AppState>) {
 
 /// Opens the provider's sign-in page in the browser and waits for it, unless
 /// the person cancels.
-async fn browser_sign_in(
+pub(crate) async fn browser_sign_in(
     app: &AppHandle,
     state: &AppState,
-    provider: OAuthProvider,
+    client: OAuthClient,
     login_hint: &str,
 ) -> Result<Tokens> {
-    let client = oauth_client(provider)?;
     let (cancel, cancelled) = tokio::sync::oneshot::channel();
     if let Some(earlier) = state.sign_in.lock().unwrap().replace(cancel) {
         // Only one sign-in page at a time; the newest one wins.

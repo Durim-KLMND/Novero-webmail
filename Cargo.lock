@@ -904,6 +904,7 @@ dependencies = [
  "base64 0.22.1",
  "mail-auth",
  "mail-calendar",
+ "mail-calendar-sync",
  "mail-core",
  "mail-mime",
  "mail-send",
@@ -2617,6 +2618,19 @@ dependencies = [
  "jiff",
  "mail-core",
  "uuid",
+]
+
+[[package]]
+name = "mail-calendar-sync"
+version = "0.3.0"
+dependencies = [
+ "jiff",
+ "mail-auth",
+ "mail-calendar",
+ "mail-core",
+ "reqwest",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

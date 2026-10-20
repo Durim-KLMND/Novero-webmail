@@ -52,6 +52,40 @@ before the app can be used by anyone.
 Work and school accounts may need their admin to consent to the app, and SMTP sending must be
 allowed for the mailbox (Exchange admin center: **Authenticated SMTP**).
 
+## Calendar sync
+
+The calendar can sync with Google Calendar and with Outlook.com, Hotmail and Microsoft 365
+calendars (**Add a calendar → Connect Google Calendar / Connect Outlook or Hotmail** in the
+calendar's sidebar). It uses the same app registrations and client IDs as mail, with a sign-in of
+its own that asks only for calendar access, so mail accounts are not affected. Each registration
+needs one more API and permission:
+
+**Google**
+
+1. **APIs & Services → Library**: enable the **Google Calendar API**.
+2. **Data Access → Add or remove scopes**: add `https://www.googleapis.com/auth/calendar`
+   (see, edit, share and delete all calendars). It is a sensitive scope, not a restricted one:
+   publishing needs Google's verification but no security assessment.
+3. While the app is in **Testing**, the account must be a test user, as for mail.
+
+**Microsoft**
+
+1. **API permissions → Add a permission → Microsoft Graph → Delegated**: add
+   `Calendars.ReadWrite`.
+2. Nothing else changes: the redirect URI and public client setting are the ones mail uses.
+
+How the sync works:
+
+- Changes made in Novero Mail are sent within a few seconds; changes made elsewhere arrive every
+  five minutes and whenever the calendar is opened (or with **Sync now** in the account's menu).
+- Google calendars keep repeating events as series. Outlook calendars are read as single
+  occurrences from 90 days back to about a year ahead; an occurrence there can be changed or
+  deleted on its own, and deleting with **Delete every time** deletes the series.
+- Calendars shared with read-only access (holidays, birthdays, other people's calendars) show a
+  lock and can't be changed.
+- A change the server refuses is undone in the app, and the account shows why.
+- **Disconnect** removes the account's calendars from the app only.
+
 ## Using the IDs
 
 **CI and installers.** In the GitHub repository, open **Settings → Secrets and variables →

@@ -96,6 +96,30 @@ impl OAuthClient {
     }
 }
 
+impl OAuthClient {
+    /// The client for syncing calendars with `provider`: the same app, asking
+    /// for calendar access instead of mail. Microsoft gives a token for one
+    /// service at a time, so calendars get their own sign-in.
+    pub fn for_calendar(provider: OAuthProvider) -> Option<Self> {
+        let mut client = Self::for_provider(provider)?;
+        let scopes: &[&str] = match provider {
+            OAuthProvider::Google => &[
+                "https://www.googleapis.com/auth/calendar",
+                "openid",
+                "email",
+            ],
+            OAuthProvider::Microsoft => &[
+                "https://graph.microsoft.com/Calendars.ReadWrite",
+                "offline_access",
+                "openid",
+                "email",
+            ],
+        };
+        client.scopes = scopes.iter().map(|s| (*s).to_owned()).collect();
+        Some(client)
+    }
+}
+
 /// What a sign-in or refresh returns.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Tokens {
@@ -140,8 +164,10 @@ pub async fn sign_in(
         .append_pair("state", &state)
         .append_pair("code_challenge", &challenge(&verifier))
         .append_pair("code_challenge_method", "S256")
-        .append_pair("login_hint", login_hint)
         .extend_pairs(&client.extra);
+    if !login_hint.is_empty() {
+        url.query_pairs_mut().append_pair("login_hint", login_hint);
+    }
     open(url.as_str())?;
 
     let code = tokio::time::timeout(SIGN_IN_TIMEOUT, wait_for_code(&listener, &state))

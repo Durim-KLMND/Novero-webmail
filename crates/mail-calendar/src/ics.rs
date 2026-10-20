@@ -344,6 +344,7 @@ pub fn parse(text: &str) -> Option<Invitation> {
         reminder: None,
         sequence: 0,
         cancelled: method == Method::Cancel,
+        series: None,
     };
     let mut start = None;
     let mut end = None;
@@ -475,6 +476,29 @@ fn time_line(name: &str, seconds: i64, event: &Event) -> String {
         return format!("{name};TZID={zone}:{}", local.strftime("%Y%m%dT%H%M%S"));
     }
     format!("{name}:{}", stamp(seconds))
+}
+
+/// The times in an `EXDATE` line, such as Google lists beside a series' rule.
+pub fn exdates(line: &str) -> Vec<i64> {
+    let Some(line) = split_line(line) else {
+        return Vec::new();
+    };
+    line.value
+        .split(',')
+        .filter_map(|value| {
+            let one = Line {
+                name: line.name.clone(),
+                params: line.params.clone(),
+                value: value.to_owned(),
+            };
+            when(&one, &Offsets::new()).map(|(at, _, _)| at)
+        })
+        .collect()
+}
+
+/// An `EXDATE` line taking the occurrence starting at `start` out of `event`.
+pub fn exdate_line(event: &Event, start: i64) -> String {
+    time_line("EXDATE", start, event)
 }
 
 /// A mailbox written as `Ann Lee <ann@example.com>` → (`ann@…`, `Ann Lee`).
@@ -690,6 +714,42 @@ BEGIN:VEVENT\nUID:c@d\nDTSTART;TZID=Custom Zone:20261021T100000\nDURATION:PT45M\
                 .unwrap()
                 .event
                 .cancelled
+        );
+    }
+
+    #[test]
+    fn exdate_lines_are_read_and_written() {
+        assert_eq!(
+            exdates("EXDATE;TZID=Europe/Berlin:20261020T090000,20261021T090000"),
+            [1_792_479_600, 1_792_566_000]
+        );
+        assert_eq!(exdates("EXDATE;VALUE=DATE:20261020"), [1_792_454_400]);
+        assert_eq!(exdates("EXDATE:20261020T070000Z"), [1_792_479_600]);
+        assert!(exdates("nonsense").is_empty());
+        let event = Event {
+            id: 0,
+            calendar: 0,
+            uid: "u".into(),
+            title: String::new(),
+            location: String::new(),
+            notes: String::new(),
+            starts: 1_792_393_200,
+            ends: 1_792_396_800,
+            all_day: false,
+            tz: Some("Europe/Berlin".into()),
+            rrule: Some("FREQ=DAILY".into()),
+            exdates: Vec::new(),
+            organizer: None,
+            attendees: Vec::new(),
+            response: None,
+            reminder: None,
+            sequence: 0,
+            cancelled: false,
+            series: None,
+        };
+        assert_eq!(
+            exdate_line(&event, 1_792_479_600),
+            "EXDATE;TZID=Europe/Berlin:20261020T090000"
         );
     }
 }

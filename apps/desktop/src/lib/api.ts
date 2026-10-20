@@ -78,6 +78,28 @@ export interface Calendar {
   color: string;
   account: number | null;
   visible: boolean;
+  /** The online account it syncs with; null when kept on this computer. */
+  source?: number | null;
+  /** An online calendar that can only be looked at. */
+  readOnly?: boolean;
+}
+
+/** A Google or Microsoft account whose calendars sync. */
+export interface CalendarAccount {
+  id: number;
+  provider: OAuthProvider;
+  email: string;
+  /** When the last sync finished, in UTC seconds. */
+  syncedAt: number | null;
+  error: string | null;
+  needsSignIn: boolean;
+}
+
+export interface CalendarAccounts {
+  accounts: CalendarAccount[];
+  syncing: boolean;
+  /** Providers this build can sign in with. */
+  providers: OAuthProvider[];
 }
 
 export type InviteResponse = "needsAction" | "accepted" | "tentative" | "declined";
@@ -114,6 +136,8 @@ export interface CalendarEvent {
   reminder: number | null;
   sequence: number;
   cancelled: boolean;
+  /** For one occurrence of an online repeating event: its series. */
+  series?: string | null;
 }
 
 /** One time an event happens. */
@@ -527,8 +551,15 @@ export const api = {
   messageInvite: (id: number) => invoke<InviteView | null>("message_invite", { id }),
   answerInvite: (id: number, response: InviteResponse, send: boolean) =>
     invoke<CalendarEvent>("answer_invite", { id, response, send }),
+  /** Null when the occurrence was its own event and is now gone. */
   skipOccurrence: (id: number, starts: number) =>
-    invoke<CalendarEvent>("skip_occurrence", { id, starts }),
+    invoke<CalendarEvent | null>("skip_occurrence", { id, starts }),
+  listCalendarAccounts: () => invoke<CalendarAccounts>("list_calendar_accounts"),
+  /** Signs in for an account's calendars; with `id`, that account again. */
+  connectCalendar: (provider: OAuthProvider, id: number | null = null) =>
+    invoke<CalendarAccount>("connect_calendar", { provider, id }),
+  disconnectCalendar: (id: number) => invoke<void>("disconnect_calendar", { id }),
+  syncCalendars: () => invoke<void>("sync_calendars"),
 };
 
 /** Calendars or events changed, in this window or another. */

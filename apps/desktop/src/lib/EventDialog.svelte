@@ -34,6 +34,12 @@
 
   const isNew = event.id === 0;
   const invitation = !!event.organizer;
+  const home = $derived(calendars.find((c) => c.id === event.calendar));
+  /** In an online calendar that can only be looked at. */
+  const readOnly = $derived(!!home?.readOnly);
+  /** One occurrence of an online series, kept as its own event. */
+  const instance = !!event.series;
+  const choices = $derived(calendars.filter((c) => !c.readOnly || c.id === event.calendar));
 
   // The form works in local dates and times. An all-day event's last day is
   // the day before its end.
@@ -92,6 +98,7 @@
   }
 
   async function save() {
+    if (readOnly) return;
     const when = times();
     if (typeof when === "string") {
       error = when;
@@ -143,7 +150,7 @@
   }
 
   function deleteClicked(e: MouseEvent) {
-    if (!event.rrule || occurrence == null) {
+    if ((!event.rrule && !instance) || occurrence == null) {
       removeAll();
       return;
     }
@@ -179,11 +186,17 @@
       aria-label="Title"
       bind:value={title}
       bind:this={titleInput}
+      readonly={readOnly}
       onkeydown={(e) => e.key === "Enter" && !e.ctrlKey && (e.preventDefault(), save())}
     />
-    {#if invitation}
+    {#if readOnly}
+      <p class="note">{home?.name} can only be looked at, not changed.</p>
+    {:else if invitation && home?.source != null}
+      <p class="note">From {event.organizer}.</p>
+    {:else if invitation}
       <p class="note">From {event.organizer}. Changes here are only in your calendar.</p>
     {/if}
+    <fieldset class="fields" disabled={readOnly}>
 
     <div class="row">
       <Icon name="clock" />
@@ -198,14 +211,18 @@
       </div>
     </div>
 
-    <div class="row">
-      <Icon name="repeat" />
-      <select aria-label="Repeat" bind:value={repeat}>
-        {#each repeats as r (r)}
-          <option value={r}>{repeatLabel(r, startDay)}</option>
-        {/each}
-      </select>
-    </div>
+    {#if instance}
+      <p class="hint quiet">Changes apply to this time only.</p>
+    {:else}
+      <div class="row">
+        <Icon name="repeat" />
+        <select aria-label="Repeat" bind:value={repeat}>
+          {#each repeats as r (r)}
+            <option value={r}>{repeatLabel(r, startDay)}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
     {#if event.rrule && !isNew}
       <p class="hint quiet">Changes apply to every time this event repeats.</p>
     {/if}
@@ -227,7 +244,7 @@
     <div class="row">
       <Icon name="calendar" />
       <select aria-label="Calendar" bind:value={calendar}>
-        {#each calendars as c (c.id)}
+        {#each choices as c (c.id)}
           <option value={c.id}>{c.name}</option>
         {/each}
       </select>
@@ -235,16 +252,21 @@
     </div>
 
     <textarea placeholder="Add notes" aria-label="Notes" rows="4" bind:value={notes}></textarea>
+    </fieldset>
 
     {#if error}<p class="error">{error}</p>{/if}
 
     <div class="buttons">
-      {#if !isNew}
+      {#if !isNew && !readOnly}
         <button class="danger" onclick={deleteClicked}><Icon name="trash" /> Delete</button>
       {/if}
       <span class="grow"></span>
-      <button onclick={onClose}>Cancel</button>
-      <button class="primary" disabled={saving} onclick={save} title="Save (Ctrl+Enter)">Save</button>
+      {#if readOnly}
+        <button onclick={onClose}>Close</button>
+      {:else}
+        <button onclick={onClose}>Cancel</button>
+        <button class="primary" disabled={saving} onclick={save} title="Save (Ctrl+Enter)">Save</button>
+      {/if}
     </div>
   </div>
 </div>
@@ -269,6 +291,9 @@
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
     display: grid;
     gap: 12px;
+  }
+  .fields {
+    display: contents;
   }
   .sr {
     position: absolute;

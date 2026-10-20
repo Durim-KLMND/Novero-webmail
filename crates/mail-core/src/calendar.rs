@@ -20,6 +20,29 @@ pub struct Calendar {
     pub account: Option<AccountId>,
     /// Shown in the calendar view.
     pub visible: bool,
+    /// The online account it syncs with ([`CalendarAccount`]); `None` for a
+    /// calendar kept only on this computer.
+    #[serde(default)]
+    pub source: Option<i64>,
+    /// An online calendar the user may only look at, such as holidays.
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+/// A Google or Microsoft account whose calendars sync with the app. Kept
+/// apart from mail accounts: it signs in with calendar access only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarAccount {
+    pub id: i64,
+    pub provider: crate::OAuthProvider,
+    pub email: String,
+    /// When the last sync finished, in UTC seconds.
+    pub synced_at: Option<i64>,
+    /// Why the last sync failed, if it did.
+    pub error: Option<String>,
+    /// The sign-in expired or was revoked; signing in again fixes it.
+    pub needs_sign_in: bool,
 }
 
 /// How someone answered an invitation.
@@ -105,6 +128,10 @@ pub struct Event {
     pub sequence: i64,
     #[serde(default)]
     pub cancelled: bool,
+    /// For one occurrence of an online repeating event, kept as its own
+    /// event: the series it belongs to. Deleting it deletes the series.
+    #[serde(default)]
+    pub series: Option<String>,
 }
 
 /// One time an event happens, as the calendar view draws it.
@@ -121,4 +148,40 @@ pub struct Occurrence {
     pub repeats: bool,
     pub cancelled: bool,
     pub response: Option<Response>,
+}
+
+/// A calendar as an online account lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteCalendar {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub read_only: bool,
+    /// Shown when first added (the provider's own choice).
+    pub shown: bool,
+}
+
+/// An event as an online calendar has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteEvent {
+    pub id: String,
+    pub etag: Option<String>,
+    /// For one occurrence of a series kept as its own event: the series' id.
+    pub series: Option<String>,
+    /// For such an occurrence: when it was due before it was moved.
+    pub original_start: Option<i64>,
+    /// `id` and `calendar` are 0; the store fills them in.
+    pub event: Event,
+}
+
+/// What changed in an online calendar since the last look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteChange {
+    Changed(Box<RemoteEvent>),
+    /// Gone; for an occurrence of a series, that time is taken out of it.
+    Removed {
+        id: String,
+        series: Option<String>,
+        original_start: Option<i64>,
+    },
 }

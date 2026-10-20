@@ -37,7 +37,8 @@ pub fn save_calendar(
     Ok(saved)
 }
 
-/// Deletes a calendar and its events. The last calendar can't be deleted.
+/// Deletes a calendar kept on this computer and its events. The last one
+/// can't be deleted.
 #[tauri::command]
 pub fn delete_calendar(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<()> {
     state.store.lock().unwrap().delete_calendar(id)?;
@@ -69,28 +70,33 @@ pub fn save_event(app: AppHandle, state: State<'_, AppState>, mut event: Event) 
     } else if event.tz.is_none() {
         event.tz = mail_calendar::system_zone();
     }
-    let saved = state.store.lock().unwrap().save_event(&event)?;
+    let saved = state.store.lock().unwrap().edit_event(&event)?;
     changed(&app);
+    crate::calsync::sync_soon(&app);
     Ok(saved)
 }
 
 #[tauri::command]
 pub fn delete_event(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<()> {
-    state.store.lock().unwrap().delete_event(id)?;
+    state.store.lock().unwrap().remove_event(id)?;
     changed(&app);
+    crate::calsync::sync_soon(&app);
     Ok(())
 }
 
-/// Takes one occurrence, the one starting at `starts`, out of a repeating event.
+/// Takes one occurrence, the one starting at `starts`, out of a repeating
+/// event. An occurrence of an online series kept on its own is deleted, so
+/// there is no event left to return.
 #[tauri::command]
 pub fn skip_occurrence(
     app: AppHandle,
     state: State<'_, AppState>,
     id: i64,
     starts: i64,
-) -> Result<Event> {
-    let saved = state.store.lock().unwrap().skip_occurrence(id, starts)?;
+) -> Result<Option<Event>> {
+    let saved = state.store.lock().unwrap().skip_change(id, starts)?;
     changed(&app);
+    crate::calsync::sync_soon(&app);
     Ok(saved)
 }
 
@@ -172,6 +178,7 @@ mod tests {
             reminder: Some(15),
             sequence: 0,
             cancelled: false,
+            series: None,
         }
     }
 

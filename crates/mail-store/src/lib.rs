@@ -4,6 +4,7 @@
 //! `PRAGMA user_version`, so a database records which ones it has.
 
 mod calendar;
+mod calendar_sync;
 mod contacts;
 mod mailbox;
 mod outgoing;
@@ -15,6 +16,7 @@ mod store;
 use std::path::Path;
 
 pub use calendar::Reminder;
+pub use calendar_sync::{Pending, PendingSave, SyncedCalendar};
 pub use contacts::Contact;
 pub use mail_core::{Error, Result};
 pub use mailbox::{MAX_RESULTS, Mailbox, MessagePage, MessageSummary, SearchQuery};
@@ -35,6 +37,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0007_calendar.sql"),
     include_str!("../migrations/0008_send_later_snooze.sql"),
     include_str!("../migrations/0009_signatures_templates.sql"),
+    include_str!("../migrations/0010_calendar_sync.sql"),
 ];
 
 /// Schema version a fully migrated database has.

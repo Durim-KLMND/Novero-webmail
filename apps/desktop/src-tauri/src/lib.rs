@@ -1,6 +1,7 @@
 //! Tauri host: registers commands and forwards core events to the UI.
 
 mod calendar;
+mod calsync;
 mod commands;
 mod compose;
 mod crash;
@@ -47,6 +48,7 @@ pub fn run() {
             crash::install(crash::folder(&dir));
             let state = state::AppState::open(&dir)?;
             app.manage(state);
+            app.manage(calsync::CalendarSync::default());
             window::open_main(app.handle())?;
             app.manage(links::PendingLink::default());
             app.manage(files::Drops::default());
@@ -55,6 +57,7 @@ pub fn run() {
             }
             updates::start(app.handle());
             calendar::start_reminders(app.handle());
+            calsync::start(app.handle());
             compose::start_scheduler(app.handle());
             snooze::start(app.handle());
 
@@ -119,6 +122,10 @@ pub fn run() {
             calendar::save_event,
             calendar::delete_event,
             calendar::skip_occurrence,
+            calsync::list_calendar_accounts,
+            calsync::connect_calendar,
+            calsync::disconnect_calendar,
+            calsync::sync_calendars,
             snooze::snooze_messages,
             snooze::unsnooze_messages,
             snooze::snoozed_count,

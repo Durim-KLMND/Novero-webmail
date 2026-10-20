@@ -298,6 +298,7 @@ mod tests {
             reminder: None,
             sequence: 0,
             cancelled: false,
+            series: None,
         }
     }
 

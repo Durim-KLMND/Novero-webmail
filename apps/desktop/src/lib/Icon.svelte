@@ -16,6 +16,8 @@
   import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
   import Copy from "@lucide/svelte/icons/copy";
   import Clock from "@lucide/svelte/icons/clock";
+  import Cloud from "@lucide/svelte/icons/cloud";
+  import Lock from "@lucide/svelte/icons/lock";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import FilePen from "@lucide/svelte/icons/file-pen";
@@ -98,6 +100,8 @@
     "list-ordered": ListOrdered,
     "sign-in": LogIn,
     location: MapPin,
+    lock: Lock,
+    cloud: Cloud,
     unread: Mail,
     mail: Mail,
     read: MailOpen,
