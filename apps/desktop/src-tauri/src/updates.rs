@@ -1,10 +1,9 @@
 //! Updates from the project's GitHub releases.
 //!
-//! Each release publishes a `latest.json` manifest next to the installer. The
-//! stable channel reads the one of the newest stable release; the beta channel
-//! reads the copy on the `beta-channel` release, which every release, test or
-//! stable, replaces. Installers are checked against the update key built into
-//! the app, so a manifest alone can't make it install anything else.
+//! Each release publishes a `latest.json` manifest next to the installer, and
+//! the app reads the one on the newest release. Installers are checked against
+//! the update key built into the app, so a manifest alone can't make it
+//! install anything else.
 //!
 //! Updates are looked for shortly after start-up and then every few hours.
 //! With automatic downloads on (the default) they are downloaded before the
@@ -21,7 +20,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State, Url};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::compose::now;
-use crate::settings::{Channel, Settings};
+use crate::settings::Settings;
 use crate::state::AppState;
 
 /// The public half of the update signing key (see docs/releasing.md). Builds
@@ -49,16 +48,12 @@ pub fn plugin<R: Runtime>() -> Option<tauri::plugin::TauriPlugin<R, tauri_plugin
     pubkey().map(|key| tauri_plugin_updater::Builder::new().pubkey(key).build())
 }
 
-/// Where a channel's manifest is. `NOVERO_UPDATE_ENDPOINT` replaces it, for
-/// trying out releases from a local server.
-fn endpoint(channel: Channel) -> String {
-    if let Ok(url) = std::env::var("NOVERO_UPDATE_ENDPOINT") {
-        return url;
-    }
-    match channel {
-        Channel::Stable => format!("{RELEASES}/latest/download/latest.json"),
-        Channel::Beta => format!("{RELEASES}/download/beta-channel/latest.json"),
-    }
+/// Where the manifest is: on the newest release, which GitHub serves under
+/// `latest`. `NOVERO_UPDATE_ENDPOINT` replaces it, for trying out releases
+/// from a local server.
+fn endpoint() -> String {
+    std::env::var("NOVERO_UPDATE_ENDPOINT")
+        .unwrap_or_else(|_| format!("{RELEASES}/latest/download/latest.json"))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,7 +118,7 @@ fn failed(e: tauri_plugin_updater::Error) -> Error {
         E::Minisign(_) | E::Base64(_) | E::SignatureUtf8(_) => Error::Invalid(
             "the download didn't match the release's signature, so it was not installed".into(),
         ),
-        E::ReleaseNotFound => Error::Network("no release was found on this channel yet".into()),
+        E::ReleaseNotFound => Error::Network("no release was found yet".into()),
         e => Error::Network(e.to_string()),
     }
 }
@@ -144,8 +139,8 @@ fn saved_settings(app: &AppHandle) -> Settings {
     Settings::load(&state.store.lock().unwrap())
 }
 
-/// Looks for a newer release on `channel`, and downloads it when `download`.
-async fn find(app: &AppHandle, channel: Channel, download: bool) -> Result<Option<UpdateInfo>> {
+/// Looks for a newer release, and downloads it when `download`.
+async fn find(app: &AppHandle, download: bool) -> Result<Option<UpdateInfo>> {
     let updates = app.state::<Updates>();
     let _one = updates.busy.lock().await;
     let before = updates.status.lock().unwrap().phase;
@@ -154,7 +149,7 @@ async fn find(app: &AppHandle, channel: Channel, download: bool) -> Result<Optio
         set(app, |s| s.phase = Phase::Checking);
     }
     let found = async {
-        let url = Url::parse(&endpoint(channel)).map_err(|e| Error::Invalid(e.to_string()))?;
+        let url = Url::parse(&endpoint()).map_err(|e| Error::Invalid(e.to_string()))?;
         app.updater_builder()
             .endpoints(vec![url])
             .map_err(failed)?
@@ -273,9 +268,8 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_CHECK).await;
         loop {
-            let settings = saved_settings(&app);
             // Offline or no release yet: the next round tries again.
-            let _ = find(&app, settings.update_channel, settings.auto_update).await;
+            let _ = find(&app, saved_settings(&app).auto_update).await;
             tokio::time::sleep(CHECK_EVERY).await;
         }
     });
@@ -293,20 +287,16 @@ pub fn update_status(updates: State<'_, Updates>) -> UpdateStatus {
     updates.status.lock().unwrap().clone()
 }
 
-/// Checks right away, on `channel` or else the saved one, and downloads what
-/// it finds. `None` means this is the newest version.
+/// Checks right away and downloads what it finds. `None` means this is the
+/// newest version.
 #[tauri::command]
-pub async fn check_for_update(
-    app: AppHandle,
-    channel: Option<Channel>,
-) -> Result<Option<UpdateInfo>> {
+pub async fn check_for_update(app: AppHandle) -> Result<Option<UpdateInfo>> {
     if pubkey().is_none() {
         return Err(Error::Invalid(
             "This copy of Novero Mail can't update itself.".into(),
         ));
     }
-    let channel = channel.unwrap_or_else(|| saved_settings(&app).update_channel);
-    find(&app, channel, true).await
+    find(&app, true).await
 }
 
 /// Downloads the update that was found while automatic downloads are off.
@@ -366,8 +356,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn channels_read_their_own_manifest() {
-        assert!(endpoint(Channel::Stable).ends_with("/releases/latest/download/latest.json"));
-        assert!(endpoint(Channel::Beta).ends_with("/releases/download/beta-channel/latest.json"));
+    fn reads_the_newest_releases_manifest() {
+        assert!(endpoint().ends_with("/releases/latest/download/latest.json"));
     }
 }

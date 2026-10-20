@@ -211,15 +211,12 @@ export interface MessageSummary {
 
 export type Theme = "system" | "light" | "dark";
 
-export type UpdateChannel = "stable" | "beta";
-
 export interface Settings {
   theme: Theme;
   conversations: boolean;
   notifications: boolean;
   /** Look for updates in the background and download them. */
   autoUpdate: boolean;
-  updateChannel: UpdateChannel;
   /** After a crash, offer to send a report. */
   crashReports: boolean;
   /** Draw Novero Mail's own title bar instead of the Windows one. */
@@ -231,7 +228,6 @@ export const defaultSettings: Settings = {
   conversations: true,
   notifications: true,
   autoUpdate: true,
-  updateChannel: "stable",
   crashReports: true,
   customTitlebar: true,
 };
@@ -516,8 +512,7 @@ export const api = {
   discardCrashReport: () => invoke<void>("discard_crash_report"),
   sendCrashReport: () => invoke<void>("send_crash_report"),
   updatesAvailable: () => invoke<boolean>("updates_available"),
-  checkForUpdate: (channel: UpdateChannel) =>
-    invoke<UpdateInfo | null>("check_for_update", { channel }),
+  checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
   updateStatus: () => invoke<UpdateStatus>("update_status"),
   downloadUpdate: () => invoke<void>("download_update"),
   installUpdate: () => invoke<void>("install_update"),

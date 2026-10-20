@@ -7,7 +7,6 @@
     type Account,
     type Settings,
     type Theme,
-    type UpdateChannel,
     type UpdateStatus,
   } from "./api";
   import { listDate } from "./format";
@@ -97,11 +96,6 @@
     { value: "dark", label: "Dark" },
   ];
 
-  const channels: { value: UpdateChannel; label: string; hint: string }[] = [
-    { value: "stable", label: "Stable", hint: "Tested releases" },
-    { value: "beta", label: "Beta", hint: "New versions first, before they are released to everyone" },
-  ];
-
   let version = $state("");
   let canUpdate = $state(false);
   let checking = $state(false);
@@ -137,7 +131,7 @@
     checking = true;
     checkResult = "";
     try {
-      await api.checkForUpdate(draft.updateChannel);
+      await api.checkForUpdate();
     } catch (err) {
       checkResult = `Couldn't check for updates. ${errorText(err)}`;
     } finally {
@@ -427,15 +421,6 @@
                 </small>
               </span>
             </label>
-            <div class="choices channel">
-              {#each channels as c (c.value)}
-                <label class="choice" title={c.hint}>
-                  <input type="radio" name="channel" value={c.value} bind:group={draft.updateChannel} />
-                  {c.label}
-                </label>
-              {/each}
-            </div>
-            <small class="quiet">{channels.find((c) => c.value === draft.updateChannel)?.hint}</small>
             <div class="update-state" role="status">
               {#if checkResult}<span class="error">{checkResult}</span>{:else if updateText}<span>{updateText}</span>{/if}
               {#if update?.phase === "downloading"}
@@ -622,9 +607,6 @@
   }
   .danger:hover:not(:disabled) {
     color: var(--danger);
-  }
-  .channel {
-    margin: 10px 0 2px;
   }
   .row button {
     white-space: nowrap;
