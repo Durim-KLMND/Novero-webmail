@@ -6,6 +6,7 @@ mod commands;
 mod compose;
 mod crash;
 mod files;
+mod folders;
 mod invites;
 mod links;
 mod reader;
@@ -97,6 +98,11 @@ pub fn run() {
             commands::move_messages,
             commands::archive_messages,
             commands::delete_messages,
+            folders::create_folder,
+            folders::rename_folder,
+            folders::delete_folder,
+            folders::mark_folder_read,
+            folders::empty_folder,
             compose::new_draft,
             compose::mailto_draft,
             compose::reply_draft,

@@ -297,6 +297,20 @@ impl ImapSession {
         self.session.delete(name).await.map_err(protocol)
     }
 
+    /// Renames a folder. The server moves its subfolders along with it.
+    pub async fn rename_folder(&mut self, from: &str, to: &str) -> Result<()> {
+        self.session.rename(from, to).await.map_err(protocol)
+    }
+
+    /// Adds a folder to the subscribed list, which some apps show alone.
+    pub async fn subscribe(&mut self, name: &str) -> Result<()> {
+        self.session.subscribe(name).await.map_err(protocol)
+    }
+
+    pub async fn unsubscribe(&mut self, name: &str) -> Result<()> {
+        self.session.unsubscribe(name).await.map_err(protocol)
+    }
+
     /// Waits in IDLE (RFC 2177) on the selected folder until the server reports
     /// a change or `wait` passes. Returns the session and what changed.
     pub async fn idle(self, wait: Duration) -> Result<(Self, IdleChange)> {

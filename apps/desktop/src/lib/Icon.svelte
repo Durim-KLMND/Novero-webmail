@@ -26,6 +26,8 @@
   import FlagOff from "@lucide/svelte/icons/flag-off";
   import Folder from "@lucide/svelte/icons/folder";
   import FolderInput from "@lucide/svelte/icons/folder-input";
+  import FolderPen from "@lucide/svelte/icons/folder-pen";
+  import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import Forward from "@lucide/svelte/icons/forward";
   import Image from "@lucide/svelte/icons/image";
   import Inbox from "@lucide/svelte/icons/inbox";
@@ -88,6 +90,8 @@
     flag: Flag,
     unflag: FlagOff,
     folder: Folder,
+    "new-folder": FolderPlus,
+    "rename-folder": FolderPen,
     move: FolderInput,
     forward: Forward,
     image: Image,

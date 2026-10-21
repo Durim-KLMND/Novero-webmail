@@ -51,14 +51,28 @@ const folderNames: Record<string, string> = {
 /** Display name of a folder: friendly names for special folders, the last path part otherwise. */
 export function folderLabel(name: string, role: string, delimiter: string | null): string {
   if (folderNames[role]) return folderNames[role];
-  return delimiter ? name.split(delimiter).pop() || name : name;
+  return decodeFolderName(delimiter ? name.split(delimiter).pop() || name : name);
 }
 
-/** Progress of an account's sync, for a progress bar's caption: with counts,
- *  or with a percentage where space is short. */
-export function progressLabel(stage: "messages" | "bodies", done: number, total: number, short = false): string {
-  const what = stage === "messages" ? "Downloading messages" : "Preparing search";
-  const percent = `${Math.floor((done / total) * 100)}%`;
-  if (short) return `${what}: ${percent}`;
-  return `${what}: ${done.toLocaleString()} of ${total.toLocaleString()} (${percent})`;
+/** A folder's whole path, e.g. "Projects › 2026", for tooltips and menus. */
+export function folderPath(name: string, delimiter: string | null): string {
+  return decodeFolderName(delimiter ? name.split(delimiter).join(" › ") : name);
+}
+
+/** Server folder names write other letters in "modified UTF-7" (RFC 3501):
+ *  "Entw&APw-rfe" is "Entwürfe". Anything malformed is shown as it is. */
+export function decodeFolderName(name: string): string {
+  return name.replace(/&([^-]*)-/g, (whole, run: string) => {
+    if (!run) return "&";
+    try {
+      const bytes = atob(run.replace(/,/g, "/") + "===".slice((run.length + 3) % 4));
+      let text = "";
+      for (let i = 0; i + 1 < bytes.length; i += 2) {
+        text += String.fromCharCode((bytes.charCodeAt(i) << 8) | bytes.charCodeAt(i + 1));
+      }
+      return text;
+    } catch {
+      return whole;
+    }
+  });
 }

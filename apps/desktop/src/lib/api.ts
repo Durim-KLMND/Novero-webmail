@@ -485,6 +485,15 @@ export const api = {
     invoke<void>("move_messages", { ids, folder }),
   archiveMessages: (ids: number[]) => invoke<void>("archive_messages", { ids }),
   deleteMessages: (ids: number[]) => invoke<void>("delete_messages", { ids }),
+  /** Makes a folder inside `parent`, or at the top when it is null. */
+  createFolder: (account: number, parent: number | null, name: string) =>
+    invoke<Folder>("create_folder", { account, parent, name }),
+  renameFolder: (folder: number, name: string) => invoke<void>("rename_folder", { folder, name }),
+  /** Deletes a folder with its subfolders and their mail, on the server too. */
+  deleteFolder: (folder: number) => invoke<void>("delete_folder", { folder }),
+  markFolderRead: (folder: number) => invoke<void>("mark_folder_read", { folder }),
+  /** Deletes everything in Trash or Junk for good. */
+  emptyFolder: (folder: number) => invoke<void>("empty_folder", { folder }),
   newDraft: (account: number) => invoke<Draft>("new_draft", { account }),
   replyDraft: (message: number, all: boolean) =>
     invoke<Draft>("reply_draft", { message, all }),

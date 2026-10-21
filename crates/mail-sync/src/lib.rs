@@ -5,10 +5,13 @@
 //! sends changes and saved drafts without a full sync.
 
 mod drafts;
+mod folders;
 pub mod imap;
+pub mod names;
 mod sync;
 
 pub use drafts::upload_drafts;
+pub use folders::{create_folder, delete_folder, rename_folder};
 pub use imap::{FolderStatus, IdleChange, ImapSession};
 pub use mail_core::{Error, Result};
 pub use sync::{
