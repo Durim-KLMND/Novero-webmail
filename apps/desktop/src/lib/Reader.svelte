@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { api, errorText, type FlagKind, type Folder, type MessageSummary } from "./api";
-  import { folderLabel } from "./format";
+  import { folderLabel, folderPath } from "./format";
   import MessageCard from "./MessageCard.svelte";
   import { toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { laterText } from "./later";
@@ -19,6 +19,8 @@
     onDelete: () => void;
     onToggle: (flag: FlagKind, value: boolean) => void;
     onMove: (folder: number) => void;
+    /** Make a folder and move the message into it. */
+    onMoveToNew: () => void;
     onReply: (message: number, all: boolean) => void;
     onForward: (message: number) => void;
     /** The times offered by Snooze. */
@@ -36,6 +38,7 @@
     onDelete,
     onToggle,
     onMove,
+    onMoveToNew,
     onReply,
     onForward,
     snoozeChoices,
@@ -65,11 +68,15 @@
   function moveMenu(event: MouseEvent) {
     toggleMenuUnder(
       event.currentTarget as HTMLElement,
-      moveTargets.map((f) => ({
-        label: folderLabel(f.name, f.role, f.delimiter),
-        icon: f.role === "other" ? "folder" : f.role,
-        run: () => onMove(f.id),
-      })),
+      [
+        ...moveTargets.map((f): MenuItem => ({
+          label: f.role === "other" ? folderPath(f.name, f.delimiter) : folderLabel(f.name, f.role, f.delimiter),
+          icon: f.role === "other" ? "folder" : f.role,
+          run: () => onMove(f.id),
+        })),
+        "separator",
+        { label: "New folder…", icon: "new-folder", run: onMoveToNew },
+      ],
     );
   }
 
@@ -191,11 +198,9 @@
           <Icon name="clock" /><span class="text">Snooze</span>
         </button>
       {/if}
-      {#if moveTargets.length}
-        <button aria-haspopup="menu" title="Move to folder" aria-label="Move to folder" onclick={moveMenu}>
-          <Icon name="move" /><span class="text">Move to</span><Icon name="chevron-down" size={14} />
-        </button>
-      {/if}
+      <button aria-haspopup="menu" title="Move to folder" aria-label="Move to folder" onclick={moveMenu}>
+        <Icon name="move" /><span class="text">Move to</span><Icon name="chevron-down" size={14} />
+      </button>
     </div>
     <header>
       <h1>{row.subject || "(no subject)"}</h1>

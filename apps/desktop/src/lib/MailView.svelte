@@ -20,7 +20,7 @@
     type Settings,
     type UpdateStatus,
   } from "./api";
-  import { folderLabel } from "./format";
+  import { folderLabel, folderPath } from "./format";
   import { toast } from "./toast.svelte";
   import { applyTheme } from "./theme";
   import Sidebar, { type SyncState } from "./Sidebar.svelte";
@@ -40,6 +40,8 @@
   import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
   import { laterChoices, laterText } from "./later";
   import PickTime from "./PickTime.svelte";
+  import NameDialog from "./NameDialog.svelte";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     accounts: Account[];
@@ -258,22 +260,11 @@
     }
   });
 
-  /** Downloads of fewer items than this show no progress bar. */
-  const PROGRESS_FROM = 50;
-  /** Quick checks, such as after new mail or a change elsewhere, finish
-   *  before this and show nothing; longer ones show a spinner. */
-  const SHOW_SYNC_AFTER = 1000;
-  const syncShowTimers = new Map<number, ReturnType<typeof setTimeout>>();
-
-  /** The progress bar over the message list: the shown account's sync, or
-   *  any account's in lists that mix them. */
-  const listProgress = $derived.by(() => {
+  /** Syncing runs quietly: mail shows up as it arrives, with no spinner or
+   *  progress bar. Only an empty list says a first download is under way. */
+  const arriving = $derived.by(() => {
     const ids = mailbox?.kind === "folder" && selectedFolder ? [selectedFolder.accountId] : accounts.map((a) => a.id);
-    for (const id of ids) {
-      const s = syncState[id];
-      if (s?.running && s.progress) return s.progress;
-    }
-    return null;
+    return ids.some((id) => syncState[id]?.running && syncState[id]?.progress?.stage === "messages");
   });
 
   // Refresh at most every 700 ms while a sync streams in.
@@ -295,28 +286,15 @@
   const unlisten = onMailEvent((e: MailEvent) => {
     const current = stateOf(e.account);
     if (e.type === "syncStarted") {
-      clearTimeout(syncShowTimers.get(e.account));
-      syncShowTimers.set(
-        e.account,
-        setTimeout(() => {
-          syncShowTimers.delete(e.account);
-          const now = stateOf(e.account);
-          syncState[e.account] = { ...now, running: true, detail: now.detail || "Checking for mail…" };
-        }, SHOW_SYNC_AFTER),
-      );
-      syncState[e.account] = { ...current, error: null, detail: "", progress: null };
+      syncState[e.account] = { ...current, running: true, error: null, detail: "", progress: null };
     } else if (e.type === "syncProgress") {
       const detail = e.total > 0 ? `${e.folder}: ${e.done.toLocaleString()} of ${e.total.toLocaleString()}` : `Checking ${e.folder}…`;
-      // Shown once the check has run a moment, as above.
-      syncState[e.account] = { ...current, running: !syncShowTimers.has(e.account), detail };
+      syncState[e.account] = { ...current, detail };
       if (e.done > 0) scheduleRefresh(e.account);
     } else if (e.type === "accountProgress") {
-      // A handful of new messages is quick; a bar is for real downloads.
-      const progress = e.total >= PROGRESS_FROM ? { stage: e.stage, done: e.done, total: e.total } : null;
+      const progress = e.done < e.total ? { stage: e.stage, done: e.done, total: e.total } : null;
       syncState[e.account] = { ...current, progress };
     } else if (e.type === "syncFinished") {
-      clearTimeout(syncShowTimers.get(e.account));
-      syncShowTimers.delete(e.account);
       syncState[e.account] = { ...current, running: false, error: e.error, detail: "", progress: null };
       scheduleRefresh(e.account);
     } else if (e.type === "pendingChanges") {
@@ -341,7 +319,6 @@
     unlistenMailto.then((fn) => fn());
     unlistenWindows.then((fn) => fn());
     clearTimeout(refreshTimer);
-    syncShowTimers.forEach((timer) => clearTimeout(timer));
   });
 
   function selectFolder(folder: Folder) {
@@ -443,7 +420,7 @@
   }
 
   function move(folder: number) {
-    const target = rowFolders.find((f) => f.id === folder);
+    const target = selected ? folders[selected.accountId]?.find((f) => f.id === folder) : undefined;
     const label = target ? folderLabel(target.name, target.role, target.delimiter) : "the folder";
     act((ids) => api.moveMessages(ids, folder), true, (many) => `${what(many)} moved to ${label}`);
   }
@@ -485,11 +462,15 @@
     const flagged = item.flags.flagged;
     const sender = item.from?.match(/<([^<>]+@[^<>]+)>/)?.[1] ?? item.from?.match(/[^\s<>"]+@[^\s<>"]+/)?.[0];
     const targets = (folders[item.accountId] ?? []).filter((f) => f.id !== item.folderId);
-    const moveTo: MenuItem[] = targets.map((f) => ({
-      label: folderLabel(f.name, f.role, f.delimiter),
-      icon: f.role === "other" ? "folder" : f.role,
-      run: () => move(f.id),
-    }));
+    const moveTo: MenuItem[] = [
+      ...targets.map((f): MenuItem => ({
+        label: f.role === "other" ? folderPath(f.name, f.delimiter) : folderLabel(f.name, f.role, f.delimiter),
+        icon: f.role === "other" ? "folder" : f.role,
+        run: () => move(f.id),
+      })),
+      "separator",
+      { label: "New folder…", icon: "new-folder", run: () => newFolder(item.accountId, null, (f) => move(f.id)) },
+    ];
     openMenu(
       event,
       items(
@@ -508,7 +489,7 @@
         !draft && snoozedView && { label: "Unsnooze", icon: "clock", shortcut: "B", run: unsnooze },
         !draft && !snoozedView && { label: "Snooze", icon: "clock", items: snoozeChoices() },
         "separator",
-        !draft && moveTo.length > 0 && { label: "Move to", icon: "move", items: moveTo },
+        !draft && { label: "Move to", icon: "move", items: moveTo },
         !draft && item.folderRole === "inbox" && sender && {
           label: "Make a rule for this sender…",
           icon: "rules",
@@ -528,15 +509,197 @@
 
   /** The right-click menu of a folder in the sidebar. */
   function folderMenu(folder: Folder, event: MouseEvent) {
+    const own = folder.role === "other";
+    const bin = folder.role === "trash" || folder.role === "junk";
     openMenu(
       event,
       items(
         { label: "Open", icon: folder.role === "other" ? "folder" : folder.role, run: () => selectFolder(folder) },
         { label: "Check for mail", icon: "refresh", run: () => api.syncAccount(folder.accountId) },
+        folder.unread > 0 && { label: "Mark all as read", icon: "read", run: () => markFolderRead(folder) },
+        bin && folder.total > 0 && {
+          label: folder.role === "trash" ? "Empty Trash" : "Empty Junk",
+          icon: "trash",
+          danger: true,
+          run: () => emptyFolder(folder),
+        },
+        "separator",
+        { label: "New folder…", icon: "new-folder", run: () => newFolder(folder.accountId) },
+        (own || folder.role === "inbox") && !!folder.delimiter && {
+          label: "New folder inside…",
+          icon: "new-folder",
+          run: () => newFolder(folder.accountId, folder),
+        },
+        own && { label: "Rename…", icon: "rename-folder", run: () => renameFolder(folder) },
+        own && { label: "Delete folder…", icon: "trash", danger: true, run: () => deleteFolder(folder) },
         "separator",
         { label: "New message", icon: "drafts", shortcut: "C", run: () => openComposer(() => api.newDraft(folder.accountId)) },
       ),
     );
+  }
+
+  /** The name dialog for a new folder (inside `parent`, or at the top) or for
+   *  renaming one. `then` gets a folder just made, e.g. to move mail into it. */
+  let naming = $state<{
+    account: number;
+    parent: Folder | null;
+    renaming: Folder | null;
+    then?: (folder: Folder) => void;
+  } | null>(null);
+  let namingError = $state("");
+  let namingBusy = $state(false);
+
+  function newFolder(account: number, parent: Folder | null = null, then?: (folder: Folder) => void) {
+    naming = { account, parent, renaming: null, then };
+    namingError = "";
+  }
+
+  function renameFolder(folder: Folder) {
+    naming = { account: folder.accountId, parent: null, renaming: folder };
+    namingError = "";
+  }
+
+  async function named(name: string) {
+    const asked = naming;
+    if (!asked) return;
+    namingBusy = true;
+    namingError = "";
+    try {
+      if (asked.renaming) {
+        await api.renameFolder(asked.renaming.id, name);
+        await loadFolders(asked.account);
+        say(`Folder renamed to ${name}`, "info");
+      } else {
+        const made = await api.createFolder(asked.account, asked.parent?.id ?? null, name);
+        await loadFolders(asked.account);
+        if (asked.then) asked.then(made);
+        else say(`Folder ${name} made`, "info");
+      }
+      naming = null;
+    } catch (err) {
+      namingError = errorText(err);
+    } finally {
+      namingBusy = false;
+    }
+  }
+
+  /** Whether `inner` is `outer` or a folder inside it. */
+  function within(inner: Folder, outer: Folder): boolean {
+    return inner.id === outer.id || (!!outer.delimiter && inner.name.startsWith(outer.name + outer.delimiter));
+  }
+
+  async function deleteFolder(folder: Folder) {
+    const doomed = (folders[folder.accountId] ?? []).filter((f) => within(f, folder));
+    const inside = doomed.length - 1;
+    const mail = doomed.reduce((n, f) => n + f.total, 0);
+    const parts = [
+      `Delete “${folderPath(folder.name, folder.delimiter)}”`,
+      inside > 0 ? ` and the ${inside === 1 ? "folder" : `${inside} folders`} inside it` : "",
+      "?",
+      mail > 0 ? ` The ${mail === 1 ? "message" : `${mail.toLocaleString()} messages`} in it ${mail === 1 ? "is" : "are"} deleted too.` : "",
+      " This changes the mail server and cannot be undone.",
+    ];
+    const confirmed = await ask(parts.join(""), {
+      title: "Delete folder",
+      kind: "warning",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) return;
+    try {
+      await api.deleteFolder(folder.id);
+      if (selectedFolder && doomed.some((f) => f.id === selectedFolder!.id)) {
+        selected = null;
+        selectedFolder = (folders[folder.accountId] ?? []).find((f) => f.role === "inbox") ?? null;
+      }
+      await loadFolders(folder.accountId);
+      say("Folder deleted", "info");
+    } catch (err) {
+      say(errorText(err));
+    }
+  }
+
+  async function markFolderRead(folder: Folder) {
+    try {
+      await api.markFolderRead(folder.id);
+      say(`Everything in ${folderLabel(folder.name, folder.role, folder.delimiter)} is marked read`, "info");
+    } catch (err) {
+      say(errorText(err));
+    }
+    scheduleRefresh(folder.accountId);
+  }
+
+  async function emptyFolder(folder: Folder) {
+    const label = folderLabel(folder.name, folder.role, folder.delimiter);
+    const confirmed = await ask(
+      `Delete the ${folder.total === 1 ? "message" : `${folder.total.toLocaleString()} messages`} in ${label} for good? This cannot be undone.`,
+      { title: `Empty ${label}`, kind: "warning", okLabel: "Empty", cancelLabel: "Cancel" },
+    );
+    if (!confirmed) return;
+    try {
+      await api.emptyFolder(folder.id);
+      if (selected?.folderId === folder.id) selected = null;
+      say(`${label} is empty`, "info");
+    } catch (err) {
+      say(errorText(err));
+    }
+    scheduleRefresh(folder.accountId);
+  }
+
+  /** A message row being dragged onto a folder in the sidebar, where the
+   *  pointer is, and the folder under it that would take it. HTML drag and
+   *  drop is not used: the window's file drop handling takes it over on Windows. */
+  let carrying = $state<{ item: MessageSummary; x: number; y: number } | null>(null);
+  let dropTarget = $state<number | null>(null);
+  /** Pixels the pointer moves before a press becomes a drag. */
+  const DRAG_FROM = 6;
+
+  function pressRow(item: MessageSummary, event: PointerEvent) {
+    if (event.button !== 0 || item.folderRole === "drafts") return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const moved = (e: PointerEvent) => {
+      if (!carrying && Math.hypot(e.clientX - startX, e.clientY - startY) < DRAG_FROM) return;
+      carrying = { item, x: e.clientX, y: e.clientY };
+      dropTarget = folderAt(e.clientX, e.clientY, item);
+    };
+    const ended = (e: PointerEvent) => {
+      window.removeEventListener("pointermove", moved);
+      window.removeEventListener("pointerup", ended);
+      window.removeEventListener("pointercancel", ended);
+      const target = carrying && e.type === "pointerup" ? dropTarget : null;
+      carrying = null;
+      dropTarget = null;
+      if (target != null) dropOn(item, target);
+    };
+    window.addEventListener("pointermove", moved);
+    window.addEventListener("pointerup", ended);
+    window.addEventListener("pointercancel", ended);
+  }
+
+  /** The folder at a point that could take `item`: one of its own account's, not its own. */
+  function folderAt(x: number, y: number, item: MessageSummary): number | null {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-folder]");
+    const id = Number(el?.dataset.folder);
+    const folder = (folders[item.accountId] ?? []).find((f) => f.id === id);
+    return folder && folder.id !== item.folderId ? folder.id : null;
+  }
+
+  async function dropOn(item: MessageSummary, folder: number) {
+    // The selected row moves like Move to, so the selection steps on.
+    if (selected && item.ids.includes(selected.id)) {
+      move(folder);
+      return;
+    }
+    const target = folders[item.accountId]?.find((f) => f.id === folder);
+    const label = target ? folderLabel(target.name, target.role, target.delimiter) : "the folder";
+    try {
+      await api.moveMessages(item.ids, folder);
+      say(`${what(item.ids.length > 1)} moved to ${label}`, "info");
+    } catch (err) {
+      say(errorText(err));
+    }
+    scheduleRefresh(item.accountId);
   }
 
   function opened() {
@@ -806,7 +969,7 @@
   onSettings={() => (showSettings = true)}
   onHelp={() => (showHelp = true)}
 />
-<div class="layout" class:hidden={view !== "mail"} style:--side="{panes.side}px" style:--list="{panes.list}px" class:resizing={dragging != null}>
+<div class="layout" class:hidden={view !== "mail"} style:--side="{panes.side}px" style:--list="{panes.list}px" class:resizing={dragging != null} class:carrying={carrying != null}>
   <Sidebar
     {accounts}
     {folders}
@@ -816,6 +979,8 @@
     allInboxes={allInboxes && !searchQuery}
     onSelect={selectFolder}
     onFolderMenu={folderMenu}
+    onNewFolder={(account) => newFolder(account)}
+    {dropTarget}
     onAllInboxes={selectAllInboxes}
     {snoozedCount}
     snoozedActive={snoozedView && !searchQuery}
@@ -872,13 +1037,14 @@
     title={listTitle}
     {emptyText}
     unit={settings.conversations ? "conversation" : "message"}
-    progress={listProgress}
+    {arriving}
     version={listVersion}
     {place}
     selected={selected?.id ?? null}
     onSelect={selectMessage}
     onDelete={remove}
     onMenu={rowMenu}
+    onPress={pressRow}
   />
   {#if composing}
     {#key composing.id}
@@ -909,6 +1075,7 @@
     onDelete={remove}
     onToggle={toggle}
     onMove={move}
+    onMoveToNew={() => selected && newFolder(selected.accountId, null, (f) => move(f.id))}
     onReply={(message, all) => openComposer(() => api.replyDraft(message, all))}
     onForward={(message) => openComposer(() => api.forwardDraft(message))}
     {snoozeChoices}
@@ -969,6 +1136,32 @@
   {#if showHelp}
     <ShortcutHelp onClose={() => (showHelp = false)} />
   {/if}
+  {#if naming}
+    {@const parent = naming.parent}
+    <NameDialog
+      title={naming.renaming ? "Rename folder" : "New folder"}
+      action={naming.renaming ? "Rename" : "Make folder"}
+      start={naming.renaming ? folderLabel(naming.renaming.name, naming.renaming.role, naming.renaming.delimiter) : ""}
+      hint={parent
+        ? `Inside ${parent.role === "other" ? folderPath(parent.name, parent.delimiter) : folderLabel(parent.name, parent.role, parent.delimiter)}`
+        : naming.renaming
+          ? ""
+          : accounts.length > 1
+            ? `In ${accountEmail(naming.account)}`
+            : ""}
+      error={namingError}
+      busy={namingBusy}
+      onName={named}
+      onCancel={() => (naming = null)}
+    />
+  {/if}
+  {#if carrying}
+    {@const n = carrying.item.ids.length}
+    <div class="drag-ghost" class:ready={dropTarget != null} style:left="{carrying.x + 14}px" style:top="{carrying.y + 10}px" aria-hidden="true">
+      <Icon name="move" size={14} />
+      <span>{n > 1 ? `${n} messages` : carrying.item.subject || "(no subject)"}</span>
+    </div>
+  {/if}
   <Toasts />
 </div>
 
@@ -1012,7 +1205,38 @@
     user-select: none;
   }
   /* The message frame would swallow the pointer while dragging over it. */
-  .resizing :global(iframe) {
+  .resizing :global(iframe),
+  .carrying :global(iframe) {
     pointer-events: none;
+  }
+  .carrying {
+    cursor: grabbing;
+    user-select: none;
+  }
+  /* What a dragged row looks like under the pointer. */
+  .drag-ghost {
+    position: fixed;
+    z-index: 30;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    padding: 5px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    font-size: 13px;
+    opacity: 0.85;
+  }
+  .drag-ghost span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .drag-ghost.ready {
+    opacity: 1;
+    border-color: var(--accent);
   }
 </style>

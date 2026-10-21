@@ -309,10 +309,7 @@ impl Store {
             .map_err(storage)?
             .collect::<rusqlite::Result<_>>()
             .map_err(storage)?;
-        folders.sort_by(|a, b| {
-            (a.role.sort_rank(), a.name.to_lowercase())
-                .cmp(&(b.role.sort_rank(), b.name.to_lowercase()))
-        });
+        sort_folders(&mut folders);
         Ok(folders)
     }
 
@@ -392,6 +389,81 @@ impl Store {
                 |r| r.get(0),
             )
             .optional()
+            .map_err(storage)
+    }
+
+    /// Renames a folder and its subfolders in the cache after the server did,
+    /// so their messages stay instead of downloading again.
+    pub fn rename_folder(&mut self, account: AccountId, from: &str, to: &str) -> Result<()> {
+        let tx = self.conn.transaction().map_err(storage)?;
+        let delimiter: Option<String> = tx
+            .query_row(
+                "SELECT delimiter FROM folders WHERE account_id = ?1 AND name = ?2",
+                params![account.0, from],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or_else(|| Error::Storage(format!("folder {from} is not cached")))?;
+        let mut renames = vec![(from.to_owned(), to.to_owned())];
+        if let Some(delimiter) = delimiter.filter(|d| !d.is_empty()) {
+            let prefix = format!("{from}{delimiter}");
+            let mut stmt = tx
+                .prepare("SELECT name FROM folders WHERE account_id = ?1")
+                .map_err(storage)?;
+            for name in stmt
+                .query_map([account.0], |r| r.get::<_, String>(0))
+                .map_err(storage)?
+            {
+                let name = name.map_err(storage)?;
+                if let Some(rest) = name.strip_prefix(&prefix) {
+                    renames.push((name.clone(), format!("{to}{delimiter}{rest}")));
+                }
+            }
+        }
+        for (old, new) in renames {
+            tx.execute(
+                "UPDATE folders SET name = ?3 WHERE account_id = ?1 AND name = ?2",
+                params![account.0, old, new],
+            )
+            .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)
+    }
+
+    /// Whether queued changes still refer to `name` or a folder inside it,
+    /// so it cannot be renamed or deleted until the server has them.
+    pub fn folder_has_pending(
+        &self,
+        account: AccountId,
+        name: &str,
+        delimiter: Option<&str>,
+    ) -> Result<bool> {
+        let within = |folder: &str| {
+            folder == name
+                || delimiter.is_some_and(|d| {
+                    folder
+                        .strip_prefix(name)
+                        .is_some_and(|rest| rest.starts_with(d))
+                })
+        };
+        Ok(self
+            .pending_ops(account)?
+            .iter()
+            .any(|q| within(q.op.folder()) || matches!(&q.op, Op::Move { to, .. } if within(to))))
+    }
+
+    /// The messages of a folder, or only its unread ones.
+    pub fn folder_messages(&self, folder: FolderId, unread_only: bool) -> Result<Vec<i64>> {
+        let sql = if unread_only {
+            "SELECT id FROM messages WHERE folder_id = ?1 AND flags & 1 = 0"
+        } else {
+            "SELECT id FROM messages WHERE folder_id = ?1"
+        };
+        let mut stmt = self.conn.prepare(sql).map_err(storage)?;
+        stmt.query_map([folder.0], |r| r.get(0))
+            .map_err(storage)?
+            .collect::<rusqlite::Result<_>>()
             .map_err(storage)
     }
 
@@ -747,6 +819,34 @@ impl Store {
     }
 }
 
+/// Sidebar order: the special folders first, then the others by name, each
+/// followed by its subfolders. Folders inside the inbox follow it.
+fn sort_folders(folders: &mut [Folder]) {
+    let inbox = folders
+        .iter()
+        .find(|f| f.role == FolderRole::Inbox)
+        .map(|f| f.name.to_lowercase());
+    folders.sort_by_cached_key(|f| {
+        let path: Vec<String> = match f.delimiter.as_deref().filter(|d| !d.is_empty()) {
+            Some(d) => f.name.to_lowercase().split(d).map(str::to_owned).collect(),
+            None => vec![f.name.to_lowercase()],
+        };
+        let rank =
+            if f.role == FolderRole::Other && path.len() > 1 && inbox.as_ref() == path.first() {
+                FolderRole::Inbox.sort_rank()
+            } else {
+                f.role.sort_rank()
+            };
+        // A special folder sorts as one name, wherever the server keeps it.
+        let path = if f.role == FolderRole::Other {
+            path
+        } else {
+            vec![f.name.to_lowercase()]
+        };
+        (rank, path)
+    });
+}
+
 const ACCOUNT_SELECT: &str = "SELECT id, display_name, email, username, imap_host, imap_port, \
      imap_security, smtp_host, smtp_port, smtp_security, oauth_provider, \
      COALESCE((SELECT text FROM signatures WHERE id = signature_new), ''), \
@@ -948,6 +1048,113 @@ mod tests {
             .map(|f| f.name)
             .collect();
         assert_eq!(names, ["INBOX", "Trash", "Zeta"]);
+    }
+
+    #[test]
+    fn subfolders_follow_their_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let remote = [
+            folder("Projects-old", FolderRole::Other),
+            folder("Projects/Beta", FolderRole::Other),
+            folder("INBOX", FolderRole::Inbox),
+            folder("Projects", FolderRole::Other),
+            folder("INBOX/Receipts", FolderRole::Other),
+            folder("Projects/Alpha", FolderRole::Other),
+            folder("Sent", FolderRole::Sent),
+        ];
+        store.sync_folders(acc, &remote).unwrap();
+        let names: Vec<_> = store
+            .list_folders(acc)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "INBOX",
+                "INBOX/Receipts",
+                "Sent",
+                "Projects",
+                "Projects/Alpha",
+                "Projects/Beta",
+                "Projects-old"
+            ]
+        );
+    }
+
+    #[test]
+    fn renamed_folders_keep_their_messages_and_subfolders() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let remote = [
+            folder("INBOX", FolderRole::Inbox),
+            folder("Work", FolderRole::Other),
+            folder("Work/2026", FolderRole::Other),
+            folder("Workshop", FolderRole::Other),
+        ];
+        let ids = store.sync_folders(acc, &remote).unwrap();
+        let work = ids[1].0;
+        store
+            .insert_headers(work, &[header(1, 100, false), header(2, 200, true)])
+            .unwrap();
+        store.rename_folder(acc, "Work", "Jobs").unwrap();
+        let folders = store.list_folders(acc).unwrap();
+        let names: Vec<_> = folders.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["INBOX", "Jobs", "Jobs/2026", "Workshop"]);
+        let jobs = folders.iter().find(|f| f.name == "Jobs").unwrap();
+        assert_eq!((jobs.id, jobs.total, jobs.unread), (work, 2, 1));
+        assert_eq!(store.folder_messages(work, true).unwrap().len(), 1);
+        assert_eq!(store.folder_messages(work, false).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn folders_with_queued_changes_are_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let acc = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let ids = store
+            .sync_folders(
+                acc,
+                &[
+                    folder("INBOX", FolderRole::Inbox),
+                    folder("Work", FolderRole::Other),
+                ],
+            )
+            .unwrap();
+        store
+            .insert_headers(ids[0].0, &[header(1, 100, false)])
+            .unwrap();
+        assert!(!store.folder_has_pending(acc, "Work", Some("/")).unwrap());
+        store
+            .apply_op(
+                acc,
+                &Op::Move {
+                    folder: "INBOX".into(),
+                    uid_validity: None,
+                    uids: vec![1],
+                    to: "Work/Sub".into(),
+                },
+            )
+            .unwrap();
+        assert!(store.folder_has_pending(acc, "Work", Some("/")).unwrap());
+        assert!(
+            !store
+                .folder_has_pending(acc, "Workshop", Some("/"))
+                .unwrap()
+        );
     }
 
     #[test]

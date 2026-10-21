@@ -6,16 +6,22 @@
     title: string;
     action: string;
     start?: string;
+    /** A line under the title, e.g. where a new folder goes. */
+    hint?: string;
+    /** Why the last name was not taken; the dialog stays open to fix it. */
+    error?: string;
+    /** The name is being saved. */
+    busy?: boolean;
     onName: (name: string) => void;
     onCancel: () => void;
   }
-  let { title, action, start = "", onName, onCancel }: Props = $props();
+  let { title, action, start = "", hint = "", error = "", busy = false, onName, onCancel }: Props = $props();
 
   let name = $state(untrack(() => start));
   let input = $state<HTMLInputElement>();
 
   function done() {
-    if (name.trim()) onName(name.trim());
+    if (name.trim() && !busy) onName(name.trim());
   }
 
   function keydown(e: KeyboardEvent) {
@@ -35,10 +41,12 @@
 <div class="backdrop" role="presentation" onkeydown={keydown}>
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="name-title">
     <h2 id="name-title">{title}</h2>
-    <input aria-label="Name" bind:value={name} bind:this={input} />
+    {#if hint}<p class="quiet hint">{hint}</p>{/if}
+    <input aria-label="Name" bind:value={name} bind:this={input} aria-invalid={!!error} />
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="buttons">
       <button onclick={onCancel}>Cancel</button>
-      <button class="primary" disabled={!name.trim()} onclick={done}>{action}</button>
+      <button class="primary" disabled={!name.trim() || busy} onclick={done}>{action}</button>
     </div>
   </div>
 </div>
@@ -65,6 +73,14 @@
   h2 {
     margin: 0;
     font-size: 17px;
+  }
+  .hint,
+  .error {
+    margin: -4px 0 0;
+    font-size: 13px;
+  }
+  .error {
+    color: var(--danger);
   }
   .buttons {
     display: flex;

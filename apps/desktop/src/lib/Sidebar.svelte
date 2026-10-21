@@ -1,6 +1,8 @@
 <script lang="ts" module>
   import type { SyncStage } from "./api";
 
+  const CLOSED_KEY = "novero.closedFolders";
+
   export interface SyncState {
     running: boolean;
     error: string | null;
@@ -30,7 +32,7 @@
   function isOffline(error: string): boolean {
     return /^network error/i.test(error);
   }
-  import { folderLabel, progressLabel } from "./format";
+  import { folderLabel, folderPath } from "./format";
 
   interface Props {
     accounts: Account[];
@@ -42,6 +44,10 @@
     onSelect: (folder: Folder) => void;
     /** A right-click on a folder. */
     onFolderMenu: (folder: Folder, event: MouseEvent) => void;
+    /** Make a folder at the top of an account. */
+    onNewFolder: (account: number) => void;
+    /** The folder under a message being dragged, which takes it on drop. */
+    dropTarget: number | null;
     onAllInboxes: () => void;
     /** Snoozed messages, shown under All inboxes while there are any. */
     snoozedCount: number;
@@ -71,6 +77,8 @@
     allInboxes,
     onSelect,
     onFolderMenu,
+    onNewFolder,
+    dropTarget,
     onAllInboxes,
     snoozedCount,
     snoozedActive,
@@ -100,6 +108,7 @@
   function accountMenu(account: Account): MenuItem[] {
     return items(
       { label: "Check for mail", icon: "refresh", run: () => onSync(account.id) },
+      { label: "New folder…", icon: "new-folder", run: () => onNewFolder(account.id) },
       { label: "Rules…", icon: "rules", run: () => onRules(account.id) },
       { label: "Sign in again", icon: "sign-in", run: () => onSignInAgain(account) },
       "separator",
@@ -168,6 +177,41 @@
     if (folder.role !== "other" || !folder.delimiter) return 0;
     return folder.name.split(folder.delimiter).length - 1;
   }
+
+  /** Folders with subfolders can be closed; which ones stays for next time. */
+  let closed = $state<Record<number, boolean>>(loadClosed());
+
+  function loadClosed(): Record<number, boolean> {
+    try {
+      return JSON.parse(localStorage.getItem(CLOSED_KEY) ?? "{}") ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  function toggleOpen(folder: Folder) {
+    closed[folder.id] = !closed[folder.id];
+    if (!closed[folder.id]) delete closed[folder.id];
+    try {
+      localStorage.setItem(CLOSED_KEY, JSON.stringify(closed));
+    } catch {
+      // Not kept; every folder shows open next time.
+    }
+  }
+
+  /** Whether `inner` is somewhere inside `outer`. */
+  function isInside(inner: Folder, outer: Folder): boolean {
+    return !!inner.delimiter && inner.role === "other" && inner.name.startsWith(outer.name + inner.delimiter);
+  }
+
+  /** An account's folders as shown: each with whether it has subfolders,
+   *  leaving out those inside a closed folder. */
+  function tree(list: Folder[]): { folder: Folder; parent: boolean }[] {
+    const shut = list.filter((f) => closed[f.id]);
+    return list
+      .filter((f) => !shut.some((c) => isInside(f, c)))
+      .map((folder) => ({ folder, parent: list.some((f) => isInside(f, folder)) }));
+  }
 </script>
 
 <nav class="sidebar" aria-label="Accounts and folders">
@@ -234,17 +278,9 @@
               {#if account.displayName !== account.email}<small class="quiet">{account.email}</small>{/if}
             </span>
           </button>
-          {#if sync?.running}<span class="spinner small" title={sync.detail}></span>{/if}
           {#if sync?.error && !isOffline(sync.error)}<span class="warn" title={errorText(sync.error)}>!</span>{/if}
           <button class="more" aria-label="Account options" aria-haspopup="menu" onclick={(e) => moreMenu(account, e)}><Icon name="more" /></button>
         </div>
-        {#if sync?.running && sync.progress}
-          {@const p = sync.progress}
-          <div class="progress" title={sync.detail}>
-            <progress max={p.total} value={p.done} aria-label="Sync progress"></progress>
-            <small class="quiet">{progressLabel(p.stage, p.done, p.total, true)}</small>
-          </div>
-        {/if}
         {#if sync?.error && isOffline(sync.error)}
           <p class="pending quiet" title={errorText(sync.error)}>Offline. Showing saved mail.</p>
         {:else if sync?.error}
@@ -281,17 +317,26 @@
         {/if}
         {#if !collapsed[account.id]}
           <ul>
-            {#each folders[account.id] ?? [] as folder (folder.id)}
-              <li>
+            {#each tree(folders[account.id] ?? []) as { folder, parent } (folder.id)}
+              <li style:--indent="{16 + depth(folder) * 16}px">
+                {#if parent}
+                  <button
+                    class="twisty"
+                    aria-label={closed[folder.id] ? "Show the folders inside" : "Hide the folders inside"}
+                    aria-expanded={!closed[folder.id]}
+                    onclick={() => toggleOpen(folder)}
+                  ><Icon name={closed[folder.id] ? "chevron-right" : "chevron-down"} size={12} /></button>
+                {/if}
                 <button
                   class="folder"
                   class:active={selected?.id === folder.id}
-                  style:padding-left="{12 + depth(folder) * 14}px"
+                  class:drop={dropTarget === folder.id}
+                  data-folder={folder.id}
                   onclick={() => onSelect(folder)}
                   oncontextmenu={(e) => onFolderMenu(folder, e)}
                 >
                   <Icon name={icons[folder.role]} />
-                  <span class="label" title={folder.role === "other" ? folder.name.split(folder.delimiter ?? "/").join(" › ") : undefined}>{folderLabel(folder.name, folder.role, folder.delimiter)}</span>
+                  <span class="label" title={folder.role === "other" ? folderPath(folder.name, folder.delimiter) : undefined}>{folderLabel(folder.name, folder.role, folder.delimiter)}</span>
                   {#if folder.unread > 0 && folder.role !== "sent" && folder.role !== "trash"}
                     <span class="badge">{folder.unread.toLocaleString()}</span>
                   {/if}
@@ -390,14 +435,6 @@
     font-size: 12px;
     margin: 0 4px 6px 20px;
   }
-  .progress {
-    display: grid;
-    gap: 2px;
-    margin: 0 4px 6px 20px;
-  }
-  .progress small {
-    font-size: 12px;
-  }
   .pending {
     font-size: 12px;
     margin: 0 4px 6px 20px;
@@ -406,6 +443,30 @@
     list-style: none;
     margin: 0;
     padding: 0;
+  }
+  li {
+    position: relative;
+  }
+  ul .folder {
+    padding-left: var(--indent);
+  }
+  /* Opens and closes a folder's subfolders, just left of its icon. */
+  .twisty {
+    position: absolute;
+    left: calc(var(--indent) - 16px);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    display: flex;
+    border: none;
+    background: none;
+    padding: 2px;
+    color: var(--text-quiet);
+  }
+  /* A dragged message is over this folder. */
+  .folder.drop {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
   .folder {
     width: 100%;
@@ -522,9 +583,5 @@
   .outbox-line.sign-in {
     color: var(--accent-ink, var(--brand));
     font-weight: 600;
-  }
-  .spinner.small {
-    width: 12px;
-    height: 12px;
   }
 </style>

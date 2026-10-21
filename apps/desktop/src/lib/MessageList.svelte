@@ -1,8 +1,8 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import Icon from "./Icon.svelte";
-  import { api, errorText, type Mailbox, type MessageSummary, type SyncStage } from "./api";
-  import { listDate, progressLabel, recipientLabel, senderName } from "./format";
+  import { api, errorText, type Mailbox, type MessageSummary } from "./api";
+  import { listDate, recipientLabel, senderName } from "./format";
 
   interface Props {
     mailbox: Mailbox | null;
@@ -11,8 +11,8 @@
     emptyText: string;
     /** What a row is, for the count: "message" or "conversation". */
     unit: string;
-    /** A sync downloading into this list. */
-    progress?: { stage: SyncStage; done: number; total: number } | null;
+    /** A first sync is still downloading this list's mail. */
+    arriving?: boolean;
     /** Bumped when the mailbox's contents may have changed. */
     version: number;
     /** A message of the selected row. */
@@ -24,8 +24,10 @@
     onDelete: () => void;
     /** A right-click on a row. */
     onMenu?: (item: MessageSummary, event: MouseEvent) => void;
+    /** A press on a row that may become a drag onto a folder. */
+    onPress?: (item: MessageSummary, event: PointerEvent) => void;
   }
-  let { mailbox, title, emptyText, unit, progress = null, version, selected, place, onSelect, onDelete, onMenu }: Props =
+  let { mailbox, title, emptyText, unit, arriving = false, version, selected, place, onSelect, onDelete, onMenu, onPress }: Props =
     $props();
 
   const ROW = 64;
@@ -173,12 +175,6 @@
       {#if pages[0]}<span class="quiet">{countText}</span>{/if}
     {/if}
   </header>
-  {#if progress}
-    <div class="sync" role="status">
-      <progress max={progress.total} value={progress.done} aria-label="Sync progress"></progress>
-      <span class="quiet">{progressLabel(progress.stage, progress.done, progress.total)}</span>
-    </div>
-  {/if}
   {#if error}<p class="error">{error}</p>{/if}
   <div
     class="scroller"
@@ -193,7 +189,7 @@
     {#if !mailbox}
       <p class="empty quiet">Choose a folder.</p>
     {:else if total === 0 && pages[0]}
-      <p class="empty quiet">{progress?.stage === "messages" ? "Your mail is on its way." : emptyText}</p>
+      <p class="empty quiet">{arriving ? "Your mail is on its way." : emptyText}</p>
     {:else}
       <div class="spacer" style:height="{total * ROW}px">
         {#each rows as { index, item } (index)}
@@ -209,6 +205,7 @@
                 aria-selected={active}
                 onclick={() => onSelect(item)}
                 oncontextmenu={(e) => onMenu?.(item, e)}
+                onpointerdown={(e) => onPress?.(item, e)}
                 tabindex="-1"
               >
                 <span class="line1">
@@ -249,13 +246,6 @@
     padding: 14px 16px 10px;
     border-bottom: 1px solid var(--border);
     min-height: 50px;
-  }
-  .sync {
-    display: grid;
-    gap: 4px;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
   }
   h2 {
     font-size: 17px;
