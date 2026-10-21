@@ -86,8 +86,10 @@ fn decode_run(encoded: &str) -> Option<String> {
         }
     }
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|p| u16::from_be_bytes([p[0], p[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|p| u16::from_be_bytes(*p))
         .collect();
     String::from_utf16(&units).ok()
 }
