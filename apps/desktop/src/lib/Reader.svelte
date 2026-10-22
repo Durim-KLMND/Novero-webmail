@@ -203,7 +203,7 @@
       </button>
     </div>
     <header>
-      <h1>{row.subject || "(no subject)"}</h1>
+      <h1 class="selectable">{row.subject || "(no subject)"}</h1>
       {#if messages.length > 1}<span class="quiet">{messages.length} messages</span>{/if}
     </header>
     {#if snoozed && until}

@@ -33,7 +33,7 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="update-title" bind:this={dialog}>
     <h2 id="update-title">What's new in Novero Mail {status.update?.version}</h2>
     {#if notes.length}
-      <div class="notes">
+      <div class="notes selectable">
         {#each notes as line, i (i)}
           {#if line.kind === "heading"}
             <h3>{line.text}</h3>

@@ -49,7 +49,7 @@
     <button class="link" onclick={() => (showing = !showing)} aria-expanded={showing}>
       {showing ? "Hide the report" : "Show the report"}
     </button>
-    {#if showing}<pre>{report}</pre>{/if}
+    {#if showing}<pre class="selectable">{report}</pre>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="buttons">
       <button class="link" onclick={() => skip(true)}>Don't ask again</button>

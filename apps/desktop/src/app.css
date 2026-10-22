@@ -84,6 +84,22 @@ body {
   height: 100%;
 }
 
+/* Like other desktop apps, a double click on a label or button doesn't
+ * select it. Text you write, and mail you read, can still be selected. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.error,
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Room for Novero Mail's own title bar (lib/TitleBar.svelte) when it is on. */
 :root.titlebar #app {
   padding-top: var(--titlebar-height);

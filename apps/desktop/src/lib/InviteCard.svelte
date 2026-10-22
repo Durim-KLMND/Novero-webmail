@@ -99,7 +99,7 @@
       <span class="month">{first.toLocaleDateString(undefined, { month: "short" })}</span>
       <span class="day">{first.getDate()}</span>
     </div>
-    <div class="details">
+    <div class="details selectable">
       <h3>{event.title || "(no title)"}</h3>
       <p class="line"><Icon name="clock" size={14} /> {when}</p>
       {#if event.rrule}<p class="line"><Icon name="repeat" size={14} /> Repeats</p>{/if}

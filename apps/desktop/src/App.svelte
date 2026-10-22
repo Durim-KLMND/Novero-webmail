@@ -38,7 +38,7 @@
 {:else}
   <MailView {accounts} onAddAccount={() => (adding = true)} onAccountsChanged={refreshAccounts} />
   {#if adding}
-    <div class="overlay">
+    <div class="overlay" role="dialog" aria-modal="true" aria-label="Add account">
       <Onboarding
         firstRun={false}
         onFinish={async () => {

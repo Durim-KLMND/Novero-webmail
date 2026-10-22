@@ -906,6 +906,11 @@
     return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
   }
 
+  /** A dialog is open over mail; what is behind it can't be reached with Tab, the keys or the wheel. */
+  const blocked = $derived(
+    !!(showHelp || showSettings || rulesFor || signingIn || pickingSnooze || showWhatsNew || crashReport || naming),
+  );
+
   function shortcut(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
     const dialog = showHelp || showSettings || rulesFor || signingIn || pickingSnooze || showWhatsNew;
@@ -969,7 +974,7 @@
   onSettings={() => (showSettings = true)}
   onHelp={() => (showHelp = true)}
 />
-<div class="layout" class:hidden={view !== "mail"} style:--side="{panes.side}px" style:--list="{panes.list}px" class:resizing={dragging != null} class:carrying={carrying != null}>
+<div class="layout" inert={blocked} class:hidden={view !== "mail"} style:--side="{panes.side}px" style:--list="{panes.list}px" class:resizing={dragging != null} class:carrying={carrying != null}>
   <Sidebar
     {accounts}
     {folders}
@@ -1085,8 +1090,8 @@
   {/if}
 </div>
 {#if calendarOpened}
-  <div class="pane" class:hidden={view !== "calendar"}>
-    <CalendarView active={view === "calendar"} blocked={!!(showHelp || showSettings || rulesFor || signingIn || showWhatsNew)} />
+  <div class="pane" inert={blocked} class:hidden={view !== "calendar"}>
+    <CalendarView active={view === "calendar"} {blocked} />
   </div>
 {/if}
   {#if signingIn}
