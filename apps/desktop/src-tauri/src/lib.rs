@@ -1,5 +1,6 @@
 //! Tauri host: registers commands and forwards core events to the UI.
 
+mod attachments;
 mod calendar;
 mod calsync;
 mod commands;
@@ -139,6 +140,8 @@ pub fn run() {
             snooze::unsnooze_messages,
             snooze::snoozed_count,
             snooze::snoozed_until,
+            attachments::attachment_contents,
+            attachments::save_attachment,
             invites::message_invite,
             invites::answer_invite,
             rules::list_rules,

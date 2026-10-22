@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use base64::Engine;
 use mail_core::{Error, MessageHeader, Result};
-use mail_parser::{Address, HeaderValue, MessageParser, MimeHeaders};
+use mail_parser::{Address, HeaderValue, MessageParser, MessagePart, MimeHeaders};
 use serde::Serialize;
 
 use crate::html::sanitize_html;
@@ -49,32 +49,19 @@ pub fn parse_message(raw: &[u8], allow_remote: bool) -> Result<ParsedMessage> {
     let mut inline_images = HashMap::new();
     let mut attachments = Vec::new();
     for part in message.attachments() {
-        let mime_type = part
-            .content_type()
-            .map(|ct| match ct.subtype() {
-                Some(sub) => format!("{}/{}", ct.ctype(), sub),
-                None => ct.ctype().to_owned(),
-            })
-            .unwrap_or_else(|| "application/octet-stream".into());
+        let mime_type = mime_type_of(part);
         let contents = part.contents();
-        if let Some(cid) = part.content_id()
-            && mime_type.starts_with("image/")
-            && contents.len() <= MAX_INLINE_IMAGE
-        {
+        if let Some(cid) = inline_cid(part, &mime_type) {
             let data = base64::engine::general_purpose::STANDARD.encode(contents);
-            let cid = cid
-                .trim_matches(|c| c == '<' || c == '>')
-                .to_ascii_lowercase();
             inline_images.insert(cid, format!("data:{mime_type};base64,{data}"));
-            if part.attachment_name().is_none() {
-                continue;
-            }
         }
-        attachments.push(AttachmentInfo {
-            name: part.attachment_name().unwrap_or("attachment").to_owned(),
-            mime_type,
-            size: contents.len(),
-        });
+        if listed(part, &mime_type) {
+            attachments.push(AttachmentInfo {
+                name: part.attachment_name().unwrap_or("attachment").to_owned(),
+                mime_type,
+                size: contents.len(),
+            });
+        }
     }
 
     let text = message
@@ -100,6 +87,48 @@ pub fn parse_message(raw: &[u8], allow_remote: bool) -> Result<ParsedMessage> {
         attachments,
         invite: crate::invite::calendar_part(&message).is_some(),
     })
+}
+
+/// One attachment of a message and its decoded contents. `index` counts the
+/// attachments as [`ParsedMessage::attachments`] lists them.
+pub fn attachment(raw: &[u8], index: usize) -> Option<(AttachmentInfo, Vec<u8>)> {
+    let message = MessageParser::default().parse(raw)?;
+    let part = message
+        .attachments()
+        .filter(|p| listed(p, &mime_type_of(p)))
+        .nth(index)?;
+    let contents = part.contents().to_vec();
+    let info = AttachmentInfo {
+        name: part.attachment_name().unwrap_or("attachment").to_owned(),
+        mime_type: mime_type_of(part),
+        size: contents.len(),
+    };
+    Some((info, contents))
+}
+
+fn mime_type_of(part: &MessagePart) -> String {
+    part.content_type()
+        .map(|ct| match ct.subtype() {
+            Some(sub) => format!("{}/{}", ct.ctype(), sub),
+            None => ct.ctype().to_owned(),
+        })
+        .unwrap_or_else(|| "application/octet-stream".into())
+        .to_ascii_lowercase()
+}
+
+/// The Content-ID a picture is shown by inside the HTML, when it is one.
+fn inline_cid(part: &MessagePart, mime_type: &str) -> Option<String> {
+    let cid = part.content_id()?;
+    (mime_type.starts_with("image/") && part.contents().len() <= MAX_INLINE_IMAGE).then(|| {
+        cid.trim_matches(|c| c == '<' || c == '>')
+            .to_ascii_lowercase()
+    })
+}
+
+/// Whether a part shows in the attachment list: everything except unnamed
+/// pictures that are part of the HTML.
+fn listed(part: &MessagePart, mime_type: &str) -> bool {
+    inline_cid(part, mime_type).is_none() || part.attachment_name().is_some()
 }
 
 /// Decodes the header block fetched during sync (RFC 2047 words included)
@@ -279,6 +308,36 @@ JVBERi0xLjQ=\r\n\
         assert_eq!(m.attachments.len(), 1);
         assert_eq!(m.attachments[0].name, "invoice.pdf");
         assert_eq!(m.attachments[0].mime_type, "application/pdf");
+    }
+
+    #[test]
+    fn attachment_contents_follow_the_list() {
+        let raw = b"From: a@example.test\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\
+\r\n\
+--b\r\n\
+Content-Type: text/html\r\n\
+\r\n\
+<img src=\"cid:logo\">\r\n\
+--b\r\n\
+Content-Type: image/png\r\n\
+Content-ID: <logo>\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+iVBORw0KGgo=\r\n\
+--b\r\n\
+Content-Type: application/PDF; name=\"invoice.pdf\"\r\n\
+Content-Disposition: attachment; filename=\"invoice.pdf\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+JVBERi0xLjQ=\r\n\
+--b--\r\n";
+        assert_eq!(parse_message(raw, false).unwrap().attachments.len(), 1);
+        let (info, contents) = attachment(raw, 0).unwrap();
+        assert_eq!(info.name, "invoice.pdf");
+        assert_eq!(info.mime_type, "application/pdf");
+        assert_eq!(contents, b"%PDF-1.4");
+        assert!(attachment(raw, 1).is_none());
     }
 
     #[test]

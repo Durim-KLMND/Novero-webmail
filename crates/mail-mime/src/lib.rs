@@ -23,5 +23,6 @@ pub use invite::{InviteAnswer, build_invite_answer, calendar_text};
 pub use mail_core::{Error, Result};
 pub use mailto::parse_mailto;
 pub use parse::{
-    AttachmentInfo, ParsedMessage, bracketed, parse_header_fields, parse_message, search_text,
+    AttachmentInfo, ParsedMessage, attachment, bracketed, parse_header_fields, parse_message,
+    search_text,
 };
