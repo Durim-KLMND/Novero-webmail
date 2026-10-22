@@ -32,6 +32,7 @@
   import Image from "@lucide/svelte/icons/image";
   import Inbox from "@lucide/svelte/icons/inbox";
   import Italic from "@lucide/svelte/icons/italic";
+  import KeyRound from "@lucide/svelte/icons/key-round";
   import Keyboard from "@lucide/svelte/icons/keyboard";
   import Link from "@lucide/svelte/icons/link";
   import List from "@lucide/svelte/icons/list";
@@ -60,6 +61,7 @@
   import Search from "@lucide/svelte/icons/search";
   import Send from "@lucide/svelte/icons/send";
   import Settings from "@lucide/svelte/icons/settings";
+  import Sparkles from "@lucide/svelte/icons/sparkles";
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import TextCursor from "@lucide/svelte/icons/text-cursor";
   import Trash from "@lucide/svelte/icons/trash";
@@ -98,6 +100,7 @@
     inbox: Inbox,
     italic: Italic,
     keyboard: Keyboard,
+    key: KeyRound,
     link: Link,
     list: List,
     rules: ListFilter,
@@ -130,6 +133,7 @@
     search: Search,
     sent: Send,
     settings: Settings,
+    pro: Sparkles,
     junk: ShieldAlert,
     "select-all": TextCursor,
     trash: Trash,

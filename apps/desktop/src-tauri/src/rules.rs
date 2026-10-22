@@ -9,6 +9,7 @@ use mail_sync::NewMail;
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{change, move_to, to_role};
+use crate::plan::{self, Feature};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -20,6 +21,10 @@ pub fn list_rules(state: State<'_, AppState>, account: AccountId) -> Result<Vec<
 #[tauri::command]
 pub fn save_rule(state: State<'_, AppState>, rule: Rule) -> Result<Rule> {
     let store = state.store.lock().unwrap();
+    // Turning a rule off, or keeping it off, is always allowed.
+    if rule.enabled {
+        plan::require(&store, Feature::Rules)?;
+    }
     for action in &rule.actions {
         if let RuleAction::Move { folder } = action {
             let found = store.folder(*folder)?;
@@ -83,6 +88,9 @@ pub fn apply(app: &AppHandle, account: AccountId, new_mail: &[NewMail]) -> Vec<N
     let state = app.state::<AppState>();
     let found = {
         let store = state.store.lock().unwrap();
+        if !plan::is_pro(&store) {
+            return new_mail.to_vec();
+        }
         let ids: Vec<i64> = new_mail.iter().map(|m| m.id).collect();
         store
             .list_rules(account)
@@ -114,6 +122,7 @@ pub async fn run_rules(
 ) -> Result<usize> {
     let (source, messages, rules) = {
         let store = state.store.lock().unwrap();
+        plan::require(&store, Feature::Rules)?;
         let source = store
             .folder(folder)?
             .ok_or_else(|| Error::Invalid("that folder no longer exists".into()))?;
