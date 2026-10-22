@@ -14,6 +14,7 @@ mod rules;
 mod settings;
 mod snooze;
 mod state;
+mod todo;
 mod updates;
 mod window;
 
@@ -158,6 +159,17 @@ pub fn run() {
             settings::list_templates,
             settings::save_template,
             settings::delete_template,
+            todo::list_notes,
+            todo::save_note,
+            todo::delete_note,
+            todo::task_board,
+            todo::save_task_column,
+            todo::delete_task_column,
+            todo::move_task_column,
+            todo::save_task,
+            todo::move_task,
+            todo::delete_task,
+            todo::clear_done_tasks,
             links::take_mailto,
             links::open_default_apps,
             settings::test_notification,

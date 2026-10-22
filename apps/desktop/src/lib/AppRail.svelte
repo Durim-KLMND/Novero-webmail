@@ -1,27 +1,30 @@
 <script lang="ts">
-  // The narrow strip on the far left: switches between mail and the calendar,
-  // with settings and the shortcut list at the bottom.
+  // The narrow strip on the far left: switches between mail, the calendar and
+  // the to-do list, with settings and the shortcut list at the bottom.
   import Icon, { type IconName } from "./Icon.svelte";
 
-  export type AppView = "mail" | "calendar";
+  export type AppView = "mail" | "calendar" | "todo";
 
   interface Props {
     view: AppView;
     /** Unread mail in all inboxes, shown on the mail button. */
     unread?: number;
+    /** Unfinished tasks due today or earlier, shown on the to-do button. */
+    due?: number;
     onView: (view: AppView) => void;
     onSettings: () => void;
     onHelp: () => void;
   }
-  let { view, unread = 0, onView, onSettings, onHelp }: Props = $props();
+  let { view, unread = 0, due = 0, onView, onSettings, onHelp }: Props = $props();
 
   const views: { id: AppView; icon: IconName; label: string; keys: string }[] = [
     { id: "mail", icon: "mail", label: "Mail", keys: "Ctrl+1" },
     { id: "calendar", icon: "calendar", label: "Calendar", keys: "Ctrl+2" },
+    { id: "todo", icon: "todo", label: "To-do and notes", keys: "Ctrl+3" },
   ];
 </script>
 
-<nav class="rail" aria-label="Switch between mail and calendar">
+<nav class="rail" aria-label="Switch between mail, calendar and to-do">
   {#each views as v (v.id)}
     <button
       class="spot"
@@ -34,6 +37,8 @@
       <Icon name={v.icon} size={20} />
       {#if v.id === "mail" && unread > 0}
         <span class="badge" aria-label="{unread} unread">{unread > 99 ? "99+" : unread}</span>
+      {:else if v.id === "todo" && due > 0}
+        <span class="badge" aria-label="{due} due">{due > 99 ? "99+" : due}</span>
       {/if}
     </button>
   {/each}

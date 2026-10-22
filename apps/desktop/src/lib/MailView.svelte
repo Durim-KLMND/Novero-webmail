@@ -35,6 +35,8 @@
   import Toasts from "./Toasts.svelte";
   import AppRail, { type AppView } from "./AppRail.svelte";
   import CalendarView from "./CalendarView.svelte";
+  import TodoView from "./TodoView.svelte";
+  import { dueCount } from "./todo";
   import CrashReport from "./CrashReport.svelte";
   import UpdateDialog from "./UpdateDialog.svelte";
   import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
@@ -76,12 +78,16 @@
   /** The rules dialog: the account it shows, and a sender to make a rule for. */
   let rulesFor = $state<{ account: number; from?: string } | null>(null);
   let showHelp = $state(false);
-  /** Mail or the calendar, picked on the rail. */
+  /** Mail, the calendar or the to-do list, picked on the rail. */
   let view = $state<AppView>("mail");
   /** The calendar stays loaded once opened, to come back to where it was. */
   let calendarOpened = $state(false);
+  /** The to-do view too; until then the rail's count comes from here. */
+  let todoOpened = $state(false);
+  let tasksDue = $state(0);
   $effect(() => {
     if (view === "calendar") calendarOpened = true;
+    if (view === "todo") todoOpened = true;
   });
   const unreadInboxes = $derived(
     Object.values(folders)
@@ -151,6 +157,9 @@
 
   onMount(async () => {
     refreshSnoozed();
+    api.taskBoard().then((b) => {
+      if (!todoOpened) tasksDue = dueCount(b);
+    }, () => {});
     try {
       settings = await api.getSettings();
       applyTheme(settings.theme);
@@ -909,11 +918,12 @@
   function shortcut(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
     const dialog = showHelp || showSettings || rulesFor || signingIn || pickingSnooze || showWhatsNew;
-    // Ctrl+1 and Ctrl+2 switch between mail and the calendar.
-    if (event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "1" || event.key === "2")) {
+    // Ctrl+1, 2 and 3 switch between mail, the calendar and the to-do list.
+    const views: Record<string, AppView> = { "1": "mail", "2": "calendar", "3": "todo" };
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && views[event.key]) {
       if (dialog) return;
       event.preventDefault();
-      view = event.key === "1" ? "mail" : "calendar";
+      view = views[event.key];
       return;
     }
     // Ctrl+K searches mail from anywhere, even while typing a message.
@@ -965,6 +975,7 @@
 <AppRail
   {view}
   unread={unreadInboxes}
+  due={tasksDue}
   onView={(v) => (view = v)}
   onSettings={() => (showSettings = true)}
   onHelp={() => (showHelp = true)}
@@ -1087,6 +1098,11 @@
 {#if calendarOpened}
   <div class="pane" class:hidden={view !== "calendar"}>
     <CalendarView active={view === "calendar"} blocked={!!(showHelp || showSettings || rulesFor || signingIn || showWhatsNew)} />
+  </div>
+{/if}
+{#if todoOpened}
+  <div class="pane" class:hidden={view !== "todo"}>
+    <TodoView onDue={(n) => (tasksDue = n)} />
   </div>
 {/if}
   {#if signingIn}
