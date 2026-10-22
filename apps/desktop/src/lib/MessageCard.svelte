@@ -126,7 +126,7 @@
     {:else if !message}
       <div class="pad"><span class="spinner"></span></div>
     {:else}
-      <dl>
+      <dl class="selectable">
         <dt>From</dt><dd>{message.from ?? "(unknown)"}</dd>
         {#if message.to}<dt>To</dt><dd>{message.to}</dd>{/if}
         {#if message.cc}<dt>Cc</dt><dd>{message.cc}</dd>{/if}
@@ -158,7 +158,7 @@
             ></iframe>
           {/key}
         {:else if message.text}
-          <pre>{message.text}</pre>
+          <pre class="selectable">{message.text}</pre>
         {:else}
           <p class="quiet pad">This message has no text.</p>
         {/if}
