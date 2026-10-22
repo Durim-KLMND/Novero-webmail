@@ -16,6 +16,8 @@
   import SignatureSettings from "./SignatureSettings.svelte";
   import TemplateSettings from "./TemplateSettings.svelte";
   import AccountServers from "./AccountServers.svelte";
+  import PlanSettings from "./PlanSettings.svelte";
+  import { needPro, pro } from "./pro.svelte";
 
   interface Props {
     accounts: Account[];
@@ -50,13 +52,14 @@
     onAccountChanged,
   }: Props = $props();
 
-  type Category = "general" | "mail" | "accounts" | "signatures" | "templates" | "updates" | "privacy";
+  type Category = "general" | "mail" | "accounts" | "signatures" | "templates" | "plan" | "updates" | "privacy";
   const categories: { id: Category; label: string; icon: IconName }[] = [
     { id: "general", label: "General", icon: "settings" },
     { id: "mail", label: "Mail", icon: "inbox" },
     { id: "accounts", label: "Accounts", icon: "contacts" },
     { id: "signatures", label: "Signatures", icon: "signature" },
     { id: "templates", label: "Templates", icon: "template" },
+    { id: "plan", label: "Plan", icon: "pro" },
     { id: "updates", label: "Updates", icon: "refresh" },
     { id: "privacy", label: "Privacy", icon: "junk" },
   ];
@@ -252,6 +255,11 @@
     }
   }
 
+  function addAccount() {
+    if (accounts.length >= (pro.plan?.freeAccounts ?? Infinity) && !needPro("accounts")) return;
+    saveThen(onAddAccount);
+  }
+
   /** Saves, then goes on to a screen of its own (adding an account, signing in). */
   async function saveThen(next: () => void) {
     if (await save()) next();
@@ -364,7 +372,7 @@
         <fieldset>
           <legend>Rules</legend>
           <div class="row">
-            <button onclick={onRules}><Icon name="rules" /> Manage rules…</button>
+            <button onclick={() => needPro("rules") && onRules()}><Icon name="rules" /> Manage rules…</button>
           </div>
           <small class="quiet">Sort new mail as it arrives, such as moving newsletters to a folder.</small>
         </fieldset>
@@ -402,11 +410,13 @@
         </ul>
         {#if serversSaved}<small class="quiet saved" role="status">{serversSaved}</small>{/if}
         <div class="row">
-          <button onclick={() => saveThen(onAddAccount)} disabled={saving}><Icon name="plus" /> Add account</button>
+          <button onclick={addAccount} disabled={saving}><Icon name="plus" /> Add account</button>
         </div>
         <small class="quiet">Removing an account only removes it from Novero Mail. Mail on the server is not touched.</small>
       {:else if category === "signatures" || category === "templates"}
         <!-- Shown below, so edits survive switching categories. -->
+      {:else if category === "plan"}
+        <PlanSettings />
       {:else if category === "updates"}
         <fieldset>
           {#if canUpdate}

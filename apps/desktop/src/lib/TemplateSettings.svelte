@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import { api, errorText, type Template } from "./api";
   import Icon from "./Icon.svelte";
+  import { needPro } from "./pro.svelte";
   import RichEditor from "./RichEditor.svelte";
   import { textToHtml } from "./richtext";
 
@@ -25,6 +26,7 @@
   });
 
   function add() {
+    if (!needPro("templates")) return;
     entries.push({ id: 0, name: "", subject: "", text: "", html: "", key: `n${next++}`, saved: null });
   }
 
