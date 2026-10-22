@@ -1,6 +1,6 @@
 // The browser-style status bubble that shows where a link goes while the
-// pointer is over it (lib/LinkStatus.svelte). The app's own document and every
-// message frame report into the same state.
+// pointer is over it (lib/LinkStatus.svelte, at the bottom of the reading
+// pane). Every message frame reports into the same state.
 
 export const linkStatus = $state({ url: "", x: 0, y: 0 });
 
@@ -35,15 +35,15 @@ export function watchLinks(doc: Document, offset: () => { x: number; y: number }
     const at = offset();
     report(doc, event.target, event.clientX + at.x, event.clientY + at.y);
   });
-  // Leaving the window altogether: nothing reports a new element after this.
+  // Leaving the frame: the app's own document doesn't report links.
   doc.addEventListener("mouseout", (event) => {
-    if (!event.relatedTarget && doc === document) forgetLinks();
+    if (!event.relatedTarget) forgetLinks(doc);
   });
 }
 
-/** Hides the bubble if it shows a link from `doc` (or from anywhere, without one). */
-export function forgetLinks(doc?: Document | null) {
-  if (doc && doc !== source) return;
+/** Hides the bubble if it shows a link from `doc`. */
+export function forgetLinks(doc: Document | null) {
+  if (!doc || doc !== source) return;
   source = null;
   linkStatus.url = "";
 }
