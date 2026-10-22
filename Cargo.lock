@@ -902,6 +902,7 @@ name = "desktop"
 version = "0.3.2"
 dependencies = [
  "base64 0.22.1",
+ "jiff",
  "mail-auth",
  "mail-calendar",
  "mail-calendar-sync",
