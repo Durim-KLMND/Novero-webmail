@@ -1,7 +1,21 @@
+<script lang="ts" module>
+  const LAST_KEY = "novero.calendar.last";
+
+  /** The calendar the last new event went in, for the next one. */
+  export function lastCalendar(): number | null {
+    try {
+      const id = Number(localStorage.getItem(LAST_KEY));
+      return Number.isInteger(id) && id > 0 ? id : null;
+    } catch {
+      return null;
+    }
+  }
+</script>
+
 <script lang="ts">
   // Making or changing an event: what, when, where, how often and the reminder.
   import { onMount, tick, untrack } from "svelte";
-  import { api, errorText, type Calendar, type CalendarEvent } from "./api";
+  import { api, errorText, type Calendar, type CalendarAccount, type CalendarEvent } from "./api";
   import {
     REMINDERS,
     addDays,
@@ -24,11 +38,13 @@
   interface Props {
     event: CalendarEvent;
     calendars: Calendar[];
+    /** Online accounts, to group their calendars under. */
+    accounts?: CalendarAccount[];
     /** The occurrence that was opened, for "Delete only this one". */
     occurrence?: number | null;
     onClose: () => void;
   }
-  let { event: given, calendars, occurrence = null, onClose }: Props = $props();
+  let { event: given, calendars, accounts = [], occurrence = null, onClose }: Props = $props();
   // The form edits a copy of the event it opened with.
   const event = untrack(() => $state.snapshot(given)) as CalendarEvent;
 
@@ -40,6 +56,16 @@
   /** One occurrence of an online series, kept as its own event. */
   const instance = !!event.series;
   const choices = $derived(calendars.filter((c) => !c.readOnly || c.id === event.calendar));
+  const SERVICE = { google: "Google Calendar", microsoft: "Outlook" } as const;
+  /** The choices by where they are kept: this computer, then each account. */
+  const groups = $derived([
+    { label: "On this computer", list: choices.filter((c) => c.source == null) },
+    ...accounts.map((a) => ({
+      label: `${SERVICE[a.provider]} · ${a.email}`,
+      list: choices.filter((c) => c.source === a.id),
+    })),
+  ].filter((g) => g.list.length));
+  const chosenAccount = $derived(accounts.find((a) => a.id === calendars.find((c) => c.id === calendar)?.source));
 
   // The form works in local dates and times. An all-day event's last day is
   // the day before its end.
@@ -121,6 +147,13 @@
         rrule: repeatRule(repeat, startDay, event.rrule),
         reminder,
       });
+      if (isNew) {
+        try {
+          localStorage.setItem(LAST_KEY, String(calendar));
+        } catch {
+          // Not remembered, then.
+        }
+      }
       onClose();
     } catch (err) {
       error = errorText(err);
@@ -244,12 +277,25 @@
     <div class="row">
       <Icon name="calendar" />
       <select aria-label="Calendar" bind:value={calendar}>
-        {#each choices as c (c.id)}
-          <option value={c.id}>{c.name}</option>
-        {/each}
+        {#if groups.length > 1}
+          {#each groups as g (g.label)}
+            <optgroup label={g.label}>
+              {#each g.list as c (c.id)}
+                <option value={c.id}>{c.name}</option>
+              {/each}
+            </optgroup>
+          {/each}
+        {:else}
+          {#each choices as c (c.id)}
+            <option value={c.id}>{c.name}</option>
+          {/each}
+        {/if}
       </select>
       <span class="swatch" style:background={calendars.find((c) => c.id === calendar)?.color}></span>
     </div>
+    {#if chosenAccount && !readOnly}
+      <p class="hint quiet">Saved to {SERVICE[chosenAccount.provider]} for {chosenAccount.email}.</p>
+    {/if}
 
     <textarea placeholder="Add notes" aria-label="Notes" rows="4" bind:value={notes}></textarea>
     </fieldset>

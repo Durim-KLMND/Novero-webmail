@@ -32,7 +32,7 @@
   } from "./calendar";
   import { items, openMenu, toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { toast } from "./toast.svelte";
-  import EventDialog from "./EventDialog.svelte";
+  import EventDialog, { lastCalendar } from "./EventDialog.svelte";
   import Icon from "./Icon.svelte";
   import { needPro } from "./pro.svelte";
 
@@ -162,6 +162,8 @@
   }
 
   function defaultCalendar(): number {
+    const last = lastCalendar();
+    if (last != null && writable.some((c) => c.id === last)) return last;
     return (writable.find((c) => c.visible) ?? writable[0] ?? calendars[0])?.id ?? 1;
   }
 
@@ -730,7 +732,7 @@
 </div>
 
 {#if editing}
-  <EventDialog event={editing.event} occurrence={editing.occurrence} {calendars} onClose={() => (editing = null)} />
+  <EventDialog event={editing.event} occurrence={editing.occurrence} {calendars} accounts={online.accounts} onClose={() => (editing = null)} />
 {/if}
 
 <style>
