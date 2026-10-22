@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(order, [b.id, a.id]);
 
         store.delete_note(b.id).unwrap();
-        assert_eq!(store.notes().unwrap(), [a.clone()]);
+        assert_eq!(store.notes().unwrap(), std::slice::from_ref(&a));
         assert!(store.save_note(&b).is_err());
     }
 

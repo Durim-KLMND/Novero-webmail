@@ -9,6 +9,7 @@ mod files;
 mod folders;
 mod invites;
 mod links;
+mod plan;
 mod reader;
 mod rules;
 mod settings;
@@ -62,6 +63,7 @@ pub fn run() {
             calsync::start(app.handle());
             compose::start_scheduler(app.handle());
             snooze::start(app.handle());
+            plan::start(app.handle());
 
             let handle = app.handle().clone();
             state::start_all(&handle);
@@ -182,6 +184,11 @@ pub fn run() {
             updates::update_status,
             updates::download_update,
             updates::install_update,
+            plan::get_plan,
+            plan::activate_license,
+            plan::deactivate_license,
+            plan::refresh_plan,
+            plan::open_checkout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Novero Mail");

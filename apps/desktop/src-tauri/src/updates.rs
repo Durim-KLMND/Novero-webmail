@@ -62,6 +62,8 @@ pub struct UpdateInfo {
     pub version: String,
     /// The release notes, when the release has any.
     pub notes: Option<String>,
+    /// When it was released (UTC seconds), when the manifest says.
+    pub released: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -109,6 +111,7 @@ fn info(update: &Update) -> UpdateInfo {
     UpdateInfo {
         version: update.version.clone(),
         notes: update.body.clone().filter(|b| !b.trim().is_empty()),
+        released: update.date.map(|d| d.unix_timestamp()),
     }
 }
 

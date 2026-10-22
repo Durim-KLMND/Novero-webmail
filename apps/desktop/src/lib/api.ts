@@ -293,6 +293,38 @@ export interface UpdateInfo {
   version: string;
   /** The release notes, as written on GitHub (see notes.ts). */
   notes: string | null;
+  /** When it was released, in seconds since 1970, when known. */
+  released: number | null;
+}
+
+/** Why the plan is what it is (src-tauri/src/plan.rs). */
+export type PlanReason = "unlocked" | "license" | "trial" | "unchecked" | "ended" | "tooNew" | "free";
+
+export interface LicenseInfo {
+  /** Only the last part is shown. */
+  key: string;
+  /** The option bought, as named in the store. */
+  variant: string;
+  status: string;
+  expiresAt: string | null;
+  /** When the store last confirmed it, in seconds since 1970. */
+  checked: number;
+  /** Versions released until then are covered, in seconds since 1970. */
+  updatesUntil: number | null;
+}
+
+export interface Plan {
+  tier: "free" | "pro";
+  reason: PlanReason;
+  /** Days of the trial left, counting today; 0 once it's over. */
+  trialDaysLeft: number;
+  license: LicenseInfo | null;
+  /** Whether Pro can be bought from this copy. */
+  canBuy: boolean;
+  /** How many accounts Free syncs. */
+  freeAccounts: number;
+  /** Accounts Free doesn't sync. */
+  pausedAccounts: number[];
 }
 
 export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready" | "installing";
@@ -594,6 +626,13 @@ export const api = {
   updateStatus: () => invoke<UpdateStatus>("update_status"),
   downloadUpdate: () => invoke<void>("download_update"),
   installUpdate: () => invoke<void>("install_update"),
+  getPlan: () => invoke<Plan>("get_plan"),
+  activateLicense: (key: string) => invoke<Plan>("activate_license", { key }),
+  /** Frees the key for another computer. */
+  deactivateLicense: () => invoke<Plan>("deactivate_license"),
+  /** Checks the license with the store now. */
+  refreshPlan: () => invoke<Plan>("refresh_plan"),
+  openCheckout: () => invoke<void>("open_checkout"),
   listCalendars: () => invoke<Calendar[]>("list_calendars"),
   saveCalendar: (calendar: Calendar) => invoke<Calendar>("save_calendar", { calendar }),
   deleteCalendar: (id: number) => invoke<void>("delete_calendar", { id }),
@@ -635,6 +674,11 @@ export function onFileDrop(handler: (event: FileDrop) => void): Promise<Unlisten
 /** Updates were looked for, found, downloaded or installed. */
 export function onUpdateStatus(handler: (status: UpdateStatus) => void): Promise<UnlistenFn> {
   return listen<UpdateStatus>("update-status", (e) => handler(e.payload));
+}
+
+/** The plan may have changed (a key activated, checked or removed). */
+export function onPlanChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("plan-changed", () => handler());
 }
 
 /** A mailto: link was opened; `api.takeMailto` returns it. */

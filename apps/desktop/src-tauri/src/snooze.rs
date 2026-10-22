@@ -43,7 +43,10 @@ pub fn snooze_messages(
             "Pick a time in the future.".into(),
         ));
     }
-    state.store.lock().unwrap().snooze(&ids, until)?;
+    let store = state.store.lock().unwrap();
+    crate::plan::require(&store, crate::plan::Feature::Snooze)?;
+    store.snooze(&ids, until)?;
+    drop(store);
     changed(&app, &state, &ids);
     Ok(())
 }

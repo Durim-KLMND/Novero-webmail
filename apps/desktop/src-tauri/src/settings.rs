@@ -6,6 +6,7 @@ use mail_store::Store;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
+use crate::plan::{self, Feature};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +121,15 @@ pub fn list_signatures(state: State<'_, AppState>) -> Result<Vec<Signature>> {
 /// when it has formatting (empty otherwise).
 #[tauri::command]
 pub fn save_signature(state: State<'_, AppState>, signature: Signature) -> Result<Signature> {
+    let store = state.store.lock().unwrap();
+    let has_one = || {
+        store
+            .signatures()
+            .map(|all| all.iter().any(|s| s.account == signature.account))
+    };
+    if signature.id == 0 && has_one()? {
+        plan::require(&store, Feature::MoreSignatures)?;
+    }
     let signature = Signature {
         name: named(&signature.name, "Signature"),
         // Trailing blank lines would only push the quote further down.
@@ -127,7 +137,7 @@ pub fn save_signature(state: State<'_, AppState>, signature: Signature) -> Resul
         html: cleaned(&signature.html),
         ..signature
     };
-    state.store.lock().unwrap().save_signature(&signature)
+    store.save_signature(&signature)
 }
 
 #[tauri::command]
@@ -158,6 +168,11 @@ pub fn list_templates(state: State<'_, AppState>) -> Result<Vec<Template>> {
 /// Adds or changes a template.
 #[tauri::command]
 pub fn save_template(state: State<'_, AppState>, template: Template) -> Result<Template> {
+    let store = state.store.lock().unwrap();
+    // Templates made on Pro can still be changed.
+    if template.id == 0 {
+        plan::require(&store, Feature::Templates)?;
+    }
     let template = Template {
         name: named(&template.name, "Template"),
         subject: template.subject.trim().to_owned(),
@@ -165,7 +180,7 @@ pub fn save_template(state: State<'_, AppState>, template: Template) -> Result<T
         html: cleaned(&template.html),
         ..template
     };
-    state.store.lock().unwrap().save_template(&template)
+    store.save_template(&template)
 }
 
 #[tauri::command]

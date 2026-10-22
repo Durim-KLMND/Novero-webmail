@@ -39,6 +39,7 @@
   import { dueCount } from "./todo";
   import CrashReport from "./CrashReport.svelte";
   import UpdateDialog from "./UpdateDialog.svelte";
+  import { needPro } from "./pro.svelte";
   import { items, openMenu, setMailtoHandler, type MenuItem } from "./menus.svelte";
   import { laterChoices, laterText } from "./later";
   import PickTime from "./PickTime.svelte";
@@ -77,6 +78,9 @@
   let showSettings = $state(false);
   /** The rules dialog: the account it shows, and a sender to make a rule for. */
   let rulesFor = $state<{ account: number; from?: string } | null>(null);
+  function openRules(start: { account: number; from?: string }) {
+    if (needPro("rules")) rulesFor = start;
+  }
   let showHelp = $state(false);
   /** Mail, the calendar or the to-do list, picked on the rail. */
   let view = $state<AppView>("mail");
@@ -358,6 +362,7 @@
 
   /** Hides the selected row until `at`. */
   function snooze(at: Date) {
+    if (!needPro("snooze")) return;
     act(
       (ids) => api.snoozeMessages(ids, Math.floor(at.getTime() / 1000)),
       true,
@@ -379,7 +384,7 @@
         run: () => snooze(c.at),
       })),
       "separator",
-      { label: "Pick a date and time…", icon: "calendar", run: () => (pickingSnooze = true) },
+      { label: "Pick a date and time…", icon: "calendar", run: () => needPro("snooze") && (pickingSnooze = true) },
     ];
   }
 
@@ -502,7 +507,7 @@
         !draft && item.folderRole === "inbox" && sender && {
           label: "Make a rule for this sender…",
           icon: "rules",
-          run: () => (rulesFor = { account: item.accountId, from: sender }),
+          run: () => openRules({ account: item.accountId, from: sender }),
         },
         canArchive && { label: "Archive", icon: "archive", shortcut: "E", run: archive },
         {
@@ -997,7 +1002,7 @@
     snoozedActive={snoozedView && !searchQuery}
     onSnoozed={selectSnoozed}
     onSearch={search}
-    onRules={(account) => (rulesFor = { account })}
+    onRules={(account) => openRules({ account })}
     onSync={(id) => api.syncAccount(id)}
     onRemove={removeAccount}
     onSignInAgain={(account) => (signingIn = account)}
@@ -1116,7 +1121,7 @@
       {update}
       onInstallUpdate={installUpdate}
       onWhatsNew={() => (showWhatsNew = true)}
-      onRules={() => (rulesFor = { account: selectedFolder?.accountId ?? accounts[0].id })}
+      onRules={() => openRules({ account: selectedFolder?.accountId ?? accounts[0].id })}
       {onAddAccount}
       onSignInAgain={(account) => (signingIn = account)}
       onRemoveAccount={removeAccount}

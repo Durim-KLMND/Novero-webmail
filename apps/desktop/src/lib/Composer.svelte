@@ -21,6 +21,7 @@
   import { laterChoices } from "./later";
   import PickTime from "./PickTime.svelte";
   import NameDialog from "./NameDialog.svelte";
+  import { needPro } from "./pro.svelte";
   import { toast } from "./toast.svelte";
   import { textToHtml } from "./richtext";
 
@@ -216,6 +217,7 @@
   let picking = $state(false);
 
   function sendLaterMenu(e: MouseEvent) {
+    if (!needPro("sendLater")) return;
     const button = e.currentTarget as HTMLElement;
     toggleMenuUnder(button.parentElement ?? button, [
       ...laterChoices(new Date(), false).map((c) => ({
@@ -331,7 +333,7 @@
     toggleMenuUnder(event.currentTarget as Element, [
       ...templates.map((t) => ({ label: t.name, icon: "template" as const, run: () => useTemplate(t) })),
       ...(templates.length ? ["separator" as const] : []),
-      { label: "Save as template…", icon: "plus", run: () => (naming = true) },
+      { label: "Save as template…", icon: "plus", run: () => needPro("templates") && (naming = true) },
     ]);
   }
 
