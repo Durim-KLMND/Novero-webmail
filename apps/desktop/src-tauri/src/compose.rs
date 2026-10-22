@@ -169,6 +169,7 @@ pub async fn open_composer_window(app: AppHandle, id: i64) -> Result<()> {
     .min_inner_size(480.0, 400.0)
     .decorations(!crate::window::custom_titlebar(&app))
     .build()
+    .map(|window| crate::window::paint_background(&app, &window))
     .map_err(|e| Error::Invalid(format!("The message window could not open: {e}")))?;
     Ok(())
 }

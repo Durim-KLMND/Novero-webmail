@@ -1,3 +1,4 @@
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { Theme } from "./api";
 
 const KEY = "novero.theme";
@@ -9,6 +10,7 @@ export function applyTheme(theme: Theme) {
   const root = document.documentElement;
   if (theme === "system") delete root.dataset.theme;
   else root.dataset.theme = theme;
+  paintWindow();
   try {
     localStorage.setItem(KEY, theme);
   } catch {
@@ -25,3 +27,13 @@ export function cachedTheme(): Theme {
   }
   return "system";
 }
+
+/** Gives the window the page's background, so a fast resize shows that and
+ *  not white while the page catches up (window.rs paints it at first). */
+function paintWindow() {
+  const color = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  if (color) getCurrentWebviewWindow().setBackgroundColor(color).catch(() => {});
+}
+
+// "system" follows Windows switching between light and dark.
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintWindow);
