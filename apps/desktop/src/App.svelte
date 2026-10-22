@@ -4,6 +4,7 @@
   import Onboarding from "./lib/Onboarding.svelte";
   import MailView from "./lib/MailView.svelte";
   import ContextMenu from "./lib/ContextMenu.svelte";
+  import LinkStatus from "./lib/LinkStatus.svelte";
   import ComposerWindow from "./lib/ComposerWindow.svelte";
   import TitleBar from "./lib/TitleBar.svelte";
   import UpgradeDialog from "./lib/UpgradeDialog.svelte";
@@ -57,6 +58,7 @@
   <TitleBar title="Novero Mail" />
 {/if}
 <ContextMenu />
+<LinkStatus />
 {#if pro.asking}
   <UpgradeDialog feature={pro.asking} onClose={() => (pro.asking = null)} />
 {/if}

@@ -7,6 +7,7 @@
   import { fileSize, folderLabel, fullDate, listDate, senderName } from "./format";
   import { toast } from "./toast.svelte";
   import { viewKind } from "./viewer";
+  import { forgetLinks, watchLinks } from "./hoverlink.svelte";
 
   interface Props {
     summary: MessageSummary;
@@ -30,6 +31,10 @@
   let allowRemote = $state(false);
   let request = 0;
   const isDraft = $derived(summary.folderRole === "drafts");
+  /** The shown message's document, whose hovered link must not outlive it. */
+  let shownDoc: Document | null = null;
+
+  $effect(() => () => forgetLinks(shownDoc));
 
   async function saveAttachment(index: number) {
     if (!message) return;
@@ -91,6 +96,12 @@
   function wireFrame(frame: HTMLIFrameElement) {
     const doc = frame.contentDocument;
     if (!doc) return;
+    forgetLinks(shownDoc);
+    shownDoc = doc;
+    watchLinks(doc, () => {
+      const at = frame.getBoundingClientRect();
+      return { x: at.left, y: at.top };
+    });
     doc.addEventListener("click", (event) => {
       const link = (event.target as Element | null)?.closest?.("a[href]");
       if (!link) return;
