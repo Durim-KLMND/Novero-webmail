@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "base64 0.22.1",
  "jiff",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "mail-auth"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "mail-calendar"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "jiff",
  "mail-core",
@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "mail-calendar-sync"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "jiff",
  "mail-auth",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "mail-core"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "mail-mime"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "ammonia",
  "base64 0.22.1",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "mail-send"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "lettre",
  "mail-core",
@@ -2680,7 +2680,7 @@ dependencies = [
 
 [[package]]
 name = "mail-store"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "mail-calendar",
  "mail-core",
@@ -2692,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "mail-sync"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "async-imap",
  "futures",
