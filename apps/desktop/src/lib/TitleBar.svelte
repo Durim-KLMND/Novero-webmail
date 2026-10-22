@@ -94,11 +94,12 @@
     color: var(--accent-text);
   }
   .title {
-    flex: 1;
-    min-width: 0;
-    height: 100%;
+    /* Centred on the window: as far from both edges as the buttons reach. */
+    position: absolute;
+    inset: 0 138px;
     display: flex;
     align-items: center;
+    justify-content: center;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -108,6 +109,7 @@
     color: var(--text-quiet);
   }
   .controls {
+    margin-left: auto;
     display: flex;
     height: 100%;
   }
