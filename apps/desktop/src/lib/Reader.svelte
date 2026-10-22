@@ -3,6 +3,7 @@
   import { api, errorText, type Attachment, type FlagKind, type Folder, type MessageSummary } from "./api";
   import { folderLabel, folderPath } from "./format";
   import MessageCard from "./MessageCard.svelte";
+  import LinkStatus from "./LinkStatus.svelte";
   import AttachmentViewer from "./AttachmentViewer.svelte";
   import { toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { laterText } from "./later";
@@ -165,9 +166,10 @@
     }
   }
 
+  let article = $state<HTMLElement>();
 </script>
 
-<article class="reader" class:viewing aria-label="Conversation">
+<article class="reader" class:viewing aria-label="Conversation" bind:this={article}>
   {#if !row}
     <div class="empty quiet">Select a message to read it.</div>
   {:else if viewing}
@@ -250,6 +252,7 @@
         {/each}
       </div>
     {/if}
+    <LinkStatus area={article} />
   {/if}
 </article>
 
