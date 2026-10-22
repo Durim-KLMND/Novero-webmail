@@ -1,10 +1,9 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import InviteCard from "./InviteCard.svelte";
-  import AttachmentViewer from "./AttachmentViewer.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { closeMenu, fallbackMenu, items, openMenu } from "./menus.svelte";
-  import { api, errorText, type MessageSummary, type ParsedMessage } from "./api";
+  import { api, errorText, type Attachment, type MessageSummary, type ParsedMessage } from "./api";
   import { fileSize, folderLabel, fullDate, listDate, senderName } from "./format";
   import { toast } from "./toast.svelte";
   import { viewKind } from "./viewer";
@@ -19,8 +18,10 @@
     onOpened: (summary: MessageSummary) => void;
     onReply: (all: boolean) => void;
     onForward: () => void;
+    /** Shows one of the message's attachments in the reading pane. */
+    onOpenAttachment: (attachments: Attachment[], index: number) => void;
   }
-  let { summary, expanded, showFolder, onExpand, onOpened, onReply, onForward }: Props = $props();
+  let { summary, expanded, showFolder, onExpand, onOpened, onReply, onForward, onOpenAttachment }: Props = $props();
 
   let message = $state<ParsedMessage | null>(null);
   let loading = $state(false);
@@ -29,8 +30,6 @@
   let allowRemote = $state(false);
   let request = 0;
   const isDraft = $derived(summary.folderRole === "drafts");
-  /** The attachment open in the viewer. */
-  let viewing = $state<number | null>(null);
 
   async function saveAttachment(index: number) {
     if (!message) return;
@@ -47,7 +46,7 @@
     openMenu(
       event,
       items(
-        !!viewKind(message!.attachments[index]) && { label: "Open", icon: "template", run: () => (viewing = index) },
+        !!viewKind(message!.attachments[index]) && { label: "Open", icon: "template", run: () => onOpenAttachment(message!.attachments, index) },
         { label: "Save as…", icon: "save", run: () => saveAttachment(index) },
       ),
     );
@@ -167,7 +166,7 @@
               <button
                 class="open"
                 title={viewKind(a) ? `Open ${a.name}` : `${a.name} (${a.mimeType})`}
-                onclick={() => (viewing = i)}
+                onclick={() => onOpenAttachment(message!.attachments, i)}
                 oncontextmenu={(e) => attachmentMenu(e, i)}
               >
                 <Icon name={viewKind(a) === "image" ? "image" : viewKind(a) ? "template" : "attachment"} size={14} />
@@ -180,14 +179,6 @@
             </li>
           {/each}
         </ul>
-        {#if viewing !== null}
-          <AttachmentViewer
-            message={summary.id}
-            attachments={message.attachments}
-            start={viewing}
-            onClose={() => (viewing = null)}
-          />
-        {/if}
       {/if}
       {#if message.blockedRemote > 0 && !allowRemote}
         <div class="blocked">

@@ -1,6 +1,7 @@
 <script lang="ts">
-  // A received attachment shown inside the app: pictures, PDFs and text
-  // files. Everything else can be saved from here.
+  // A received attachment shown in the reading pane, in place of the
+  // message: pictures, PDFs and text files. Everything else can be saved
+  // from here. Its bar takes the place of the message's actions.
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import type { RenderTask } from "pdfjs-dist";
   import Icon from "./Icon.svelte";
@@ -20,7 +21,7 @@
   let { message, attachments, start, onClose }: Props = $props();
 
   const STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
-  /** Fit to the window: pictures whole, PDFs to its width. */
+  /** Fit to the pane: pictures whole, PDFs to its width. */
   const FIT = 0;
   /** CSS pixels per PDF point: at 100% a page shows at its printed size. */
   const PT = 96 / 72;
@@ -50,7 +51,7 @@
 
   let stage = $state<HTMLDivElement>();
   let stageSize = $state({ width: 0, height: 0 });
-  let viewer = $state<HTMLDivElement>();
+  let viewer = $state<HTMLElement>();
   let request = 0;
 
   function clear() {
@@ -192,21 +193,32 @@
     }
   }
 
+  /** Whether a key is meant for something else: a field being typed in, or a dialog. */
+  function elsewhere(e: KeyboardEvent): boolean {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return true;
+    return !!document.querySelector('[aria-modal="true"]');
+  }
+
   function keydown(e: KeyboardEvent) {
+    if (e.altKey || elsewhere(e)) return;
     const key = e.key;
+    const plain = !e.ctrlKey && !e.metaKey;
     let handled = true;
-    if (key === "Escape") onClose();
-    else if ((key === "+" || key === "=") && kind && kind !== "text") zoomBy(1);
-    else if (key === "-" && kind && kind !== "text") zoomBy(-1);
-    else if (key === "0") zoomTo(FIT);
-    else if (key === "r" && (kind === "image" || kind === "pdf")) rotate();
-    else if (key === "ArrowLeft" && attachments.length > 1) go(-1);
-    else if (key === "ArrowRight" && attachments.length > 1) go(1);
-    else if ((key === "s" || key === "S") && (e.ctrlKey || e.metaKey)) save();
+    if (key === "Escape" && plain) onClose();
+    else if ((key === "+" || key === "=") && plain && kind && kind !== "text") zoomBy(1);
+    else if (key === "-" && plain && kind && kind !== "text") zoomBy(-1);
+    else if (key === "0" && plain) zoomTo(FIT);
+    else if (key === "r" && plain && (kind === "image" || kind === "pdf")) rotate();
+    else if (key === "ArrowLeft" && plain && attachments.length > 1) go(-1);
+    else if (key === "ArrowRight" && plain && attachments.length > 1) go(1);
+    else if ((key === "s" || key === "S") && !plain) save();
     else handled = false;
-    if (handled) e.preventDefault();
-    // The mail behind stays put: no shortcut reaches the message list.
-    if (key !== "Tab") e.stopPropagation();
+    // Keys the viewer uses don't also reach the mail shortcuts (R would reply).
+    if (handled) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 
   function wheel(e: WheelEvent) {
@@ -323,43 +335,47 @@
 
 <svelte:window onkeydowncapture={keydown} />
 
-<div class="viewer" role="dialog" aria-modal="true" aria-label={current?.name ?? "Attachment"} tabindex="-1" bind:this={viewer}>
+<section class="viewer" aria-label={current?.name ?? "Attachment"} tabindex="-1" bind:this={viewer}>
+  <div class="actions" role="toolbar" aria-label="Attachment actions">
+    <button onclick={onClose} title="Back to the message (Esc)"><Icon name="chevron-left" />Back</button>
+    {#if attachments.length > 1}
+      <span class="group">
+        <button class="square" title="Previous attachment (←)" aria-label="Previous attachment" disabled={index === 0} onclick={() => go(-1)}>
+          <Icon name="chevron-left" />
+        </button>
+        <button
+          class="square"
+          title="Next attachment (→)"
+          aria-label="Next attachment"
+          disabled={index === attachments.length - 1}
+          onclick={() => go(1)}
+        >
+          <Icon name="chevron-right" />
+        </button>
+      </span>
+    {/if}
+    <span class="gap"></span>
+    {#if kind === "image" || kind === "pdf"}
+      <span class="group">
+        <button class="square" title="Zoom out (−)" aria-label="Zoom out" onclick={() => zoomBy(-1)}><Icon name="zoom-out" /></button>
+        <button class="zoom" title="Fit (0)" onclick={() => zoomTo(FIT)}>{Math.round(scale * 100)}%</button>
+        <button class="square" title="Zoom in (+)" aria-label="Zoom in" onclick={() => zoomBy(1)}><Icon name="zoom-in" /></button>
+      </span>
+      <button title="Fit to the pane (0)" aria-label="Fit" aria-pressed={zoom === FIT} onclick={() => zoomTo(FIT)}>
+        <Icon name="fit" /><span class="text">Fit</span>
+      </button>
+      <button title="Rotate (R)" aria-label="Rotate" onclick={rotate}><Icon name="rotate" /><span class="text">Rotate</span></button>
+    {/if}
+    <button title="Save (Ctrl+S)" aria-label="Save" disabled={saving} onclick={save}><Icon name="save" /><span class="text">Save</span></button>
+  </div>
   <header>
-    <div class="name">
-      <Icon name={kind === "image" ? "image" : kind ? "template" : "file"} />
-      <span class="title" title={current?.name}>{current?.name}</span>
-      <span class="quiet">{current ? fileSize(current.size) : ""}</span>
-      {#if attachments.length > 1}
-        <span class="quiet count">{index + 1} of {attachments.length}</span>
-      {/if}
-    </div>
-    <div class="tools">
-      {#if kind === "pdf" && pages.length}
-        <span class="quiet pageno">Page {pageNow} / {pages.length}</span>
-      {/if}
-      {#if kind === "image" || kind === "pdf"}
-        <button class="icon" title="Zoom out (−)" aria-label="Zoom out" onclick={() => zoomBy(-1)}>
-          <Icon name="zoom-out" />
-        </button>
-        <button class="zoom" title="Fit to window (0)" onclick={() => zoomTo(FIT)}>{Math.round(scale * 100)}%</button>
-        <button class="icon" title="Zoom in (+)" aria-label="Zoom in" onclick={() => zoomBy(1)}>
-          <Icon name="zoom-in" />
-        </button>
-        <button class="icon" title="Fit to window (0)" aria-label="Fit to window" aria-pressed={zoom === FIT} onclick={() => zoomTo(FIT)}>
-          <Icon name="fit" />
-        </button>
-        <button class="icon" title="Rotate (R)" aria-label="Rotate" onclick={rotate}>
-          <Icon name="rotate" />
-        </button>
-        <span class="divider"></span>
-      {/if}
-      <button class="icon" title="Save (Ctrl+S)" aria-label="Save" disabled={saving} onclick={save}>
-        <Icon name="save" />
-      </button>
-      <button class="icon" title="Close (Esc)" aria-label="Close" onclick={onClose}>
-        <Icon name="close" />
-      </button>
-    </div>
+    <Icon name={kind === "image" ? "image" : kind ? "template" : "file"} />
+    <h1 title={current?.name}>{current?.name}</h1>
+    <span class="quiet facts">
+      {current ? fileSize(current.size) : ""}
+      {#if kind === "pdf" && pages.length}· Page {pageNow} of {pages.length}{/if}
+      {#if attachments.length > 1}· Attachment {index + 1} of {attachments.length}{/if}
+    </span>
   </header>
 
   <div
@@ -410,114 +426,94 @@
       <pre>{text}</pre>
     {/if}
   </div>
-
-  {#if attachments.length > 1}
-    <button class="step prev" aria-label="Previous attachment" title="Previous (←)" disabled={index === 0} onclick={() => go(-1)}>
-      <Icon name="chevron-left" size={22} />
-    </button>
-    <button
-      class="step next"
-      aria-label="Next attachment"
-      title="Next (→)"
-      disabled={index === attachments.length - 1}
-      onclick={() => go(1)}
-    >
-      <Icon name="chevron-right" size={22} />
-    </button>
-  {/if}
-</div>
+</section>
 
 <style>
   .viewer {
-    position: fixed;
-    inset: 0;
-    z-index: 16;
+    height: 100%;
     display: flex;
     flex-direction: column;
-    background: var(--viewer-bg);
-    color: var(--text);
+    min-width: 0;
     outline: none;
+    container-type: inline-size;
   }
-  /* The window buttons stay usable while an attachment is open. */
-  :global(:root.titlebar) .viewer {
-    top: var(--titlebar-height);
+  /* The same bar as the message's own actions, in its place. */
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .actions button {
+    width: auto;
+    padding: 5px 10px;
+    font-size: 13px;
+  }
+  .actions button.square {
+    padding: 5px 7px;
+  }
+  .actions button[aria-pressed="true"] {
+    color: var(--accent-ink);
+    border-color: var(--accent-ink);
+  }
+  .gap {
+    flex: 1;
+  }
+  /* Buttons that belong together sit edge to edge. */
+  .group {
+    display: inline-flex;
+  }
+  .group button {
+    border-radius: 0;
+  }
+  .group button + button {
+    margin-left: -1px;
+  }
+  .group button:first-child {
+    border-radius: 6px 0 0 6px;
+  }
+  .group button:last-child {
+    border-radius: 0 6px 6px 0;
+  }
+  .zoom {
+    min-width: 56px;
+    font-variant-numeric: tabular-nums;
+  }
+  @container (max-width: 540px) {
+    .actions .text {
+      display: none;
+    }
   }
   header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 6px 10px 6px 16px;
-    background: var(--bg-side);
-    border-bottom: 1px solid var(--border);
-    min-height: 44px;
-  }
-  .name {
-    display: flex;
-    align-items: center;
     gap: 8px;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--border);
     min-width: 0;
-    font-size: 14px;
   }
-  .title {
+  h1 {
+    margin: 0;
+    font-size: 15px;
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
   }
-  .name .quiet {
+  .facts {
     font-size: 12px;
     white-space: nowrap;
-  }
-  .count::before {
-    content: "·";
-    margin-right: 8px;
-  }
-  .tools {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    flex: none;
-  }
-  .pageno {
-    font-size: 12px;
-    margin-right: 8px;
     font-variant-numeric: tabular-nums;
-  }
-  .icon {
-    border: none;
-    background: none;
-    padding: 6px;
-    display: grid;
-    place-items: center;
-    border-radius: 6px;
-  }
-  .icon:hover:not(:disabled),
-  .zoom:hover {
-    background: var(--bg-hover);
-  }
-  .icon[aria-pressed="true"] {
-    color: var(--accent-ink);
-  }
-  .zoom {
-    border: none;
-    background: none;
-    min-width: 52px;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    padding: 6px 4px;
-    border-radius: 6px;
-  }
-  .divider {
-    width: 1px;
-    height: 20px;
-    background: var(--border);
-    margin: 0 6px;
   }
   .stage {
     flex: 1;
+    min-height: 0;
     overflow: auto;
-    position: relative;
+    background: var(--viewer-bg);
   }
   .center {
     min-width: 100%;
@@ -538,7 +534,7 @@
     position: absolute;
     left: 50%;
     top: 50%;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
     /* Transparent pictures on a checkerboard, as image viewers show them. */
     background: repeating-conic-gradient(#d9d9d9 0% 25%, #ffffff 0% 50%) 50% / 16px 16px;
   }
@@ -555,7 +551,7 @@
   .page {
     display: block;
     background: #fff;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
     flex: none;
   }
   .stage.text {
@@ -589,31 +585,5 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-  }
-  .step {
-    position: absolute;
-    top: 50%;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-    opacity: 0.85;
-  }
-  .step:hover:not(:disabled) {
-    opacity: 1;
-  }
-  .step:disabled {
-    opacity: 0.3;
-  }
-  .prev {
-    left: 16px;
-  }
-  .next {
-    right: 16px;
   }
 </style>
