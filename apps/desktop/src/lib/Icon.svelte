@@ -9,6 +9,14 @@
   import Bold from "@lucide/svelte/icons/bold";
   import CalendarDays from "@lucide/svelte/icons/calendar-days";
   import Check from "@lucide/svelte/icons/check";
+  import CalendarClock from "@lucide/svelte/icons/calendar-clock";
+  import Circle from "@lucide/svelte/icons/circle";
+  import CircleCheck from "@lucide/svelte/icons/circle-check";
+  import ListTodo from "@lucide/svelte/icons/list-todo";
+  import NotebookPen from "@lucide/svelte/icons/notebook-pen";
+  import Pin from "@lucide/svelte/icons/pin";
+  import PinOff from "@lucide/svelte/icons/pin-off";
+  import SquareKanban from "@lucide/svelte/icons/square-kanban";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -79,6 +87,14 @@
     bold: Bold,
     calendar: CalendarDays,
     check: Check,
+    due: CalendarClock,
+    "task-open": Circle,
+    "task-done": CircleCheck,
+    todo: ListTodo,
+    note: NotebookPen,
+    pin: Pin,
+    unpin: PinOff,
+    board: SquareKanban,
     "chevron-left": ChevronLeft,
     "chevron-down": ChevronDown,
     "chevron-right": ChevronRight,

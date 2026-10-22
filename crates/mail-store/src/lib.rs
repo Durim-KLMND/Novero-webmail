@@ -12,6 +12,7 @@ mod rules;
 mod signatures;
 mod snooze;
 mod store;
+mod todo;
 
 use std::path::Path;
 
@@ -25,6 +26,7 @@ pub use rules::RuleMessage;
 use rusqlite::Connection;
 pub use snooze::Woken;
 pub use store::{Folder, FolderState, MessageLocation, MessageSource, QueuedOp, Store};
+pub use todo::{Board, Note, Task, TaskColumn};
 
 /// Migrations in order. Never edit one that has shipped; add a new file.
 const MIGRATIONS: &[&str] = &[
@@ -38,6 +40,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0008_send_later_snooze.sql"),
     include_str!("../migrations/0009_signatures_templates.sql"),
     include_str!("../migrations/0010_calendar_sync.sql"),
+    include_str!("../migrations/0011_notes_tasks.sql"),
 ];
 
 /// Schema version a fully migrated database has.

@@ -7,6 +7,7 @@
   const general: [string, string][] = [
     ["Ctrl+1", "Mail"],
     ["Ctrl+2", "Calendar"],
+    ["Ctrl+3", "To-do and notes"],
     ["Ctrl+K", "Search mail"],
     ["?", "Show this list"],
   ];

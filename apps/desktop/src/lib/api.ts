@@ -62,6 +62,38 @@ export interface Template {
   html: string;
 }
 
+/** A note in the To-do view. `id` is 0 for one not saved yet. */
+export interface Note {
+  id: number;
+  title: string;
+  body: string;
+  pinned: boolean;
+  /** When the title or text last changed, in seconds since 1970. */
+  updated: number;
+}
+
+export interface TaskColumn {
+  id: number;
+  name: string;
+}
+
+/** A card on the task board. `id` is 0 for one not saved yet. */
+export interface Task {
+  id: number;
+  column: number;
+  title: string;
+  notes: string;
+  /** YYYY-MM-DD, or null. */
+  due: string | null;
+  done: boolean;
+}
+
+/** Columns left to right; cards top to bottom within their column. */
+export interface Board {
+  columns: TaskColumn[];
+  tasks: Task[];
+}
+
 export type FolderRole =
   | "inbox"
   | "sent"
@@ -506,6 +538,19 @@ export const api = {
   listTemplates: () => invoke<Template[]>("list_templates"),
   saveTemplate: (template: Template) => invoke<Template>("save_template", { template }),
   deleteTemplate: (id: number) => invoke<void>("delete_template", { id }),
+  listNotes: () => invoke<Note[]>("list_notes"),
+  saveNote: (note: Note) => invoke<Note>("save_note", { note }),
+  deleteNote: (id: number) => invoke<void>("delete_note", { id }),
+  taskBoard: () => invoke<Board>("task_board"),
+  saveTaskColumn: (column: TaskColumn) => invoke<TaskColumn>("save_task_column", { column }),
+  deleteTaskColumn: (id: number) => invoke<void>("delete_task_column", { id }),
+  moveTaskColumn: (id: number, index: number) => invoke<void>("move_task_column", { id, index }),
+  saveTask: (task: Task) => invoke<Task>("save_task", { task }),
+  /** Puts the card in `column` at `index` (0 is the top). */
+  moveTask: (id: number, column: number, index: number) =>
+    invoke<void>("move_task", { id, column, index }),
+  deleteTask: (id: number) => invoke<void>("delete_task", { id }),
+  clearDoneTasks: (column: number) => invoke<void>("clear_done_tasks", { column }),
   openMessage: (id: number, allowRemote: boolean) =>
     invoke<ParsedMessage>("open_message", { id, allowRemote }),
   syncAccount: (account: number) => invoke<void>("sync_account", { account }),
