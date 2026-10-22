@@ -1,8 +1,9 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import { api, errorText, type FlagKind, type Folder, type MessageSummary } from "./api";
+  import { api, errorText, type Attachment, type FlagKind, type Folder, type MessageSummary } from "./api";
   import { folderLabel, folderPath } from "./format";
   import MessageCard from "./MessageCard.svelte";
+  import AttachmentViewer from "./AttachmentViewer.svelte";
   import { toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { laterText } from "./later";
 
@@ -62,6 +63,14 @@
   }
 
   const rowId = $derived(row?.id ?? null);
+
+  /** The attachment shown in place of the conversation. */
+  let viewing = $state<{ message: number; attachments: Attachment[]; index: number } | null>(null);
+  // Another row closes it.
+  $effect(() => {
+    void rowId;
+    viewing = null;
+  });
   const canArchive = $derived(row?.folderRole !== "archive" && folders.some((f) => f.role === "archive"));
   const moveTargets = $derived(folders.filter((f) => f.id !== row?.folderId));
 
@@ -158,9 +167,18 @@
 
 </script>
 
-<article class="reader" aria-label="Conversation">
+<article class="reader" class:viewing aria-label="Conversation">
   {#if !row}
     <div class="empty quiet">Select a message to read it.</div>
+  {:else if viewing}
+    {#key viewing}
+      <AttachmentViewer
+        message={viewing.message}
+        attachments={viewing.attachments}
+        start={viewing.index}
+        onClose={() => (viewing = null)}
+      />
+    {/key}
   {:else}
     <div class="actions" role="toolbar" aria-label="Message actions">
       {#if latest}
@@ -227,6 +245,7 @@
             onOpened={opened}
             onReply={(all) => onReply(m.id, all)}
             onForward={() => onForward(m.id)}
+            onOpenAttachment={(attachments, index) => (viewing = { message: m.id, attachments, index })}
           />
         {/each}
       </div>
@@ -246,6 +265,9 @@
   .reader {
     overflow-y: auto;
     min-width: 0;
+  }
+  .reader.viewing {
+    overflow: hidden;
   }
   .empty {
     height: 100%;
