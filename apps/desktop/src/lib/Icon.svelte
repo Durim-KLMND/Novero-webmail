@@ -18,7 +18,10 @@
   import Clock from "@lucide/svelte/icons/clock";
   import Cloud from "@lucide/svelte/icons/cloud";
   import Lock from "@lucide/svelte/icons/lock";
+  import Download from "@lucide/svelte/icons/download";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
+  import Expand from "@lucide/svelte/icons/expand";
+  import File from "@lucide/svelte/icons/file";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import FilePen from "@lucide/svelte/icons/file-pen";
   import FileText from "@lucide/svelte/icons/file-text";
@@ -52,6 +55,7 @@
   import Minus from "@lucide/svelte/icons/minus";
   import Plus from "@lucide/svelte/icons/plus";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
+  import RotateCw from "@lucide/svelte/icons/rotate-cw";
   import RemoveFormatting from "@lucide/svelte/icons/remove-formatting";
   import Repeat from "@lucide/svelte/icons/repeat";
   import Reply from "@lucide/svelte/icons/reply";
@@ -68,6 +72,8 @@
   import UserRoundMinus from "@lucide/svelte/icons/user-round-minus";
   import Users from "@lucide/svelte/icons/users";
   import X from "@lucide/svelte/icons/x";
+  import ZoomIn from "@lucide/svelte/icons/zoom-in";
+  import ZoomOut from "@lucide/svelte/icons/zoom-out";
 
   const icons = {
     archive: Archive,
@@ -85,6 +91,9 @@
     copy: Copy,
     clock: Clock,
     more: Ellipsis,
+    save: Download,
+    fit: Expand,
+    file: File,
     "external-link": ExternalLink,
     drafts: FilePen,
     flag: Flag,
@@ -124,6 +133,7 @@
     refresh: RefreshCw,
     "clear-formatting": RemoveFormatting,
     repeat: Repeat,
+    rotate: RotateCw,
     reply: Reply,
     "reply-all": ReplyAll,
     cut: Scissors,
@@ -138,6 +148,8 @@
     "remove-account": UserRoundMinus,
     contacts: Users,
     close: X,
+    "zoom-in": ZoomIn,
+    "zoom-out": ZoomOut,
   };
 
   export type IconName = keyof typeof icons;

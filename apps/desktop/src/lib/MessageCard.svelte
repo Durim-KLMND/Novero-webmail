@@ -1,10 +1,13 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import InviteCard from "./InviteCard.svelte";
+  import AttachmentViewer from "./AttachmentViewer.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { closeMenu, fallbackMenu, items, openMenu } from "./menus.svelte";
   import { api, errorText, type MessageSummary, type ParsedMessage } from "./api";
   import { fileSize, folderLabel, fullDate, listDate, senderName } from "./format";
+  import { toast } from "./toast.svelte";
+  import { viewKind } from "./viewer";
 
   interface Props {
     summary: MessageSummary;
@@ -26,6 +29,29 @@
   let allowRemote = $state(false);
   let request = 0;
   const isDraft = $derived(summary.folderRole === "drafts");
+  /** The attachment open in the viewer. */
+  let viewing = $state<number | null>(null);
+
+  async function saveAttachment(index: number) {
+    if (!message) return;
+    try {
+      if (await api.saveAttachment(summary.id, index)) toast(`Saved ${message.attachments[index].name}`);
+    } catch (err) {
+      toast(errorText(err), "error");
+    }
+  }
+
+  function attachmentMenu(event: MouseEvent, index: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    openMenu(
+      event,
+      items(
+        !!viewKind(message!.attachments[index]) && { label: "Open", icon: "template", run: () => (viewing = index) },
+        { label: "Save as…", icon: "save", run: () => saveAttachment(index) },
+      ),
+    );
+  }
 
   async function load(remote: boolean) {
     const mine = ++request;
@@ -136,10 +162,32 @@
       {/if}
       {#if message.attachments.length}
         <ul class="attachments">
-          {#each message.attachments as a}
-            <li title={a.mimeType}><Icon name="attachment" size={14} /> {a.name} <span class="quiet">{fileSize(a.size)}</span></li>
+          {#each message.attachments as a, i}
+            <li>
+              <button
+                class="open"
+                title={viewKind(a) ? `Open ${a.name}` : `${a.name} (${a.mimeType})`}
+                onclick={() => (viewing = i)}
+                oncontextmenu={(e) => attachmentMenu(e, i)}
+              >
+                <Icon name={viewKind(a) === "image" ? "image" : viewKind(a) ? "template" : "attachment"} size={14} />
+                <span class="file">{a.name}</span>
+                <span class="quiet">{fileSize(a.size)}</span>
+              </button>
+              <button class="save" title="Save {a.name}" aria-label="Save {a.name}" onclick={() => saveAttachment(i)}>
+                <Icon name="save" size={14} />
+              </button>
+            </li>
           {/each}
         </ul>
+        {#if viewing !== null}
+          <AttachmentViewer
+            message={summary.id}
+            attachments={message.attachments}
+            start={viewing}
+            onClose={() => (viewing = null)}
+          />
+        {/if}
       {/if}
       {#if message.blockedRemote > 0 && !allowRemote}
         <div class="blocked">
@@ -248,10 +296,39 @@
     gap: 6px;
   }
   .attachments li {
+    display: flex;
+    align-items: stretch;
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 3px 8px;
     font-size: 13px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .attachments button {
+    border: none;
+    border-radius: 0;
+    background: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .attachments button:hover {
+    background: var(--bg-hover);
+  }
+  .attachments .open {
+    padding: 4px 8px;
+    min-width: 0;
+  }
+  .attachments .file {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .attachments .save {
+    padding: 4px 7px;
+    border-left: 1px solid var(--border);
+    color: var(--text-quiet);
   }
   .blocked {
     display: flex;

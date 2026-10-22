@@ -557,6 +557,11 @@ export const api = {
   getEvent: (id: number) => invoke<CalendarEvent | null>("get_event", { id }),
   saveEvent: (event: CalendarEvent) => invoke<CalendarEvent>("save_event", { event }),
   deleteEvent: (id: number) => invoke<void>("delete_event", { id }),
+  /** The decoded contents of a received attachment (`index` into `ParsedMessage.attachments`). */
+  attachmentContents: (id: number, index: number) =>
+    invoke<ArrayBuffer>("attachment_contents", { id, index }),
+  /** Asks where to save an attachment; false when cancelled. */
+  saveAttachment: (id: number, index: number) => invoke<boolean>("save_attachment", { id, index }),
   messageInvite: (id: number) => invoke<InviteView | null>("message_invite", { id }),
   answerInvite: (id: number, response: InviteResponse, send: boolean) =>
     invoke<CalendarEvent>("answer_invite", { id, response, send }),
