@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::compose::now;
+use crate::mail::compose::now;
 use crate::state::AppState;
 
 const STORE_ID: Option<&str> = option_env!("NOVERO_PLANS_STORE_ID");

@@ -25,6 +25,28 @@ is in [docs/releasing.md](docs/releasing.md).
 
 The protocol crates do not depend on Tauri, so they build and test headless.
 
+Inside the desktop app, files are grouped by feature:
+
+| Path | What it is |
+| --- | --- |
+| `src/lib/mail` | Mail view, folder sidebar, message list, reader, rules, attachment viewer |
+| `src/lib/compose` | Composer, its own window, address input, rich text editor |
+| `src/lib/calendar` | Calendar view and event dialog |
+| `src/lib/todo` | Task board and notes |
+| `src/lib/accounts` | First-run setup, account form, server settings, sign in again |
+| `src/lib/settings` | Settings dialog, signatures, templates |
+| `src/lib/plan` | Free/Pro plan, license key, upgrade prompt |
+| `src/lib/shell` | Title bar, app rail, status bar, menus, toasts, update and crash dialogs |
+| `src/lib/ui` | Shared pieces: icons, small dialogs, theme, scroll bars |
+| `src/lib/api.ts`, `format.ts`, `later.ts` | Backend calls and helpers used everywhere |
+| `src-tauri/src/mail` | Reading, sending, folders, rules, snooze, attachments, invites, mailto links |
+| `src-tauri/src/calendar` | Calendar events, reminders and Google/Outlook sync |
+| `src-tauri/src/shell` | Windows, tray, taskbar badge, updates, crash reports |
+| `src-tauri/src` | Startup (`lib.rs`), account and message commands, app state, settings, plan, to-dos |
+
+On Windows, file names are not case sensitive, so a folder must never hold both `Name.svelte`
+and `name.svelte.ts`; give the script file a different name.
+
 ## Prerequisites
 
 - Rust stable (1.90 or newer), via [rustup](https://rustup.rs)

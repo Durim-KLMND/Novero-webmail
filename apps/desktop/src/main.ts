@@ -1,11 +1,11 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
 import "./app.css";
-import { applyTheme, cachedTheme } from "./lib/theme";
-import { watchTitlebar } from "./lib/frame.svelte";
-import { guardModalScroll } from "./lib/modal";
-import { floatScrollbars } from "./lib/scrollbars";
-import { watchPlan } from "./lib/pro.svelte";
+import { applyTheme, cachedTheme } from "./lib/ui/theme";
+import { watchTitlebar } from "./lib/shell/frame.svelte";
+import { guardModalScroll } from "./lib/ui/modal";
+import { floatScrollbars } from "./lib/ui/scrollbars";
+import { watchPlan } from "./lib/plan/pro.svelte";
 
 applyTheme(cachedTheme());
 watchTitlebar();
