@@ -5,6 +5,7 @@
   import MessageCard from "./MessageCard.svelte";
   import LinkStatus from "./LinkStatus.svelte";
   import AttachmentViewer from "./AttachmentViewer.svelte";
+  import { stepOfButton, stepOfKey, typingOrDialog, type Step } from "./viewer";
   import { toggleMenuUnder, type MenuItem } from "./menus.svelte";
   import { laterText } from "./later";
 
@@ -67,11 +68,27 @@
 
   /** The attachment shown in place of the conversation. */
   let viewing = $state<{ message: number; attachments: Attachment[]; index: number } | null>(null);
+  /** The attachment last gone back from, which Forward reopens. */
+  let left: typeof viewing = null;
   // Another row closes it.
   $effect(() => {
     void rowId;
     viewing = null;
+    left = null;
   });
+
+  function closeAttachment(index: number) {
+    if (viewing) left = { ...viewing, index };
+    viewing = null;
+  }
+
+  /** Forward (mouse button, Alt+→) reopens the attachment just closed. */
+  function forward(e: Event, step: Step | null) {
+    if (step !== "forward" || viewing || !left || typingOrDialog(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    viewing = left;
+  }
   const canArchive = $derived(row?.folderRole !== "archive" && folders.some((f) => f.role === "archive"));
   const moveTargets = $derived(folders.filter((f) => f.id !== row?.folderId));
 
@@ -169,6 +186,11 @@
   let article = $state<HTMLElement>();
 </script>
 
+<svelte:window
+  onkeydowncapture={(e) => forward(e, stepOfKey(e))}
+  onmouseupcapture={(e) => forward(e, stepOfButton(e))}
+/>
+
 <article class="reader" class:viewing aria-label="Conversation" bind:this={article}>
   {#if !row}
     <div class="empty quiet">Select a message to read it.</div>
@@ -178,7 +200,7 @@
         message={viewing.message}
         attachments={viewing.attachments}
         start={viewing.index}
-        onClose={() => (viewing = null)}
+        onClose={closeAttachment}
       />
     {/key}
   {:else}
@@ -247,7 +269,10 @@
             onOpened={opened}
             onReply={(all) => onReply(m.id, all)}
             onForward={() => onForward(m.id)}
-            onOpenAttachment={(attachments, index) => (viewing = { message: m.id, attachments, index })}
+            onOpenAttachment={(attachments, index) => {
+              viewing = { message: m.id, attachments, index };
+              left = null;
+            }}
           />
         {/each}
       </div>

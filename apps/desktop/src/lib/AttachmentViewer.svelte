@@ -9,14 +9,15 @@
   import { fileSize } from "./format";
   import { openPdf, type OpenPdf } from "./pdf";
   import { toast } from "./toast.svelte";
-  import { mediaType, viewKind } from "./viewer";
+  import { mediaType, stepOfButton, stepOfKey, typingOrDialog, viewKind } from "./viewer";
 
   interface Props {
     /** The message the attachments belong to. */
     message: number;
     attachments: Attachment[];
     start: number;
-    onClose: () => void;
+    /** Back to the message; `index` is the attachment that was showing. */
+    onClose: (index: number) => void;
   }
   let { message, attachments, start, onClose }: Props = $props();
 
@@ -193,19 +194,23 @@
     }
   }
 
-  /** Whether a key is meant for something else: a field being typed in, or a dialog. */
-  function elsewhere(e: KeyboardEvent): boolean {
-    const target = e.target as HTMLElement | null;
-    if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return true;
-    return !!document.querySelector('[aria-modal="true"]');
+  function close() {
+    onClose(index);
   }
 
   function keydown(e: KeyboardEvent) {
-    if (e.altKey || elsewhere(e)) return;
+    if (typingOrDialog(e)) return;
+    if (stepOfKey(e) === "back") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    if (e.altKey) return;
     const key = e.key;
     const plain = !e.ctrlKey && !e.metaKey;
     let handled = true;
-    if (key === "Escape" && plain) onClose();
+    if (key === "Escape" && plain) close();
     else if ((key === "+" || key === "=") && plain && kind && kind !== "text") zoomBy(1);
     else if (key === "-" && plain && kind && kind !== "text") zoomBy(-1);
     else if (key === "0" && plain) zoomTo(FIT);
@@ -219,6 +224,14 @@
       e.preventDefault();
       e.stopPropagation();
     }
+  }
+
+  /** The mouse's back button goes back to the message, as in a browser. */
+  function mouseup(e: MouseEvent) {
+    if (stepOfButton(e) !== "back" || document.querySelector('[aria-modal="true"]')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
   }
 
   function wheel(e: WheelEvent) {
@@ -333,11 +346,11 @@
   });
 </script>
 
-<svelte:window onkeydowncapture={keydown} />
+<svelte:window onkeydowncapture={keydown} onmouseupcapture={mouseup} />
 
 <section class="viewer" aria-label={current?.name ?? "Attachment"} tabindex="-1" bind:this={viewer}>
   <div class="actions" role="toolbar" aria-label="Attachment actions">
-    <button onclick={onClose} title="Back to the message (Esc)"><Icon name="chevron-left" />Back</button>
+    <button onclick={close} title="Back to the message (Esc, Alt+←, mouse back button)"><Icon name="chevron-left" />Back</button>
     {#if attachments.length > 1}
       <span class="group">
         <button class="square" title="Previous attachment (←)" aria-label="Previous attachment" disabled={index === 0} onclick={() => go(-1)}>

@@ -37,9 +37,18 @@
     ["D / W / M", "Day, week or month view"],
     ["Ctrl+Enter", "Save, in an event"],
   ];
+  const attachments: [string, string][] = [
+    ["Esc / Alt+← / Backspace", "Back to the message (or the mouse's back button)"],
+    ["Alt+→", "Open it again (or the mouse's forward button)"],
+    ["← / →", "Previous or next attachment"],
+    ["+ / − / 0", "Zoom in, out, or fit"],
+    ["R", "Rotate"],
+    ["Ctrl+S", "Save"],
+  ];
   const sections: [string, [string, string][]][] = [
     ["General", general],
     ["Mail", mail],
+    ["Open attachment", attachments],
     ["Calendar", calendar],
   ];
 </script>
