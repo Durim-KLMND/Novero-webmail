@@ -379,15 +379,19 @@ pub async fn open_message(
         tauri::async_runtime::spawn_blocking(move || mail_mime::parse_message(&raw, allow_remote))
             .await
             .map_err(|e| Error::Protocol(e.to_string()))??;
-    let unread: Vec<i64> = state
-        .store
-        .lock()
-        .unwrap()
-        .locate(&[id])?
-        .into_iter()
-        .filter(|m| !m.flags.seen)
-        .map(|m| m.id)
-        .collect();
+    // Copies in other folders count too, so one read elsewhere still marks
+    // this folder's copy read.
+    let unread: Vec<i64> = {
+        let store = state.store.lock().unwrap();
+        let mut ids = vec![id];
+        ids.extend(store.copies(&ids)?);
+        store
+            .locate(&ids)?
+            .into_iter()
+            .filter(|m| !m.flags.seen)
+            .map(|m| m.id)
+            .collect()
+    };
     if !unread.is_empty() {
         change(&app, &state, &unread, |m| Op::SetFlag {
             folder: m.folder_name.clone(),
@@ -551,7 +555,19 @@ pub(crate) fn change(
     ids: &[i64],
     make: impl Fn(&MessageLocation) -> Op,
 ) -> Result<()> {
-    let located = state.store.lock().unwrap().locate(ids)?;
+    let mut located = state.store.lock().unwrap().locate(ids)?;
+    // A flag belongs to the mail, not the folder: copies of it elsewhere in
+    // the account (Gmail's Inbox, Important and All Mail) change with it.
+    if let Some(Op::SetFlag { flag, value, .. }) = located.first().map(&make) {
+        let store = state.store.lock().unwrap();
+        let copies = store.copies(&located.iter().map(|m| m.id).collect::<Vec<_>>())?;
+        located.extend(
+            store
+                .locate(&copies)?
+                .into_iter()
+                .filter(|m| (m.flags.to_bits() & flag.bit() != 0) != value),
+        );
+    }
     let mut groups: BTreeMap<(i64, i64), Vec<&MessageLocation>> = BTreeMap::new();
     for m in &located {
         groups

@@ -719,6 +719,35 @@ impl Store {
         Ok(out)
     }
 
+    /// Other copies of `messages` in the same account: messages in other
+    /// folders with the same Message-ID, like Gmail's Inbox, Important and
+    /// All Mail labels on one mail. Copies already in `messages` are left out.
+    pub fn copies(&self, messages: &[i64]) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT c.id FROM messages m \
+                 JOIN folders f ON f.id = m.folder_id \
+                 JOIN messages c ON c.message_id = m.message_id AND c.id <> m.id \
+                 JOIN folders cf ON cf.id = c.folder_id AND cf.account_id = f.account_id \
+                 WHERE m.id = ?1 AND m.message_id IS NOT NULL AND m.message_id <> '' ORDER BY c.id",
+            )
+            .map_err(storage)?;
+        let mut out = Vec::new();
+        for id in messages {
+            let rows = stmt
+                .query_map([id], |r| r.get::<_, i64>(0))
+                .map_err(storage)?;
+            for copy in rows {
+                let copy = copy.map_err(storage)?;
+                if !messages.contains(&copy) && !out.contains(&copy) {
+                    out.push(copy);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Applies `op` to the cache right away and queues it for the server.
     /// Moved and deleted messages leave the cache; a move shows up in the
     /// target folder after the server has done it and that folder syncs.
@@ -1348,6 +1377,66 @@ mod tests {
         store.finish_op(queued[0].id).unwrap();
         store.finish_op(queued[1].id).unwrap();
         assert_eq!(store.pending_count(acc).unwrap(), 0);
+    }
+
+    #[test]
+    fn copies_are_the_same_mail_in_other_folders_of_the_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open_in_memory(dir.path()).unwrap();
+        let a = store
+            .add_account(&new_account("a@example.test"))
+            .unwrap()
+            .id;
+        let b = store
+            .add_account(&new_account("b@example.test"))
+            .unwrap()
+            .id;
+        let names = [
+            folder("INBOX", FolderRole::Inbox),
+            folder("[Gmail]/Important", FolderRole::Other),
+            folder("[Gmail]/All Mail", FolderRole::Archive),
+        ];
+        let a_folders = store.sync_folders(a, &names).unwrap();
+        let b_folders = store.sync_folders(b, &names[..1]).unwrap();
+        let with_id = |uid, id: Option<&str>| MessageHeader {
+            message_id: id.map(str::to_owned),
+            ..header(uid, uid as i64, false)
+        };
+        let mut insert = |folder: FolderId, headers: &[MessageHeader]| -> Vec<i64> {
+            store
+                .insert_headers(folder, headers)
+                .unwrap()
+                .into_iter()
+                .map(Option::unwrap)
+                .collect()
+        };
+        let inbox = insert(
+            a_folders[0].0,
+            &[
+                with_id(1, Some("<x@y>")),
+                with_id(2, None),
+                with_id(3, Some("<z@y>")),
+            ],
+        );
+        let important = insert(a_folders[1].0, &[with_id(7, Some("<x@y>"))]);
+        let all = insert(
+            a_folders[2].0,
+            &[with_id(8, Some("<x@y>")), with_id(9, None)],
+        );
+        // Another account's copy of the same mail is a different mail.
+        insert(b_folders[0].0, &[with_id(1, Some("<x@y>"))]);
+
+        assert_eq!(
+            store.copies(&[inbox[0]]).unwrap(),
+            vec![important[0], all[0]]
+        );
+        assert_eq!(
+            store.copies(&[inbox[0], all[0]]).unwrap(),
+            vec![important[0]]
+        );
+        assert!(store.copies(&[inbox[1]]).unwrap().is_empty());
+        assert!(store.copies(&[inbox[2]]).unwrap().is_empty());
+        assert!(store.copies(&[all[1]]).unwrap().is_empty());
     }
 
     #[test]
