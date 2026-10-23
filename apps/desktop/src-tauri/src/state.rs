@@ -57,7 +57,7 @@ pub struct AppState {
     /// telling us about them again can be ignored.
     pushed: Mutex<HashMap<AccountId, tokio::time::Instant>>,
     /// The connection each account keeps open to download messages as they open.
-    pub readers: crate::reader::Readers,
+    pub readers: crate::mail::reader::Readers,
     /// Ends the browser sign-in that is waiting, when the person cancels.
     pub sign_in: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
@@ -151,7 +151,7 @@ pub fn secret_key(id: AccountId) -> String {
 
 pub fn emit(app: &AppHandle, event: Event) {
     let _ = app.emit(MAIL_EVENT, event);
-    crate::badge::changed(app);
+    crate::shell::badge::changed(app);
 }
 
 /// Starts the background tasks of an account: pushing changes and IDLE.
@@ -240,7 +240,7 @@ fn has_outgoing(app: &AppHandle, id: AccountId) -> bool {
     store.pending_count(id).unwrap_or(0) > 0
         || store.drafts_to_upload(id).is_ok_and(|d| !d.is_empty())
         || store.outbox(id).is_ok_and(|o| {
-            let now = crate::compose::now();
+            let now = crate::mail::compose::now();
             o.iter()
                 .any(|i| i.state != OutboxState::Failed && !i.waiting(now))
         })
@@ -248,7 +248,7 @@ fn has_outgoing(app: &AppHandle, id: AccountId) -> bool {
 
 /// Whether the account has mail to send now.
 fn mail_due(app: &AppHandle, id: AccountId) -> bool {
-    let now = crate::compose::now();
+    let now = crate::mail::compose::now();
     app.state::<AppState>()
         .store
         .lock()
@@ -466,7 +466,7 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
     .await;
     if let Ok(report) = &result {
         // Rules first, so mail they file away or mark read isn't announced.
-        let left = crate::rules::apply(app, id, &report.new_mail);
+        let left = crate::mail::rules::apply(app, id, &report.new_mail);
         announce(app, id, &left);
     }
     if result.is_ok() && has_outgoing(app, id) {

@@ -1,26 +1,13 @@
 //! Tauri host: registers commands and forwards core events to the UI.
 
-mod attachments;
-mod badge;
 mod calendar;
-mod calsync;
 mod commands;
-mod compose;
-mod crash;
-mod files;
-mod folders;
-mod invites;
-mod links;
+mod mail;
 mod plan;
-mod reader;
-mod rules;
 mod settings;
-mod snooze;
+mod shell;
 mod state;
 mod todo;
-mod tray;
-mod updates;
-mod window;
 
 use std::time::Duration;
 
@@ -36,38 +23,38 @@ pub fn run() {
         // Starting the app again (say, from a mailto: link) focuses the open
         // window instead, handing it the link.
         .plugin(tauri_plugin_single_instance::init(
-            |app, args, _cwd| match links::from_args(args) {
-                Some(link) => links::opened(app, link),
-                None => links::show(app),
+            |app, args, _cwd| match mail::links::from_args(args) {
+                Some(link) => mail::links::opened(app, link),
+                None => mail::links::show(app),
             },
         ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init());
-    if let Some(updater) = updates::plugin() {
+    if let Some(updater) = shell::updates::plugin() {
         builder = builder.plugin(updater);
     }
     builder
         .setup(|app| {
             let dir = app.path().app_local_data_dir()?;
-            crash::install(crash::folder(&dir));
+            shell::crash::install(shell::crash::folder(&dir));
             let state = state::AppState::open(&dir)?;
             app.manage(state);
-            app.manage(calsync::CalendarSync::default());
-            window::open_main(app.handle())?;
-            tray::create(app.handle())?;
-            badge::start(app.handle());
-            app.manage(links::PendingLink::default());
-            app.manage(files::Drops::default());
-            if let Some(link) = links::from_args(std::env::args()) {
-                links::opened(app.handle(), link);
+            app.manage(calendar::sync::CalendarSync::default());
+            shell::window::open_main(app.handle())?;
+            shell::tray::create(app.handle())?;
+            shell::badge::start(app.handle());
+            app.manage(mail::links::PendingLink::default());
+            app.manage(mail::files::Drops::default());
+            if let Some(link) = mail::links::from_args(std::env::args()) {
+                mail::links::opened(app.handle(), link);
             }
-            updates::start(app.handle());
-            calendar::start_reminders(app.handle());
-            calsync::start(app.handle());
-            compose::start_scheduler(app.handle());
-            snooze::start(app.handle());
+            shell::updates::start(app.handle());
+            calendar::events::start_reminders(app.handle());
+            calendar::sync::start(app.handle());
+            mail::compose::start_scheduler(app.handle());
+            mail::snooze::start(app.handle());
             plan::start(app.handle());
 
             let handle = app.handle().clone();
@@ -83,8 +70,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            tauri::WindowEvent::DragDrop(drop) => files::window_event(window, drop),
-            tauri::WindowEvent::CloseRequested { api, .. } => tray::close_requested(window, api),
+            tauri::WindowEvent::DragDrop(drop) => mail::files::window_event(window, drop),
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                shell::tray::close_requested(window, api)
+            }
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
@@ -106,59 +95,59 @@ pub fn run() {
             commands::move_messages,
             commands::archive_messages,
             commands::delete_messages,
-            folders::create_folder,
-            folders::rename_folder,
-            folders::delete_folder,
-            folders::mark_folder_read,
-            folders::empty_folder,
-            compose::new_draft,
-            compose::mailto_draft,
-            compose::reply_draft,
-            compose::forward_draft,
-            compose::open_draft,
-            compose::save_draft,
-            compose::attach_files,
-            compose::remove_attachment,
-            compose::discard_draft,
-            compose::send_draft,
-            compose::suggest_contacts,
-            files::attach_dropped,
-            files::dropped_picture,
-            files::pick_picture,
-            compose::hide_contact,
-            compose::get_draft,
-            compose::open_composer_window,
-            calendar::list_calendars,
-            calendar::save_calendar,
-            calendar::delete_calendar,
-            calendar::calendar_occurrences,
-            calendar::get_event,
-            calendar::save_event,
-            calendar::delete_event,
-            calendar::skip_occurrence,
-            calsync::list_calendar_accounts,
-            calsync::connect_calendar,
-            calsync::disconnect_calendar,
-            calsync::sync_calendars,
-            snooze::snooze_messages,
-            snooze::unsnooze_messages,
-            snooze::snoozed_count,
-            snooze::snoozed_until,
-            attachments::attachment_contents,
-            attachments::save_attachment,
-            invites::message_invite,
-            invites::answer_invite,
-            rules::list_rules,
-            rules::save_rule,
-            rules::delete_rule,
-            rules::order_rules,
-            rules::run_rules,
-            compose::list_outbox,
-            compose::outbox_status,
-            compose::retry_outbox,
-            compose::delete_outbox,
-            compose::edit_outbox,
-            compose::send_outbox_now,
+            mail::folders::create_folder,
+            mail::folders::rename_folder,
+            mail::folders::delete_folder,
+            mail::folders::mark_folder_read,
+            mail::folders::empty_folder,
+            mail::compose::new_draft,
+            mail::compose::mailto_draft,
+            mail::compose::reply_draft,
+            mail::compose::forward_draft,
+            mail::compose::open_draft,
+            mail::compose::save_draft,
+            mail::compose::attach_files,
+            mail::compose::remove_attachment,
+            mail::compose::discard_draft,
+            mail::compose::send_draft,
+            mail::compose::suggest_contacts,
+            mail::files::attach_dropped,
+            mail::files::dropped_picture,
+            mail::files::pick_picture,
+            mail::compose::hide_contact,
+            mail::compose::get_draft,
+            mail::compose::open_composer_window,
+            calendar::events::list_calendars,
+            calendar::events::save_calendar,
+            calendar::events::delete_calendar,
+            calendar::events::calendar_occurrences,
+            calendar::events::get_event,
+            calendar::events::save_event,
+            calendar::events::delete_event,
+            calendar::events::skip_occurrence,
+            calendar::sync::list_calendar_accounts,
+            calendar::sync::connect_calendar,
+            calendar::sync::disconnect_calendar,
+            calendar::sync::sync_calendars,
+            mail::snooze::snooze_messages,
+            mail::snooze::unsnooze_messages,
+            mail::snooze::snoozed_count,
+            mail::snooze::snoozed_until,
+            mail::attachments::attachment_contents,
+            mail::attachments::save_attachment,
+            mail::invites::message_invite,
+            mail::invites::answer_invite,
+            mail::rules::list_rules,
+            mail::rules::save_rule,
+            mail::rules::delete_rule,
+            mail::rules::order_rules,
+            mail::rules::run_rules,
+            mail::compose::list_outbox,
+            mail::compose::outbox_status,
+            mail::compose::retry_outbox,
+            mail::compose::delete_outbox,
+            mail::compose::edit_outbox,
+            mail::compose::send_outbox_now,
             settings::get_settings,
             settings::save_settings,
             settings::list_signatures,
@@ -179,18 +168,18 @@ pub fn run() {
             todo::move_task,
             todo::delete_task,
             todo::clear_done_tasks,
-            links::take_mailto,
-            links::open_default_apps,
+            mail::links::take_mailto,
+            mail::links::open_default_apps,
             settings::test_notification,
             settings::open_notification_settings,
-            crash::crash_report,
-            crash::discard_crash_report,
-            crash::send_crash_report,
-            updates::updates_available,
-            updates::check_for_update,
-            updates::update_status,
-            updates::download_update,
-            updates::install_update,
+            shell::crash::crash_report,
+            shell::crash::discard_crash_report,
+            shell::crash::send_crash_report,
+            shell::updates::updates_available,
+            shell::updates::check_for_update,
+            shell::updates::update_status,
+            shell::updates::download_update,
+            shell::updates::install_update,
             plan::get_plan,
             plan::activate_license,
             plan::deactivate_license,

@@ -23,7 +23,7 @@ back, saved templates and signatures can still be used. Rules and calendar
 sync stop until Pro is back.
 
 The code is in `apps/desktop/src-tauri/src/plan.rs` (checks and gates) and
-`apps/desktop/src/lib/PlanSettings.svelte`, `UpgradeDialog.svelte` and
+`apps/desktop/src/lib/plan/PlanSettings.svelte`, `UpgradeDialog.svelte` and
 `pro.svelte.ts` (Settings > Plan and the upgrade prompt).
 
 ## Selling Pro with Lemon Squeezy

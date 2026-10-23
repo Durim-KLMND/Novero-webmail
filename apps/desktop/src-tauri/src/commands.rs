@@ -405,7 +405,7 @@ pub(crate) async fn raw_message(app: &AppHandle, id: i64) -> Result<(Account, Ve
     let state = app.state::<AppState>();
     let source = state.store.lock().unwrap().message_source(id)?;
     let account = state.account(source.account_id)?;
-    let raw = crate::reader::raw(app, &account, id).await?;
+    let raw = crate::mail::reader::raw(app, &account, id).await?;
     Ok((account, raw))
 }
 

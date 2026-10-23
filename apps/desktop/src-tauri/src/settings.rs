@@ -92,10 +92,10 @@ pub fn save_settings(
         before
     };
     if before.custom_titlebar != settings.custom_titlebar {
-        crate::window::set_custom_titlebar(&app, settings.custom_titlebar);
+        crate::shell::window::set_custom_titlebar(&app, settings.custom_titlebar);
     }
     if before.unread_badge != settings.unread_badge {
-        crate::badge::changed(&app);
+        crate::shell::badge::changed(&app);
     }
     Ok(settings)
 }

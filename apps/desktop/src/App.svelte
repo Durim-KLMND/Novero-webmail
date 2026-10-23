@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, errorText, type Account } from "./lib/api";
-  import Onboarding from "./lib/Onboarding.svelte";
-  import MailView from "./lib/MailView.svelte";
-  import ContextMenu from "./lib/ContextMenu.svelte";
-  import ComposerWindow from "./lib/ComposerWindow.svelte";
-  import TitleBar from "./lib/TitleBar.svelte";
-  import UpgradeDialog from "./lib/UpgradeDialog.svelte";
-  import { pro } from "./lib/pro.svelte";
+  import Onboarding from "./lib/accounts/Onboarding.svelte";
+  import MailView from "./lib/mail/MailView.svelte";
+  import ContextMenu from "./lib/shell/ContextMenu.svelte";
+  import ComposerWindow from "./lib/compose/ComposerWindow.svelte";
+  import TitleBar from "./lib/shell/TitleBar.svelte";
+  import UpgradeDialog from "./lib/plan/UpgradeDialog.svelte";
+  import { pro } from "./lib/plan/pro.svelte";
 
   /** Set in a window opened for one draft ("New message in a new window"). */
   const composeId = Number(new URLSearchParams(location.search).get("compose")) || null;
