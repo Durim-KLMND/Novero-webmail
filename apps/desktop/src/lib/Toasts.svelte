@@ -16,7 +16,8 @@
   .toasts {
     position: fixed;
     right: 16px;
-    bottom: 16px;
+    /* Clear of the status bar. */
+    bottom: 40px;
     display: flex;
     flex-direction: column;
     align-items: flex-end;

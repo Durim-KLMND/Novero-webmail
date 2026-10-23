@@ -25,6 +25,7 @@
   import Copy from "@lucide/svelte/icons/copy";
   import Clock from "@lucide/svelte/icons/clock";
   import Cloud from "@lucide/svelte/icons/cloud";
+  import CloudOff from "@lucide/svelte/icons/cloud-off";
   import Lock from "@lucide/svelte/icons/lock";
   import Download from "@lucide/svelte/icons/download";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
@@ -134,6 +135,7 @@
     location: MapPin,
     lock: Lock,
     cloud: Cloud,
+    offline: CloudOff,
     unread: Mail,
     mail: Mail,
     read: MailOpen,
