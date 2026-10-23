@@ -76,6 +76,8 @@
     width: min(500px, calc(100vw - 32px));
     max-height: calc(100vh - 48px);
     overflow-y: auto;
+    /* Room on both sides, so the padding stays even. */
+    scrollbar-gutter: stable both-edges;
     padding: 20px 24px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
   }
@@ -96,6 +98,7 @@
     padding: 8px 10px;
     max-height: 200px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .buttons {
     display: flex;

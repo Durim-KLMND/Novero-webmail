@@ -89,6 +89,8 @@
     width: min(460px, calc(100vw - 32px));
     max-height: calc(100vh - 48px);
     overflow-y: auto;
+    /* Room on both sides, so the padding stays even. */
+    scrollbar-gutter: stable both-edges;
     display: grid;
     gap: 12px;
     padding: 20px 24px;

@@ -21,6 +21,9 @@
   --radius: 8px;
   --titlebar-height: 32px;
   --font: "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  /* Scroll bar thumb; the track behind it stays see-through. */
+  --scroll-thumb: rgba(26, 26, 25, 0.22);
+  --scroll-thumb-hover: rgba(26, 26, 25, 0.4);
   color-scheme: light;
 }
 
@@ -42,6 +45,8 @@
   --note-bg: #34301f;
   --viewer-bg: #0a0a0a;
   --success: #22a35a;
+  --scroll-thumb: rgba(236, 236, 234, 0.2);
+  --scroll-thumb-hover: rgba(236, 236, 234, 0.36);
   color-scheme: dark;
 }
 
@@ -61,8 +66,10 @@
     --danger: #f28b82;
     --danger-bg: #3a2120;
     --note-bg: #34301f;
-  --viewer-bg: #0a0a0a;
+    --viewer-bg: #0a0a0a;
     --success: #22a35a;
+    --scroll-thumb: rgba(236, 236, 234, 0.2);
+    --scroll-thumb-hover: rgba(236, 236, 234, 0.36);
     color-scheme: dark;
   }
 }
@@ -249,4 +256,43 @@ button.icon-only {
 
 button.icon-only:hover:not(:disabled) {
   color: var(--text);
+}
+
+/* Scroll bars: a slim rounded thumb with no track, in every theme. The
+ * thumb is drawn inside a transparent border so it floats off the edge.
+ * Don't set scrollbar-width or scrollbar-color anywhere: in Chromium
+ * (WebView2) either one switches these ::-webkit-scrollbar rules off. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  min-height: 32px;
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scroll-thumb-hover);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* Scrolling panes keep the scroll bar's room even while it is hidden, so
+ * nothing moves sideways when a list grows long enough to scroll. Each pane
+ * with overflow-y: auto sets this too; it can't go on everything, because
+ * it also reserves room in overflow: hidden boxes. */
+textarea {
+  scrollbar-gutter: stable;
 }

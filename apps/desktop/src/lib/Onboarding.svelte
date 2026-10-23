@@ -104,6 +104,7 @@
   .page {
     height: 100%;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     display: grid;
     place-items: center;
     padding: 32px 16px;

@@ -540,6 +540,7 @@
   }
   .pane {
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 18px 24px;
     min-width: 0;
   }

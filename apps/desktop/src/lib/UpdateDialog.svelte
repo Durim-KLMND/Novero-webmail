@@ -104,6 +104,7 @@
   }
   .notes {
     overflow-y: auto;
+    scrollbar-gutter: stable;
     min-height: 0;
     margin-bottom: 8px;
   }

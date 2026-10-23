@@ -597,6 +597,7 @@
     gap: 6px;
     padding: 4px 8px 8px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     min-height: 0;
   }
   .card {

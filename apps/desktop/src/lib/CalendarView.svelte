@@ -751,6 +751,7 @@
     flex-direction: column;
     gap: 16px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .new {
     justify-content: center;

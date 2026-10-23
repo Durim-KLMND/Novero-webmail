@@ -254,6 +254,7 @@
   .scroller {
     flex: 1;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     position: relative;
     outline: none;
   }
