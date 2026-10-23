@@ -22,12 +22,13 @@ mail-mime = { path = "../../../crates/mail-mime" }
 mail-send = { path = "../../../crates/mail-send" }
 mail-store = { path = "../../../crates/mail-store" }
 mail-sync = { path = "../../../crates/mail-sync" }
+ab_glyph = "0.2"
 base64 = "0.22"
 jiff = "0.2"
 mime_guess = "2"
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2.12", features = [] }
+tauri = { version = "2.12", features = ["tray-icon"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"

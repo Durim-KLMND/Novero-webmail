@@ -1,6 +1,7 @@
 //! Tauri host: registers commands and forwards core events to the UI.
 
 mod attachments;
+mod badge;
 mod calendar;
 mod calsync;
 mod commands;
@@ -17,6 +18,7 @@ mod settings;
 mod snooze;
 mod state;
 mod todo;
+mod tray;
 mod updates;
 mod window;
 
@@ -54,6 +56,8 @@ pub fn run() {
             app.manage(state);
             app.manage(calsync::CalendarSync::default());
             window::open_main(app.handle())?;
+            tray::create(app.handle())?;
+            badge::start(app.handle());
             app.manage(links::PendingLink::default());
             app.manage(files::Drops::default());
             if let Some(link) = links::from_args(std::env::args()) {
@@ -78,10 +82,10 @@ pub fn run() {
             });
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::DragDrop(drop) = event {
-                files::window_event(window, drop);
-            }
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::DragDrop(drop) => files::window_event(window, drop),
+            tauri::WindowEvent::CloseRequested { api, .. } => tray::close_requested(window, api),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_version,

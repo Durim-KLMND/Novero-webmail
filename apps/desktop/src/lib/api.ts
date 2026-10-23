@@ -277,6 +277,10 @@ export interface Settings {
   crashReports: boolean;
   /** Draw Novero Mail's own title bar instead of the Windows one. */
   customTitlebar: boolean;
+  /** The close button hides the main window to the system tray instead of quitting. */
+  closeToTray: boolean;
+  /** Show the unread inbox count on the taskbar icon. */
+  unreadBadge: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -286,6 +290,8 @@ export const defaultSettings: Settings = {
   autoUpdate: true,
   crashReports: true,
   customTitlebar: true,
+  closeToTray: true,
+  unreadBadge: true,
 };
 
 /** A newer version. */
