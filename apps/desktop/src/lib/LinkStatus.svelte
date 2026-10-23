@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fade } from "svelte/transition";
   import { linkStatus } from "./hoverlink.svelte";
 
   interface Props {
@@ -7,10 +8,24 @@
   }
   let { area }: Props = $props();
 
+  // The bubble shows after the pointer rests on a link for a moment; moving
+  // to another link while it shows just changes the address.
+  const DELAY = 500;
+  let shown = $state(false);
+  $effect(() => {
+    if (!linkStatus.url) {
+      shown = false;
+      return;
+    }
+    if (shown) return;
+    const timer = setTimeout(() => (shown = true), DELAY);
+    return () => clearTimeout(timer);
+  });
+
   let width = $state(0);
   let height = $state(0);
   // Measured on every pointer move over a link, so it follows a resized pane.
-  const box = $derived(linkStatus.url && area ? area.getBoundingClientRect() : null);
+  const box = $derived(shown && linkStatus.url && area ? area.getBoundingClientRect() : null);
   // Like a browser, the bubble moves to the other corner when the pointer is on it.
   const right = $derived(!!box && linkStatus.x < box.left + width + 24 && linkStatus.y > box.bottom - height - 24);
 </script>
@@ -20,6 +35,7 @@
     class="status"
     class:right
     role="status"
+    transition:fade={{ duration: 150 }}
     style:left={right ? "auto" : `${box.left}px`}
     style:right={right ? `${window.innerWidth - box.right}px` : "auto"}
     style:bottom="{window.innerHeight - box.bottom}px"
