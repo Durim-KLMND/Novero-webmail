@@ -50,3 +50,26 @@ export function viewKind(a: Attachment): ViewKind | null {
   if (["application/json", "application/xml", "application/x-yaml"].includes(type)) return "text";
   return null;
 }
+
+/** Back or forward, as a browser takes them: the mouse's side buttons,
+ * Alt+Left/Right, the keyboard's Back/Forward keys, and Backspace for back. */
+export type Step = "back" | "forward";
+
+export function stepOfKey(e: KeyboardEvent): Step | null {
+  if (e.ctrlKey || e.metaKey || e.shiftKey) return null;
+  if (e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft") || (!e.altKey && e.key === "Backspace"))
+    return "back";
+  if (e.key === "BrowserForward" || (e.altKey && e.key === "ArrowRight")) return "forward";
+  return null;
+}
+
+export function stepOfButton(e: MouseEvent): Step | null {
+  return e.button === 3 ? "back" : e.button === 4 ? "forward" : null;
+}
+
+/** Whether a key is meant for something else: a field being typed in, or a dialog. */
+export function typingOrDialog(e: Event): boolean {
+  const target = e.target as HTMLElement | null;
+  if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return true;
+  return !!document.querySelector('[aria-modal="true"]');
+}
