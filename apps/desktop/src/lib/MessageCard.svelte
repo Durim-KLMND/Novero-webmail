@@ -88,7 +88,7 @@
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; font-src data:">
 <base target="_blank">
-<style>body{margin:0;padding:16px 20px;font:14px/1.5 "Anthropic Sans","Segoe UI",system-ui,sans-serif;color:#1a1a19;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>
+<style>body{margin:0;padding:16px 20px;font:14px/1.5 "Anthropic Sans","Segoe UI",system-ui,sans-serif;color:#1a1a19;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}::-webkit-scrollbar-thumb{background:rgba(26,26,25,.22);background-clip:padding-box;border:2px solid transparent;border-radius:999px}::-webkit-scrollbar-thumb:hover{background-color:rgba(26,26,25,.4)}</style>
 </head><body>${html}</body></html>`;
   }
 
