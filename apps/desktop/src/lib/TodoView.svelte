@@ -315,7 +315,6 @@
     flex-direction: column;
     gap: 16px;
     overflow-y: auto;
-    scrollbar-gutter: stable;
   }
   .new {
     justify-content: center;
@@ -430,7 +429,6 @@
     margin: 0;
     padding: 0 6px 8px;
     overflow-y: auto;
-    scrollbar-gutter: stable;
     flex: 1;
   }
   .note-row {

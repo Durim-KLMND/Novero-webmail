@@ -368,7 +368,6 @@
   .scroll {
     flex: 1;
     overflow-y: auto;
-    scrollbar-gutter: stable;
     padding: 0 8px 8px;
   }
   section + section {

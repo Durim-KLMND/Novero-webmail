@@ -267,7 +267,6 @@
   }
   .reader {
     overflow-y: auto;
-    scrollbar-gutter: stable;
     min-width: 0;
   }
   .reader.viewing {

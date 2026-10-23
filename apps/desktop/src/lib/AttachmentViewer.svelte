@@ -513,7 +513,6 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    scrollbar-gutter: stable;
     background: var(--viewer-bg);
   }
   .center {

@@ -258,41 +258,36 @@ button.icon-only:hover:not(:disabled) {
   color: var(--text);
 }
 
-/* Scroll bars: a slim rounded thumb with no track, in every theme. The
- * thumb is drawn inside a transparent border so it floats off the edge.
- * Don't set scrollbar-width or scrollbar-color anywhere: in Chromium
- * (WebView2) either one switches these ::-webkit-scrollbar rules off. */
+/* Scroll bars float over the content (lib/scrollbars.ts) instead of taking
+ * room from it, so nothing moves when one appears. The native bars are
+ * hidden everywhere; the page still scrolls with the wheel, keys and touch. */
+* {
+  scrollbar-width: none;
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track,
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--scroll-thumb);
-  background-clip: padding-box;
-  border: 2px solid transparent;
-  border-radius: 999px;
-  min-height: 32px;
-}
-
-::-webkit-scrollbar-thumb:hover,
-::-webkit-scrollbar-thumb:active {
-  background-color: var(--scroll-thumb-hover);
-}
-
-::-webkit-scrollbar-button {
   display: none;
 }
 
-/* Scrolling panes keep the scroll bar's room even while it is hidden, so
- * nothing moves sideways when a list grows long enough to scroll. Each pane
- * with overflow-y: auto sets this too; it can't go on everything, because
- * it also reserves room in overflow: hidden boxes. */
-textarea {
-  scrollbar-gutter: stable;
+.scroll-thumb {
+  position: fixed;
+  z-index: 2147483000;
+  box-sizing: border-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--scroll-thumb);
+  background-clip: padding-box;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, background-color 0.15s ease;
+}
+
+.scroll-thumb.shown {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.scroll-thumb:hover,
+.scroll-thumb.dragging {
+  background-color: var(--scroll-thumb-hover);
 }

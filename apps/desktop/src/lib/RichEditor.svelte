@@ -497,7 +497,6 @@
     flex: 1;
     min-height: 120px;
     overflow-y: auto;
-    scrollbar-gutter: stable;
     padding: 16px 24px;
     font: 14px/1.5 var(--font);
     color: var(--text);
