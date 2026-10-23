@@ -826,7 +826,9 @@ mod tests {
         };
         let folder = Mailbox::Folder { id: inbox };
 
+        assert_eq!(store.inbox_unread().unwrap(), 2);
         store.snooze(&[ids[1]], 100).unwrap();
+        assert_eq!(store.inbox_unread().unwrap(), 1);
         for threaded in [false, true] {
             assert_eq!(shown(&store, &folder, threaded), [ids[0]]);
             assert_eq!(shown(&store, &Mailbox::AllInboxes, threaded), [ids[0]]);

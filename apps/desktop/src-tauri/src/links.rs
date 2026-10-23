@@ -30,12 +30,14 @@ pub fn opened(app: &AppHandle, link: String) {
     show(app);
 }
 
-/// Brings the main window to the front, as when the app is started again.
+/// Brings the main window to the front, as when the app is started again
+/// or opened from the tray.
 pub fn show(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        crate::badge::refresh(app);
     }
 }
 

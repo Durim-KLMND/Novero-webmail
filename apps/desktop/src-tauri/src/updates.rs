@@ -319,7 +319,7 @@ pub async fn download_update(app: AppHandle) -> Result<()> {
 
 /// Saves the drafts in message windows by closing them, which saves what
 /// was typed (see ComposerWindow.svelte), and waits until they are gone.
-async fn close_message_windows(app: &AppHandle) {
+pub(crate) async fn close_message_windows(app: &AppHandle) {
     let open = || {
         app.webview_windows()
             .into_iter()

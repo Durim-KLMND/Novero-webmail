@@ -151,6 +151,7 @@ pub fn secret_key(id: AccountId) -> String {
 
 pub fn emit(app: &AppHandle, event: Event) {
     let _ = app.emit(MAIL_EVENT, event);
+    crate::badge::changed(app);
 }
 
 /// Starts the background tasks of an account: pushing changes and IDLE.

@@ -33,6 +33,11 @@ pub struct Settings {
     pub crash_reports: bool,
     /// Windows draw Novero Mail's own title bar instead of the Windows one.
     pub custom_titlebar: bool,
+    /// The close button hides the main window to the system tray, where the
+    /// app keeps checking mail. Off, it quits Novero Mail.
+    pub close_to_tray: bool,
+    /// The taskbar icon shows how many inbox messages are unread.
+    pub unread_badge: bool,
 }
 
 impl Default for Settings {
@@ -44,6 +49,8 @@ impl Default for Settings {
             auto_update: true,
             crash_reports: true,
             custom_titlebar: true,
+            close_to_tray: true,
+            unread_badge: true,
         }
     }
 }
@@ -86,6 +93,9 @@ pub fn save_settings(
     };
     if before.custom_titlebar != settings.custom_titlebar {
         crate::window::set_custom_titlebar(&app, settings.custom_titlebar);
+    }
+    if before.unread_badge != settings.unread_badge {
+        crate::badge::changed(&app);
     }
     Ok(settings)
 }
@@ -220,7 +230,7 @@ mod tests {
         let loaded = Settings::load(&store);
         assert_eq!(loaded.theme, Theme::Dark);
         assert!(loaded.conversations && loaded.notifications && loaded.auto_update);
-        assert!(loaded.custom_titlebar);
+        assert!(loaded.custom_titlebar && loaded.close_to_tray && loaded.unread_badge);
         let off = Settings {
             notifications: false,
             ..loaded

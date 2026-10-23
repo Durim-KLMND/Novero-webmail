@@ -323,6 +323,34 @@
           </label>
         </fieldset>
         <fieldset>
+          <legend>Closing the window</legend>
+          <div class="choices">
+            <label class="choice">
+              <input type="radio" name="close" value={true} bind:group={draft.closeToTray} />
+              Keep running in the system tray
+            </label>
+            <label class="choice">
+              <input type="radio" name="close" value={false} bind:group={draft.closeToTray} />
+              Quit Novero Mail
+            </label>
+          </div>
+          <small class="quiet">
+            {draft.closeToTray
+              ? "Mail keeps being checked in the background. Click the tray icon to open it again, or right-click it to quit."
+              : "The close button quits the app. New mail is checked again the next time you open it."}
+          </small>
+        </fieldset>
+        <fieldset>
+          <legend>Taskbar</legend>
+          <label class="check">
+            <input type="checkbox" bind:checked={draft.unreadBadge} />
+            <span>
+              Show the number of unread messages
+              <small class="quiet">On the taskbar icon, counting every inbox. Above 99 it shows 99+.</small>
+            </span>
+          </label>
+        </fieldset>
+        <fieldset>
           <legend>Notifications</legend>
           <label class="check">
             <input type="checkbox" bind:checked={draft.notifications} />
@@ -650,6 +678,9 @@
   fieldset > small,
   .pane > small {
     display: block;
+  }
+  .choices + small {
+    margin-top: 8px;
   }
   .buttons {
     display: flex;

@@ -313,6 +313,20 @@ impl Store {
         Ok(folders)
     }
 
+    /// Unread messages in the inboxes of every account, leaving out snoozed
+    /// ones: the number on the taskbar icon.
+    pub fn inbox_unread(&self) -> Result<u32> {
+        self.conn
+            .query_row(
+                "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id \
+                 WHERE f.role = 'inbox' AND m.flags & 1 = 0 \
+                 AND m.id NOT IN (SELECT message FROM snoozes)",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(storage)
+    }
+
     pub fn folder_state(&self, folder: FolderId) -> Result<FolderState> {
         self.conn
             .query_row(
