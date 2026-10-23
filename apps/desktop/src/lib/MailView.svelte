@@ -33,6 +33,7 @@
   import RulesDialog from "./RulesDialog.svelte";
   import ShortcutHelp from "./ShortcutHelp.svelte";
   import Toasts from "./Toasts.svelte";
+  import StatusBar from "./StatusBar.svelte";
   import AppRail, { type AppView } from "./AppRail.svelte";
   import CalendarView from "./CalendarView.svelte";
   import TodoView from "./TodoView.svelte";
@@ -240,6 +241,7 @@
         failed: 0,
         scheduled: 0,
         outboxError: null,
+        synced: null,
         progress: null,
       }
     );
@@ -308,7 +310,8 @@
       const progress = e.done < e.total ? { stage: e.stage, done: e.done, total: e.total } : null;
       syncState[e.account] = { ...current, progress };
     } else if (e.type === "syncFinished") {
-      syncState[e.account] = { ...current, running: false, error: e.error, detail: "", progress: null };
+      const synced = e.error ? current.synced : Date.now();
+      syncState[e.account] = { ...current, running: false, error: e.error, detail: "", progress: null, synced };
       scheduleRefresh(e.account);
     } else if (e.type === "pendingChanges") {
       syncState[e.account] = { ...current, pending: e.pending, pendingError: e.error };
@@ -1188,6 +1191,7 @@
       <span>{n > 1 ? `${n} messages` : carrying.item.subject || "(no subject)"}</span>
     </div>
   {/if}
+  <StatusBar {accounts} {syncState} />
   <Toasts />
 </div>
 
@@ -1195,17 +1199,27 @@
   .shell {
     display: grid;
     grid-template-columns: 52px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "rail main"
+      "status status";
     height: 100%;
   }
+  .shell > :global(.rail) {
+    grid-area: rail;
+  }
   .pane {
+    grid-area: main;
     min-width: 0;
     height: 100%;
+    min-height: 0;
   }
   .hidden {
     display: none !important;
   }
   .layout {
+    grid-area: main;
+    min-height: 0;
     display: grid;
     grid-template-columns: var(--side) var(--list) minmax(320px, 1fr);
     height: 100%;

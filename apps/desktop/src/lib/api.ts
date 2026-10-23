@@ -697,6 +697,16 @@ export function onMailEvent(
   return listen<MailEvent>("mail-event", (e) => handler(e.payload));
 }
 
+/** A dropped connection is expected and recovers by itself, so it is not shown as an error. */
+export function isOffline(error: string | null | undefined): boolean {
+  return !!error && /^network error/i.test(error);
+}
+
+/** The server turned down the password or sign-in. */
+export function isSignInError(error: string | null | undefined): boolean {
+  return !!error && /^authentication failed/i.test(error);
+}
+
 /** Errors from commands arrive as plain strings. */
 export function errorText(err: unknown): string {
   if (typeof err === "string")

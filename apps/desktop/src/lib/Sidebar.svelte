@@ -16,6 +16,8 @@
     /** Scheduled mail waiting for its time. */
     scheduled: number;
     outboxError: string | null;
+    /** When the last sync finished without an error (ms since 1970). */
+    synced: number | null;
     /** The running sync's progress, while it has a lot to download. */
     progress: { stage: SyncStage; done: number; total: number } | null;
   }
@@ -24,14 +26,9 @@
 <script lang="ts">
   import type { Account, Folder, UpdateStatus } from "./api";
   import { downloadPercent } from "./notes";
-  import { errorText } from "./api";
+  import { errorText, isOffline, isSignInError } from "./api";
   import Icon, { type IconName } from "./Icon.svelte";
   import { items, openMenu, toggleMenuUnder, type MenuItem } from "./menus.svelte";
-
-  /** A dropped connection is expected and recovers by itself, so it is not shown as an error. */
-  function isOffline(error: string): boolean {
-    return /^network error/i.test(error);
-  }
   import { folderLabel, folderPath } from "./format";
 
   interface Props {
@@ -97,10 +94,6 @@
   }: Props = $props();
 
   /** A refused password or an expired sign-in: fixed by signing in again. */
-  function isSignInError(error: string | null | undefined): boolean {
-    return !!error && /^authentication failed/i.test(error);
-  }
-
   function plural(n: number, one: string): string {
     return n === 1 ? `1 ${one}` : `${n.toLocaleString()} ${one}s`;
   }
@@ -281,20 +274,13 @@
           {#if sync?.error && !isOffline(sync.error)}<span class="warn" title={errorText(sync.error)}>!</span>{/if}
           <button class="more" aria-label="Account options" aria-haspopup="menu" onclick={(e) => moreMenu(account, e)}><Icon name="more" /></button>
         </div>
-        {#if sync?.error && isOffline(sync.error)}
-          <p class="pending quiet" title={errorText(sync.error)}>Offline. Showing saved mail.</p>
-        {:else if sync?.error}
+        <!-- Being offline and changes waiting to sync show in the status bar,
+             so reading mail doesn't push the folders around. -->
+        {#if sync?.error && !isOffline(sync.error)}
           <p class="sync-error">{errorText(sync.error)}</p>
         {/if}
         {#if isSignInError(sync?.error) || isSignInError(sync?.pendingError)}
           <button class="outbox-line sign-in" onclick={() => onSignInAgain(account)}>Sign in again</button>
-        {/if}
-        {#if sync?.pending}
-          <p class="pending quiet" title={sync.pendingError ? errorText(sync.pendingError) : undefined}>
-            {sync.pending === 1 ? "1 change" : `${sync.pending.toLocaleString()} changes`} waiting to sync
-          </p>
-        {:else if sync?.pendingError}
-          <p class="sync-error">{errorText(sync.pendingError)}</p>
         {/if}
         {#if sync?.failed}
           <button class="outbox-line failed" onclick={() => onOutbox(account.id)}>
@@ -432,10 +418,6 @@
   }
   .sync-error {
     color: var(--danger);
-    font-size: 12px;
-    margin: 0 4px 6px 20px;
-  }
-  .pending {
     font-size: 12px;
     margin: 0 4px 6px 20px;
   }
