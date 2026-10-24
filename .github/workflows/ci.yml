@@ -15,6 +15,32 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  # Pull requests that touch no Rust (only the UI or the docs, say) skip the Rust,
+  # integration and Windows jobs. Pushes to main always run everything, which also
+  # keeps the caches that pull requests restore up to date.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'apps/desktop/src-tauri/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'deny.toml'
+              - 'testing/**'
+              - '.github/workflows/ci.yml'
+
   frontend:
     name: Frontend (type-check and build)
     runs-on: ubuntu-latest
@@ -37,6 +63,8 @@ jobs:
 
   rust:
     name: Rust (fmt, clippy, tests)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -65,6 +93,8 @@ jobs:
 
   integration:
     name: Integration (IMAP test server)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -85,13 +115,19 @@ jobs:
 
   deny:
     name: Dependencies (licenses, advisories, sources)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  # Releases build the real installer (release.yml), so CI builds one only when the
+  # workflow is run by hand (Actions → CI → Run workflow), to try out a branch.
   windows:
-    name: Windows (tests and installer)
+    name: Windows (build and tests)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -111,10 +147,8 @@ jobs:
         working-directory: apps/desktop
         run: npm run build
       - run: cargo test --workspace --locked
-      # The release build takes most of this job, so pull requests skip it;
-      # pushes to main still build and upload the installers.
       - name: Build the installer (unsigned)
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         working-directory: apps/desktop
         run: npx tauri build --ci
         # Google and Microsoft sign-in, when the repository has these secrets
@@ -130,7 +164,7 @@ jobs:
           NOVERO_PLANS_PRODUCT_ID: ${{ vars.NOVERO_PLANS_PRODUCT_ID }}
           NOVERO_PLANS_CHECKOUT_URL: ${{ vars.NOVERO_PLANS_CHECKOUT_URL }}
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: windows-installers
           path: target/release/bundle/nsis/*.exe

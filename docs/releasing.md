@@ -111,7 +111,7 @@ To see a real update end to end:
 
 1. Do the one-time setup above (the update key is required; the release fails without it).
 2. Release `v0.2.0-beta.1` (the current version) as described above, and install it from the
-   release's assets. (Installers from CI runs on `main` can update too, once
+   release's assets. (Installers from hand-started CI runs can update too, once
    `NOVERO_UPDATER_PUBKEY` is set before they are built; `npm run tauri dev` builds can't.)
 3. Merge anything, set the version to `0.2.0-beta.2`, and release that too.
 4. In the installed copy, open Settings → Updates and press **Check now**. It downloads

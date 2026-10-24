@@ -148,9 +148,11 @@ offers app passwords for Gmail and can't add Outlook.com or Microsoft 365 accoun
 - **Rust**: `cargo fmt --check`, `cargo clippy` with warnings as errors, and the workspace tests on Linux.
 - **Integration**: starts the Dovecot test server and runs the IMAP tests against it.
 - **Dependencies**: `cargo deny check` against `deny.toml`.
-- **Windows**: workspace tests. Pushes to `main` also build the installer and upload it as a build artifact; pull requests skip that build, since it takes most of the job. To get an installer for a branch, run the workflow on it by hand (**Actions → CI → Run workflow**).
+- **Windows**: workspace tests. Installers come from releases; to get one for a branch, run the workflow on it by hand (**Actions → CI → Run workflow**), which also builds the installer and uploads it as a build artifact.
 
-Pull requests reuse the build cache from `main` but don't save their own, which saves several minutes per run.
+Pull requests that change no Rust code (only the UI or the docs) skip the Rust, Integration, Dependencies and Windows jobs. Pushes to `main` always run everything.
+
+Pull requests reuse the build cache from `main` but don't save their own, which saves several minutes per run. Releases keep a separate cache of release-mode dependencies, saved by each release from `main`, so a release only rebuilds Novero's own crates.
 
 `.github/workflows/release.yml` runs on version tags and publishes releases; see
 [docs/releasing.md](docs/releasing.md).

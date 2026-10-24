@@ -55,9 +55,13 @@ jobs:
             exit 1
           fi
       - uses: dtolnay/rust-toolchain@stable
+      # Its own cache of the release-profile dependencies, so a release only
+      # rebuilds Novero's own crates. Saved by releases from main (auto-release.yml);
+      # a cache saved on a tag would be visible to that tag only.
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: false
+          key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
