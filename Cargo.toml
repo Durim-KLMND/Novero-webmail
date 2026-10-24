@@ -23,6 +23,7 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# Changing these? Raise the rust-cache key in .github/workflows/release.yml too.
 [profile.release]
 lto = "thin"
 # Novero's own crates build in parallel (the default 16 units): with one unit
