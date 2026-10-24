@@ -1,0 +1,48 @@
+name: Auto release
+
+# A merge to main that changes the app version tags that commit v<version> and
+# runs the release build. Merges that leave the version alone find the tag
+# already there and do nothing. Tags pushed with the workflow's own token don't
+# start other workflows, so this calls release.yml itself instead.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag a new version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag the version if it is new
+        id: tag
+        run: |
+          node scripts/check-version.mjs
+          version=$(node -p 'require("./apps/desktop/src-tauri/tauri.conf.json").version')
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag already exists; nothing to release."
+            exit 0
+          fi
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          echo "Tagged $GITHUB_SHA as $tag."
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit
