@@ -2,11 +2,18 @@ name: Release
 
 # Pushing a tag such as v0.2.0 or v0.2.0-beta.3 builds the Windows installer,
 # signs it, and publishes it as the latest release with its update manifest.
+# auto-release.yml also calls it when a merge to main changes the version.
 # One-time setup and the steps for a release are in docs/releasing.md.
 
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The version tag to release, such as v0.2.0
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,12 +30,14 @@ jobs:
       run:
         shell: bash
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ inputs.tag || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
       # Code signing with Azure Trusted Signing, once it is set up.
       SIGN: ${{ secrets.AZURE_CLIENT_ID != '' && vars.AZURE_SIGNING_ACCOUNT != '' }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v5
         with:
           node-version: 22

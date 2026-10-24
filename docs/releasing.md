@@ -1,8 +1,9 @@
 # Releasing Novero Mail
 
 Releases are GitHub releases built by `.github/workflows/release.yml` when a version tag is
-pushed. Each one carries the Windows installer and a `latest.json` update manifest. Installed
-copies read that manifest and offer the update.
+pushed, or when a merge to `main` changes the app version. Each one carries the Windows
+installer and a `latest.json` update manifest. Installed copies read that manifest and offer
+the update.
 
 ## How installed copies update
 
@@ -79,7 +80,12 @@ Without them the workflow still releases, unsigned, with a warning in the run su
 
    This changes `Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `package.json` and
    `package-lock.json`. CI checks they agree.
-2. Once it is merged, tag that commit and push the tag:
+2. Merge it. `.github/workflows/auto-release.yml` sees that `main` now has a version without a
+   tag, tags the merge commit `v0.2.0-beta.3` and runs the release build. Merges that don't
+   change the version find the tag already there and release nothing.
+
+   Releasing by hand still works: push a version tag yourself, or publish a release with a new
+   tag from GitHub's **Releases** page, and the release build runs as before.
 
    ```sh
    git checkout main && git pull
@@ -87,14 +93,13 @@ Without them the workflow still releases, unsigned, with a warning in the run su
    git push origin v0.2.0-beta.3
    ```
 
-   Or on GitHub: **Releases → Draft a new release → Choose a tag**, type the new tag (it is
-   created on `main`), write notes if you like, leave **Set as a pre-release** unticked, and
-   publish. The workflow adds the installer to that release.
-3. Watch the **Release** run under **Actions**. It checks the tag matches the app version,
+3. Watch the run under **Actions** (**Auto release** after a merge, **Release** for a tag you
+   pushed). It checks the tag matches the app version,
    builds and signs the installer, checks the signature against `NOVERO_UPDATER_PUBKEY`,
    publishes the release with notes generated from the merged pull requests, marks it as the
-   latest release, and attaches `latest.json`. If it fails (for example because a key is wrong), fix the cause, delete
-   the release and its tag on GitHub, and publish it again from `main`.
+   latest release, and attaches `latest.json`. If it fails (for example because a key is wrong), fix
+   the cause, delete the release and its tag on GitHub, and use **Re-run all jobs** on the
+   failed **Auto release** run (it tags the version again) or publish the release again from `main`.
 
 Copies that download updates automatically find the release within six hours, or straight
 away with **Check now** in Settings.
