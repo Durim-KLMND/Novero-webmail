@@ -7,8 +7,6 @@
   --text: #1a1a19;
   --text-quiet: #5f625f;
   --border: #e2e2df;
-  /* The 1px line round a window drawn without the Windows frame. */
-  --window-edge: #c4c4bf;
   /* Filled surfaces: primary buttons, the logo. */
   --accent: var(--brand);
   --accent-text: #ffffff;
@@ -38,7 +36,6 @@
   --text: #ececea;
   --text-quiet: #a3a39e;
   --border: #2b2b29;
-  --window-edge: #3d3d3a;
   --accent: var(--brand);
   --accent-text: #ffffff;
   /* The brand teal is too dark to read on #111111, so marks use a lighter tint of it. */
@@ -62,7 +59,6 @@
     --text: #ececea;
     --text-quiet: #a3a39e;
     --border: #2b2b29;
-    --window-edge: #3d3d3a;
     --accent: var(--brand);
     --accent-text: #ffffff;
     /* The brand teal is too dark to read on #111111, so marks use a lighter tint of it. */
@@ -118,18 +114,6 @@ textarea,
 /* Room for Novero Mail's own title bar (lib/TitleBar.svelte) when it is on. */
 :root.titlebar #app {
   padding-top: var(--titlebar-height);
-}
-
-/* The window's edge when it has no Windows frame (lib/shell/TitleBar.svelte
- * turns it off while maximised or full screen). It sits above everything,
- * menus and dialogs included, and lets clicks through. */
-:root.window-edge body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  border: 1px solid var(--window-edge);
-  pointer-events: none;
-  z-index: 2147483647;
 }
 
 button {

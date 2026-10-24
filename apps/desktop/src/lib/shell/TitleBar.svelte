@@ -15,7 +15,6 @@
 
   const win = getCurrentWindow();
   let maximized = $state(false);
-  let fullscreen = $state(false);
   let focused = $state(true);
 
   // Leaves room for the bar above the rest of the window (app.css).
@@ -23,21 +22,11 @@
     document.documentElement.classList.toggle("titlebar", titlebar.on);
   });
 
-  // Without the Windows frame nothing marks where the window ends, so the
-  // page draws a 1px edge (app.css). Not when the window fills the screen.
-  $effect(() => {
-    document.documentElement.classList.toggle("window-edge", titlebar.on && !maximized && !fullscreen);
-  });
-
   onMount(() => {
     const check = () => {
       win
         .isMaximized()
         .then((m) => (maximized = m))
-        .catch(() => {});
-      win
-        .isFullscreen()
-        .then((f) => (fullscreen = f))
         .catch(() => {});
     };
     check();

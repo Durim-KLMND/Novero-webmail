@@ -31,8 +31,13 @@ export function cachedTheme(): Theme {
 /** Gives the window the page's background, so a fast resize shows that and
  *  not white while the page catches up (window.rs paints it at first). */
 function paintWindow() {
+  const win = getCurrentWebviewWindow();
   const color = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
-  if (color) getCurrentWebviewWindow().setBackgroundColor(color).catch(() => {});
+  if (color) win.setBackgroundColor(color).catch(() => {});
+  // Windows draws the 1px edge round a window without its frame, dark or
+  // light by the window's theme; keep that in step with the app's theme.
+  const theme = document.documentElement.dataset.theme;
+  win.setTheme(theme === "light" || theme === "dark" ? theme : null).catch(() => {});
 }
 
 // "system" follows Windows switching between light and dark.
