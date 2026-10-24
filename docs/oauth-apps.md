@@ -89,8 +89,8 @@ How the sync works:
 ## Using the IDs
 
 **CI and installers.** In the GitHub repository, open **Settings → Secrets and variables →
-Actions** and add the three variables above as repository secrets. The Windows job passes them
-to the installer build. Pull requests from forks don't get secrets, so their builds have no
+Actions** and add the three variables above as repository secrets. The release workflow (and a hand-started CI run)
+passes them to the installer build. Pull requests from forks don't get secrets, so their builds have no
 provider sign-in.
 
 **Local builds.** Export the variables before `npm run tauri dev` or `npm run tauri build`:
