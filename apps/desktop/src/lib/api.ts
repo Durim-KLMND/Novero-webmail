@@ -626,6 +626,12 @@ export const api = {
   deleteMessages: (ids: number[]) => invoke<void>("delete_messages", { ids }),
   junkMessages: (ids: number[]) => invoke<void>("junk_messages", { ids }),
   /** Every sender's mail in a scope, grouped by sender and category. */
+  /** Accounts with category folders on their server. */
+  categoryFolderAccounts: () => invoke<number[]>("category_folder_accounts"),
+  makeCategoryFolders: (accounts: number[]) =>
+    invoke<{ filed: number; failed: string[] }>("make_category_folders", { accounts }),
+  fileIntoCategoryFolders: () => invoke<number>("file_into_category_folders"),
+  stopCategoryFolders: () => invoke<void>("stop_category_folders"),
   cleanupReport: (scope: CleanupScope, account: number | null) =>
     invoke<CleanupReport>("cleanup_report", { scope, account }),
   cleanupItems: (ids: number[]) => invoke<CleanupItem[]>("cleanup_items", { ids }),

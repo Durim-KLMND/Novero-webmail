@@ -23,6 +23,7 @@
   import { toast } from "../shell/toast.svelte";
   import Icon from "../ui/Icon.svelte";
   import { accept, categories, categoryOf, groupKey, senderLabel, why } from "./categories";
+  import FoldersDialog from "./FoldersDialog.svelte";
 
   interface Props {
     accounts: Account[];
@@ -353,6 +354,60 @@
     ]);
   }
 
+  // Category folders on the mail servers.
+  let folderAccounts = $state<number[]>([]);
+  let askingFolders = $state(false);
+  let makingFolders = $state(false);
+  const withoutFolders = $derived(accounts.filter((a) => !folderAccounts.includes(a.id)));
+
+  async function loadFolderAccounts() {
+    folderAccounts = await api.categoryFolderAccounts().catch(() => folderAccounts);
+  }
+  $effect(() => {
+    if (active) loadFolderAccounts();
+  });
+
+  async function makeFolders() {
+    makingFolders = true;
+    try {
+      const made = await api.makeCategoryFolders(withoutFolders.map((a) => a.id));
+      askingFolders = false;
+      for (const f of made.failed) toast(`Folders couldn't be added for ${f}`, "error");
+      if (made.failed.length < withoutFolders.length) {
+        toast(made.filed ? `Folders added. ${plural(made.filed, "message")} filed into them.` : "Folders added.");
+      }
+      await loadFolderAccounts();
+      await load();
+    } catch (err) {
+      toast(errorText(err), "error");
+    } finally {
+      makingFolders = false;
+    }
+  }
+
+  function fileNow() {
+    run(async () => {
+      const filed = await api.fileIntoCategoryFolders();
+      toast(filed ? `${plural(filed, "message")} filed into category folders.` : "Nothing new to file.");
+    });
+  }
+
+  async function stopFolders() {
+    const sure = await ask("New mail will stay in the Inbox. The folders and the mail in them stay on the server.", {
+      title: "Stop filing into folders",
+      kind: "info",
+      okLabel: "Stop filing",
+      cancelLabel: "Keep filing",
+    });
+    if (!sure) return;
+    try {
+      await api.stopCategoryFolders();
+      await loadFolderAccounts();
+    } catch (err) {
+      toast(errorText(err), "error");
+    }
+  }
+
   const accountEmail = (id: number) => accounts.find((a) => a.id === id)?.email ?? "";
 </script>
 
@@ -387,6 +442,24 @@
         </button>
       {/each}
     </nav>
+    <div class="server-folders">
+      <strong><Icon name="folder" size={14} /> Folders on your mail server</strong>
+      {#if folderAccounts.length}
+        <small class="quiet">Sorted Inbox mail is filed into a Categories folder, also seen in webmail and on your phone.</small>
+        <div class="folder-actions">
+          <button disabled={busy} onclick={fileNow}>File Inbox now</button>
+          {#if withoutFolders.length}
+            <button onclick={() => (askingFolders = true)}>Add to new accounts…</button>
+          {/if}
+          <button class="link" onclick={stopFolders}>Stop filing</button>
+        </div>
+      {:else}
+        <small class="quiet">File sorted mail into category folders that webmail and your phone see too.</small>
+        <div class="folder-actions">
+          <button disabled={!accounts.length} onclick={() => (askingFolders = true)}>Add folders…</button>
+        </div>
+      {/if}
+    </div>
     <p class="local quiet">Sorted on this computer from each message's sender and headers. Nothing is sent anywhere.</p>
   </aside>
 
@@ -548,6 +621,10 @@
   </section>
 </div>
 
+{#if askingFolders}
+  <FoldersDialog accounts={withoutFolders} busy={makingFolders} onMake={makeFolders} onCancel={() => (askingFolders = false)} />
+{/if}
+
 <style>
   .cleanup {
     display: grid;
@@ -623,8 +700,42 @@
     color: var(--text-quiet);
     font-weight: 400;
   }
+  .server-folders {
+    margin-top: auto;
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 13px;
+  }
+  .server-folders strong {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .server-folders small {
+    font-size: 12px;
+  }
+  .folder-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .folder-actions button {
+    font-size: 12px;
+    padding: 4px 10px;
+  }
+  .folder-actions .link {
+    border: none;
+    background: none;
+    color: var(--text-quiet);
+    text-decoration: underline;
+    padding: 4px 2px;
+  }
   .local {
-    margin: auto 0 0;
+    margin: 0;
     font-size: 12px;
   }
 

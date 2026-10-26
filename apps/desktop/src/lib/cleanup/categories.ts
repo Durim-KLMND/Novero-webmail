@@ -12,6 +12,9 @@ export const categories: { id: Category; label: string; icon: IconName; about: s
   { id: "spam", label: "Spam", icon: "junk", about: "Unwanted or suspicious mail. New mail from senders you mark as spam goes to Junk." },
 ];
 
+/** The categories that get a folder on the mail server (mail/category_folders.rs). */
+export const filedCategories: Category[] = ["updates", "social", "forums", "newsletters", "promotions"];
+
 export const categoryOf = Object.fromEntries(categories.map((c) => [c.id, c])) as Record<
   Category,
   (typeof categories)[number]

@@ -155,8 +155,30 @@ fn parent_of<'a>(folders: &'a [Folder], folder: &Folder) -> Option<&'a Folder> {
     folders.iter().find(|f| f.name == parent)
 }
 
-/// The server name for a folder typed as `name`, inside `parent` or at the top.
+/// The server name for a new folder typed as `name`, inside `parent` or at
+/// the top. Refused when the account already has a folder of that name.
 fn full_name(folders: &[Folder], parent: Option<&Folder>, name: &str) -> Result<String> {
+    let full = server_name(folders, parent, name)?;
+    if full.eq_ignore_ascii_case("INBOX")
+        || folders
+            .iter()
+            .any(|f| f.name.to_lowercase() == full.to_lowercase())
+    {
+        return Err(Error::Invalid(format!(
+            "there is already a folder called “{}”",
+            name.trim()
+        )));
+    }
+    Ok(full)
+}
+
+/// The server name for a folder typed as `name`, inside `parent` or at the
+/// top, whether or not it exists yet.
+pub(crate) fn server_name(
+    folders: &[Folder],
+    parent: Option<&Folder>,
+    name: &str,
+) -> Result<String> {
     let name = name.trim();
     let delimiter = parent
         .and_then(|p| p.delimiter.clone())
@@ -186,15 +208,6 @@ fn full_name(folders: &[Folder], parent: Option<&Folder>, name: &str) -> Result<
         (None, Some(d)) if inside_inbox(folders, d) => format!("INBOX{d}{encoded}"),
         (None, _) => encoded,
     };
-    if full.eq_ignore_ascii_case("INBOX")
-        || folders
-            .iter()
-            .any(|f| f.name.to_lowercase() == full.to_lowercase())
-    {
-        return Err(Error::Invalid(format!(
-            "there is already a folder called “{name}”"
-        )));
-    }
     Ok(full)
 }
 
