@@ -463,6 +463,8 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
         let left = crate::mail::rules::apply(app, id, &report.new_mail);
         // Then mail from senders put in Spam goes to Junk.
         let left = crate::mail::cleanup::apply(app, id, &left);
+        // Then sorted mail goes to the folders chosen for its category.
+        let left = crate::mail::category_folders::apply(app, id, &left);
         announce(app, id, &left);
     }
     if result.is_ok() && has_outgoing(app, id) {

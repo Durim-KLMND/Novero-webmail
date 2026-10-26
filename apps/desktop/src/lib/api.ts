@@ -299,6 +299,13 @@ export interface CleanupReport {
   unchecked: number;
 }
 
+/** A folder of the user's that a category's inbox mail is filed into. */
+export interface CategoryFolder {
+  account: number;
+  category: Category;
+  folder: number;
+}
+
 export interface CleanupItem {
   id: number;
   accountId: number;
@@ -626,6 +633,11 @@ export const api = {
   deleteMessages: (ids: number[]) => invoke<void>("delete_messages", { ids }),
   junkMessages: (ids: number[]) => invoke<void>("junk_messages", { ids }),
   /** Every sender's mail in a scope, grouped by sender and category. */
+  /** The folders picked for categories, in each account. */
+  categoryFolders: () => invoke<CategoryFolder[]>("category_folders"),
+  setCategoryFolder: (account: number, category: Category, folder: number | null) =>
+    invoke<CategoryFolder[]>("set_category_folder", { account, category, folder }),
+  fileIntoCategoryFolders: () => invoke<number>("file_into_category_folders"),
   cleanupReport: (scope: CleanupScope, account: number | null) =>
     invoke<CleanupReport>("cleanup_report", { scope, account }),
   cleanupItems: (ids: number[]) => invoke<CleanupItem[]>("cleanup_items", { ids }),

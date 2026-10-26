@@ -13,6 +13,7 @@
     onMailEvent,
     type Account,
     type Category,
+    type CategoryFolder,
     type CleanupItem,
     type CleanupReport,
     type CleanupScope,
@@ -23,6 +24,7 @@
   import { toast } from "../shell/toast.svelte";
   import Icon from "../ui/Icon.svelte";
   import { accept, categories, categoryOf, groupKey, senderLabel, why } from "./categories";
+  import FoldersDialog from "./FoldersDialog.svelte";
 
   interface Props {
     accounts: Account[];
@@ -353,6 +355,14 @@
     ]);
   }
 
+  // Folders of the user's own that categories are filed into.
+  let folderChoices = $state<CategoryFolder[]>([]);
+  let choosingFolders = $state(false);
+
+  $effect(() => {
+    if (active) api.categoryFolders().then((c) => (folderChoices = c)).catch(() => {});
+  });
+
   const accountEmail = (id: number) => accounts.find((a) => a.id === id)?.email ?? "";
 </script>
 
@@ -387,6 +397,17 @@
         </button>
       {/each}
     </nav>
+    <div class="server-folders">
+      <strong><Icon name="folder" size={14} /> Move to your folders</strong>
+      <small class="quiet">
+        {folderChoices.length
+          ? `${folderChoices.length} ${folderChoices.length === 1 ? "category goes" : "categories go"} to folders you picked.`
+          : "Optional: file a category's mail into one of your own folders."}
+      </small>
+      <div class="folder-actions">
+        <button onclick={() => (choosingFolders = true)} disabled={!accounts.length}>Choose folders…</button>
+      </div>
+    </div>
     <p class="local quiet">Sorted on this computer from each message's sender and headers. Nothing is sent anywhere.</p>
   </aside>
 
@@ -548,6 +569,18 @@
   </section>
 </div>
 
+{#if choosingFolders}
+  <FoldersDialog
+    {accounts}
+    chosen={folderChoices}
+    onChange={(c) => (folderChoices = c)}
+    onClose={() => {
+      choosingFolders = false;
+      load();
+    }}
+  />
+{/if}
+
 <style>
   .cleanup {
     display: grid;
@@ -623,8 +656,35 @@
     color: var(--text-quiet);
     font-weight: 400;
   }
+  .server-folders {
+    margin-top: auto;
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 13px;
+  }
+  .server-folders strong {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .server-folders small {
+    font-size: 12px;
+  }
+  .folder-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .folder-actions button {
+    font-size: 12px;
+    padding: 4px 10px;
+  }
   .local {
-    margin: auto 0 0;
+    margin: 0;
     font-size: 12px;
   }
 
