@@ -838,7 +838,8 @@
     showSettings = false;
     if (signaturesChanged) onAccountsChanged();
     if (!saved) return;
-    const regroup = saved.conversations !== settings.conversations;
+    const regroup =
+      saved.conversations !== settings.conversations || saved.categoryLabels !== settings.categoryLabels;
     settings = saved;
     if (regroup) {
       selected = null;

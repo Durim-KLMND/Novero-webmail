@@ -6,10 +6,11 @@ use std::collections::{HashMap, HashSet};
 
 use mail_core::address::parse_mailbox;
 use mail_core::categories::{Category, CategoryInput, Reason, guess};
-use mail_core::{AccountId, Error, Flags, FolderId, Result};
+use mail_core::{AccountId, Error, Flags, FolderId, FolderRole, Result};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::mailbox::MessageSummary;
 use crate::storage;
 use crate::store::Store;
 
@@ -328,38 +329,42 @@ impl Store {
         Ok(report)
     }
 
-    /// The messages of a group, newest first, each with its own category.
-    pub fn cleanup_items(&self, ids: &[i64]) -> Result<Vec<CleanupItem>> {
-        let context = self.cleanup_context()?;
-        let mut stmt = self
-            .conn
+    /// One message as the guesses see it.
+    fn category_row(&self, id: i64) -> Result<Option<Row>> {
+        self.conn
             .prepare_cached(
                 "SELECT m.id, f.account_id, m.message_id, m.from_addr, m.subject, m.date, m.flags, \
                         m.signals, m.unsubscribe, mc.category \
                  FROM messages m JOIN folders f ON f.id = m.folder_id \
                  LEFT JOIN message_categories mc ON mc.message_id = m.id WHERE m.id = ?1",
             )
-            .map_err(storage)?;
+            .map_err(storage)?
+            .query_row([id], |r| {
+                Ok(Row {
+                    id: r.get(0)?,
+                    account: AccountId(r.get(1)?),
+                    message_id: r.get(2)?,
+                    from: r.get(3)?,
+                    subject: r.get(4)?,
+                    date: r.get(5)?,
+                    flags: Flags::from_bits(r.get(6)?),
+                    signals: r.get(7)?,
+                    unsubscribe: r.get(8)?,
+                    chosen: category(r.get(9)?),
+                })
+            })
+            .optional()
+            .map_err(storage)
+    }
+
+    /// The messages of a group, newest first, each with its own category.
+    pub fn cleanup_items(&self, ids: &[i64]) -> Result<Vec<CleanupItem>> {
+        let context = self.cleanup_context()?;
         let mut items = Vec::with_capacity(ids.len());
         for id in ids {
-            let row = stmt
-                .query_row([id], |r| {
-                    Ok(Row {
-                        id: r.get(0)?,
-                        account: AccountId(r.get(1)?),
-                        message_id: r.get(2)?,
-                        from: r.get(3)?,
-                        subject: r.get(4)?,
-                        date: r.get(5)?,
-                        flags: Flags::from_bits(r.get(6)?),
-                        signals: r.get(7)?,
-                        unsubscribe: r.get(8)?,
-                        chosen: category(r.get(9)?),
-                    })
-                })
-                .optional()
-                .map_err(storage)?;
-            let Some(row) = row else { continue };
+            let Some(row) = self.category_row(*id)? else {
+                continue;
+            };
             let d = context.decide(&row);
             items.push(CleanupItem {
                 id: row.id,
@@ -375,6 +380,23 @@ impl Store {
         }
         items.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
         Ok(items)
+    }
+
+    /// Gives each inbox row of a list the category of its newest message.
+    pub fn label_categories(&self, items: &mut [MessageSummary]) -> Result<()> {
+        if !items.iter().any(|i| i.folder_role == FolderRole::Inbox) {
+            return Ok(());
+        }
+        let context = self.cleanup_context()?;
+        for item in items.iter_mut() {
+            if item.folder_role != FolderRole::Inbox {
+                continue;
+            }
+            if let Some(row) = self.category_row(item.id)? {
+                item.category = Some(context.decide(&row).category);
+            }
+        }
+        Ok(())
     }
 
     /// The category the user gave a sender, if any.
@@ -621,6 +643,43 @@ mod tests {
             .find(|g| g.email == "ann@home.test")
             .unwrap();
         assert_eq!(ann.ids.len(), 2);
+    }
+
+    #[test]
+    fn inbox_rows_are_labelled_with_their_category() {
+        let (_dir, mut store, folders) = setup();
+        let list = signals::UNSUBSCRIBE | signals::CAMPAIGN;
+        store
+            .insert_headers(
+                folders[0],
+                &[
+                    mail(1, "Shop <deals@shop.test>", "40% off everything", list),
+                    mail(2, "Ann <ann@home.test>", "Lunch on Friday?", 0),
+                ],
+            )
+            .unwrap();
+        store
+            .insert_headers(folders[1], &[mail(3, "Ann <ann@home.test>", "Old", 0)])
+            .unwrap();
+        store
+            .set_sender_category("ann@home.test", Some(Category::Social))
+            .unwrap();
+        let labels = |folder| {
+            let mut page = store
+                .list(&crate::Mailbox::Folder { id: folder }, false, 0, 10)
+                .unwrap();
+            store.label_categories(&mut page.items).unwrap();
+            page.items
+                .into_iter()
+                .map(|i| i.category)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels(folders[0]),
+            [Some(Category::Social), Some(Category::Promotions)]
+        );
+        // Only the inbox is labelled.
+        assert_eq!(labels(folders[1]), [None]);
     }
 
     #[test]

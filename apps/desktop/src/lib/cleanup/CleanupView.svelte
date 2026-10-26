@@ -555,40 +555,7 @@
     grid-template-rows: minmax(0, 1fr);
     height: 100%;
     min-width: 0;
-    /* A colour per category, for the dots and chips. */
-    --cat-personal: #0f766e;
-    --cat-updates: #2563eb;
-    --cat-social: #7c3aed;
-    --cat-forums: #b45309;
-    --cat-newsletters: #0e7490;
-    --cat-promotions: #c2410c;
-    --cat-spam: var(--danger);
   }
-  :global(:root[data-theme="dark"]) .cleanup {
-    --cat-personal: #5cbdb4;
-    --cat-updates: #7aa7ff;
-    --cat-social: #b69cff;
-    --cat-forums: #f0b45a;
-    --cat-newsletters: #5cc6dc;
-    --cat-promotions: #ff9a66;
-  }
-  @media (prefers-color-scheme: dark) {
-    :global(:root:not([data-theme="light"])) .cleanup {
-      --cat-personal: #5cbdb4;
-      --cat-updates: #7aa7ff;
-      --cat-social: #b69cff;
-      --cat-forums: #f0b45a;
-      --cat-newsletters: #5cc6dc;
-      --cat-promotions: #ff9a66;
-    }
-  }
-  .cat-personal { --cat: var(--cat-personal); }
-  .cat-updates { --cat: var(--cat-updates); }
-  .cat-social { --cat: var(--cat-social); }
-  .cat-forums { --cat: var(--cat-forums); }
-  .cat-newsletters { --cat: var(--cat-newsletters); }
-  .cat-promotions { --cat: var(--cat-promotions); }
-  .cat-spam { --cat: var(--cat-spam); }
 
   .side {
     background: var(--bg-side);

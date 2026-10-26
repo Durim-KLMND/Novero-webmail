@@ -24,6 +24,14 @@
   /* Scroll bar thumb; the track behind it stays see-through. */
   --scroll-thumb: rgba(26, 26, 25, 0.22);
   --scroll-thumb-hover: rgba(26, 26, 25, 0.4);
+  /* A colour per cleanup category, for dots and labels; .cat-<id> picks one as --cat. */
+  --cat-personal: #0f766e;
+  --cat-updates: #2563eb;
+  --cat-social: #7c3aed;
+  --cat-forums: #b45309;
+  --cat-newsletters: #0e7490;
+  --cat-promotions: #c2410c;
+  --cat-spam: var(--danger);
   color-scheme: light;
 }
 
@@ -47,6 +55,12 @@
   --success: #22a35a;
   --scroll-thumb: rgba(236, 236, 234, 0.2);
   --scroll-thumb-hover: rgba(236, 236, 234, 0.36);
+  --cat-personal: #5cbdb4;
+  --cat-updates: #7aa7ff;
+  --cat-social: #b69cff;
+  --cat-forums: #f0b45a;
+  --cat-newsletters: #5cc6dc;
+  --cat-promotions: #ff9a66;
   color-scheme: dark;
 }
 
@@ -70,6 +84,12 @@
     --success: #22a35a;
     --scroll-thumb: rgba(236, 236, 234, 0.2);
     --scroll-thumb-hover: rgba(236, 236, 234, 0.36);
+    --cat-personal: #5cbdb4;
+    --cat-updates: #7aa7ff;
+    --cat-social: #b69cff;
+    --cat-forums: #f0b45a;
+    --cat-newsletters: #5cc6dc;
+    --cat-promotions: #ff9a66;
     color-scheme: dark;
   }
 }
@@ -77,6 +97,14 @@
 * {
   box-sizing: border-box;
 }
+
+.cat-personal { --cat: var(--cat-personal); }
+.cat-updates { --cat: var(--cat-updates); }
+.cat-social { --cat: var(--cat-social); }
+.cat-forums { --cat: var(--cat-forums); }
+.cat-newsletters { --cat: var(--cat-newsletters); }
+.cat-promotions { --cat: var(--cat-promotions); }
+.cat-spam { --cat: var(--cat-spam); }
 
 html,
 body {

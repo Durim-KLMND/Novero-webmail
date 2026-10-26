@@ -338,6 +338,8 @@ export interface MessageSummary {
   ids: number[];
   /** Messages in the whole conversation. */
   count: number;
+  /** An inbox row's cleanup category, when labels are on. */
+  category: Category | null;
 }
 
 export type Theme = "system" | "light" | "dark";
@@ -345,6 +347,8 @@ export type Theme = "system" | "light" | "dark";
 export interface Settings {
   theme: Theme;
   conversations: boolean;
+  /** Inbox rows show their cleanup category. */
+  categoryLabels: boolean;
   notifications: boolean;
   /** Look for updates in the background and download them. */
   autoUpdate: boolean;
@@ -361,6 +365,7 @@ export interface Settings {
 export const defaultSettings: Settings = {
   theme: "system",
   conversations: true,
+  categoryLabels: true,
   notifications: true,
   autoUpdate: true,
   crashReports: true,

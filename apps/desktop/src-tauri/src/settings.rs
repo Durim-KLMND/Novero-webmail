@@ -24,6 +24,8 @@ pub struct Settings {
     pub theme: Theme,
     /// Group messages into conversations in the message list.
     pub conversations: bool,
+    /// Inbox rows show their cleanup category (Personal, Updates...).
+    pub category_labels: bool,
     /// Show a Windows notification when new mail arrives.
     pub notifications: bool,
     /// Look for updates in the background and download them.
@@ -44,6 +46,7 @@ impl Default for Settings {
         Settings {
             theme: Theme::System,
             conversations: true,
+            category_labels: true,
             notifications: true,
             auto_update: true,
             crash_reports: true,

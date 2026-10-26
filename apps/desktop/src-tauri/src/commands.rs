@@ -344,8 +344,12 @@ pub fn list_messages(
     limit: u32,
 ) -> Result<MessagePage> {
     let store = state.store.lock().unwrap();
-    let threaded = Settings::load(&store).conversations;
-    store.list(&mailbox, threaded, offset, limit.min(500))
+    let settings = Settings::load(&store);
+    let mut page = store.list(&mailbox, settings.conversations, offset, limit.min(500))?;
+    if settings.category_labels {
+        store.label_categories(&mut page.items)?;
+    }
+    Ok(page)
 }
 
 /// The messages of a conversation, oldest first (see `Store::conversation`).

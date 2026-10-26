@@ -393,6 +393,13 @@
               <small class="quiet">Replies are shown together with the message they answer.</small>
             </span>
           </label>
+          <label class="check">
+            <input type="checkbox" bind:checked={draft.categoryLabels} />
+            <span>
+              Show categories in the Inbox
+              <small class="quiet">Each message is labelled Personal, Updates, Social, Forums, Newsletters, Promotions or Spam, as sorted in Clean up.</small>
+            </span>
+          </label>
         </fieldset>
         <fieldset>
           <legend>Rules</legend>
