@@ -4,7 +4,6 @@
   import { onMount } from "svelte";
   import type { UpdateStatus } from "../api";
   import { downloadPercent, downloadText, releaseNotes } from "../todo/notes";
-  import { outsideLicense, pro } from "../plan/pro.svelte";
 
   interface Props {
     status: UpdateStatus;
@@ -16,8 +15,6 @@
 
   let dialog = $state<HTMLDivElement>();
   const notes = $derived(releaseNotes(status.update?.notes ?? null));
-  /** Installing it would turn Pro off. */
-  const beyondLicense = $derived(outsideLicense(pro.plan, status.update?.released ?? null));
   const percent = $derived(downloadPercent(status.downloaded, status.total));
 
   onMount(() => dialog?.querySelector<HTMLElement>("button.primary, button")?.focus());
@@ -49,12 +46,6 @@
       </div>
     {:else}
       <p class="quiet">This release has no notes.</p>
-    {/if}
-    {#if beyondLicense}
-      <p class="warn" role="note">
-        This version came out after the year of updates your Pro license includes. After updating, Novero Mail
-        works as Free until you buy a new key.
-      </p>
     {/if}
     {#if status.phase === "downloading"}
       <progress max="100" value={percent} aria-label="Download progress"></progress>
@@ -130,10 +121,6 @@
     height: 5px;
     border-radius: 50%;
     background: var(--accent-ink);
-  }
-  .warn {
-    color: var(--danger);
-    margin: 4px 0 8px;
   }
   progress {
     width: 100%;

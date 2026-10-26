@@ -41,7 +41,6 @@
   import { dueCount } from "../todo/todo";
   import CrashReport from "../shell/CrashReport.svelte";
   import UpdateDialog from "../shell/UpdateDialog.svelte";
-  import { needPro } from "../plan/pro.svelte";
   import { items, openMenu, setMailtoHandler, type MenuItem } from "../shell/menus.svelte";
   import { laterChoices, laterText } from "../later";
   import PickTime from "../ui/PickTime.svelte";
@@ -81,7 +80,7 @@
   /** The rules dialog: the account it shows, and a sender to make a rule for. */
   let rulesFor = $state<{ account: number; from?: string } | null>(null);
   function openRules(start: { account: number; from?: string }) {
-    if (needPro("rules")) rulesFor = start;
+    rulesFor = start;
   }
   let showHelp = $state(false);
   /** Mail, the calendar or the to-do list, picked on the rail. */
@@ -368,7 +367,6 @@
 
   /** Hides the selected row until `at`. */
   function snooze(at: Date) {
-    if (!needPro("snooze")) return;
     act(
       (ids) => api.snoozeMessages(ids, Math.floor(at.getTime() / 1000)),
       true,
@@ -390,7 +388,7 @@
         run: () => snooze(c.at),
       })),
       "separator",
-      { label: "Pick a date and time…", icon: "calendar", run: () => needPro("snooze") && (pickingSnooze = true) },
+      { label: "Pick a date and time…", icon: "calendar", run: () => (pickingSnooze = true) },
     ];
   }
 

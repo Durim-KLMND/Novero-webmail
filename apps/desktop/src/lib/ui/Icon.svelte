@@ -78,7 +78,6 @@
   import Search from "@lucide/svelte/icons/search";
   import Send from "@lucide/svelte/icons/send";
   import Settings from "@lucide/svelte/icons/settings";
-  import Sparkles from "@lucide/svelte/icons/sparkles";
   import Tag from "@lucide/svelte/icons/tag";
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import TextCursor from "@lucide/svelte/icons/text-cursor";
@@ -171,7 +170,6 @@
     search: Search,
     sent: Send,
     settings: Settings,
-    pro: Sparkles,
     junk: ShieldAlert,
     "select-all": TextCursor,
     trash: Trash,

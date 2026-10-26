@@ -3,7 +3,6 @@
 mod calendar;
 mod commands;
 mod mail;
-mod plan;
 mod settings;
 mod shell;
 mod state;
@@ -55,7 +54,6 @@ pub fn run() {
             calendar::sync::start(app.handle());
             mail::compose::start_scheduler(app.handle());
             mail::snooze::start(app.handle());
-            plan::start(app.handle());
 
             let handle = app.handle().clone();
             state::start_all(&handle);
@@ -186,11 +184,6 @@ pub fn run() {
             shell::updates::update_status,
             shell::updates::download_update,
             shell::updates::install_update,
-            plan::get_plan,
-            plan::activate_license,
-            plan::deactivate_license,
-            plan::refresh_plan,
-            plan::open_checkout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Novero Mail");

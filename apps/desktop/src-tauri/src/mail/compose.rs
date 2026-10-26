@@ -282,12 +282,6 @@ pub fn send_draft(
 ) -> Result<()> {
     // A time already past sends now.
     let send_at = send_at.filter(|t| *t > now());
-    if send_at.is_some() {
-        crate::plan::require(
-            &state.store.lock().unwrap(),
-            crate::plan::Feature::SendLater,
-        )?;
-    }
     let draft = state.store.lock().unwrap().save_draft_fields(id, &fields)?;
     let account = state.account(draft.account)?;
     let files = state.store.lock().unwrap().draft_files(id)?;

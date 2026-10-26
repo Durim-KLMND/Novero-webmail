@@ -36,14 +36,13 @@ Inside the desktop app, files are grouped by feature:
 | `src/lib/cleanup` | Mail cleanup: mail sorted into categories by sender |
 | `src/lib/accounts` | First-run setup, account form, server settings, sign in again |
 | `src/lib/settings` | Settings dialog, signatures, templates |
-| `src/lib/plan` | Free/Pro plan, license key, upgrade prompt |
 | `src/lib/shell` | Title bar, app rail, status bar, menus, toasts, update and crash dialogs |
 | `src/lib/ui` | Shared pieces: icons, small dialogs, theme, scroll bars |
 | `src/lib/api.ts`, `format.ts`, `later.ts` | Backend calls and helpers used everywhere |
 | `src-tauri/src/mail` | Reading, sending, folders, rules, cleanup, snooze, attachments, invites, mailto links |
 | `src-tauri/src/calendar` | Calendar events, reminders and Google/Outlook sync |
 | `src-tauri/src/shell` | Windows, tray, taskbar badge, updates, crash reports |
-| `src-tauri/src` | Startup (`lib.rs`), account and message commands, app state, settings, plan, to-dos |
+| `src-tauri/src` | Startup (`lib.rs`), account and message commands, app state, settings, to-dos |
 
 On Windows, file names are not case sensitive, so a folder must never hold both `Name.svelte`
 and `name.svelte.ts`; give the script file a different name.

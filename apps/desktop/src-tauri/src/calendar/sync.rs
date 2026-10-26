@@ -18,7 +18,6 @@ use tokio::sync::Notify;
 
 use crate::calendar::events::changed;
 use crate::commands::browser_sign_in;
-use crate::plan::{self, Feature};
 use crate::state::AppState;
 
 /// How often calendars are synced when nothing asks sooner.
@@ -74,9 +73,6 @@ async fn sync_all(app: &AppHandle) {
     let accounts = {
         let state = app.state::<AppState>();
         let store = state.store.lock().unwrap();
-        if !plan::is_pro(&store) {
-            return;
-        }
         store.list_calendar_accounts().unwrap_or_default()
     };
     if accounts.is_empty() {
@@ -287,7 +283,6 @@ pub async fn connect_calendar(
     provider: OAuthProvider,
     id: Option<i64>,
 ) -> Result<CalendarAccount> {
-    plan::require(&state.store.lock().unwrap(), Feature::CalendarSync)?;
     let again = match id {
         Some(id) => Some(
             state

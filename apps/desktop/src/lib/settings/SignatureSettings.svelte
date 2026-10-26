@@ -4,7 +4,6 @@
   import { onMount } from "svelte";
   import { api, errorText, type Account, type Signature } from "../api";
   import Icon from "../ui/Icon.svelte";
-  import { needPro } from "../plan/pro.svelte";
   import RichEditor from "../compose/RichEditor.svelte";
   import { textToHtml } from "../compose/richtext";
 
@@ -46,7 +45,6 @@
   function add(account: Account) {
     const key = `n${next++}`;
     const first = !entries.some((e) => e.account === account.id);
-    if (!first && !needPro("signatures")) return;
     entries.push({ id: 0, account: account.id, name: first ? "Signature" : "", text: "", html: "", key, saved: null });
     // An account's first signature is used for everything.
     if (first) defaults[account.id] = { new: key, reply: key };

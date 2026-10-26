@@ -44,7 +44,6 @@ pub fn snooze_messages(
         ));
     }
     let store = state.store.lock().unwrap();
-    crate::plan::require(&store, crate::plan::Feature::Snooze)?;
     store.snooze(&ids, until)?;
     drop(store);
     changed(&app, &state, &ids);

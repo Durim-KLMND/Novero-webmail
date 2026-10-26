@@ -78,7 +78,6 @@ pub async fn add_account(
     if !email.contains('@') {
         return Err(Error::Invalid("enter a full email address".into()));
     }
-    crate::plan::can_add_account(&state.store.lock().unwrap())?;
     let mut username = match input.username.trim() {
         "" => email.clone(),
         name => name.to_owned(),
