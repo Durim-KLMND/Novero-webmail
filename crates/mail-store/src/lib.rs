@@ -5,6 +5,7 @@
 
 mod calendar;
 mod calendar_sync;
+mod categories;
 mod contacts;
 mod mailbox;
 mod outgoing;
@@ -18,6 +19,7 @@ use std::path::Path;
 
 pub use calendar::Reminder;
 pub use calendar_sync::{Pending, PendingSave, SyncedCalendar};
+pub use categories::{CleanupItem, CleanupReport, CleanupScope, SenderGroup, Unchecked, sender_of};
 pub use contacts::Contact;
 pub use mail_core::{Error, Result};
 pub use mailbox::{MAX_RESULTS, Mailbox, MessagePage, MessageSummary, SearchQuery};
@@ -41,6 +43,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0009_signatures_templates.sql"),
     include_str!("../migrations/0010_calendar_sync.sql"),
     include_str!("../migrations/0011_notes_tasks.sql"),
+    include_str!("../migrations/0012_categories.sql"),
 ];
 
 /// Schema version a fully migrated database has.

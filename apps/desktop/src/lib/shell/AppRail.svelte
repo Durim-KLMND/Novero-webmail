@@ -1,9 +1,10 @@
 <script lang="ts">
-  // The narrow strip on the far left: switches between mail, the calendar and
-  // the to-do list, with settings and the shortcut list at the bottom.
+  // The narrow strip on the far left: switches between mail, the calendar,
+  // the to-do list and mail cleanup, with settings and the shortcut list at
+  // the bottom.
   import Icon, { type IconName } from "../ui/Icon.svelte";
 
-  export type AppView = "mail" | "calendar" | "todo";
+  export type AppView = "mail" | "calendar" | "todo" | "cleanup";
 
   interface Props {
     view: AppView;
@@ -21,10 +22,11 @@
     { id: "mail", icon: "mail", label: "Mail", keys: "Ctrl+1" },
     { id: "calendar", icon: "calendar", label: "Calendar", keys: "Ctrl+2" },
     { id: "todo", icon: "todo", label: "To-do and notes", keys: "Ctrl+3" },
+    { id: "cleanup", icon: "cleanup", label: "Clean up mail", keys: "Ctrl+4" },
   ];
 </script>
 
-<nav class="rail" aria-label="Switch between mail, calendar and to-do">
+<nav class="rail" aria-label="Switch between mail, calendar, to-do and cleanup">
   {#each views as v (v.id)}
     <button
       class="spot"

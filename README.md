@@ -33,13 +33,14 @@ Inside the desktop app, files are grouped by feature:
 | `src/lib/compose` | Composer, its own window, address input, rich text editor |
 | `src/lib/calendar` | Calendar view and event dialog |
 | `src/lib/todo` | Task board and notes |
+| `src/lib/cleanup` | Mail cleanup: mail sorted into categories by sender |
 | `src/lib/accounts` | First-run setup, account form, server settings, sign in again |
 | `src/lib/settings` | Settings dialog, signatures, templates |
 | `src/lib/plan` | Free/Pro plan, license key, upgrade prompt |
 | `src/lib/shell` | Title bar, app rail, status bar, menus, toasts, update and crash dialogs |
 | `src/lib/ui` | Shared pieces: icons, small dialogs, theme, scroll bars |
 | `src/lib/api.ts`, `format.ts`, `later.ts` | Backend calls and helpers used everywhere |
-| `src-tauri/src/mail` | Reading, sending, folders, rules, snooze, attachments, invites, mailto links |
+| `src-tauri/src/mail` | Reading, sending, folders, rules, cleanup, snooze, attachments, invites, mailto links |
 | `src-tauri/src/calendar` | Calendar events, reminders and Google/Outlook sync |
 | `src-tauri/src/shell` | Windows, tray, taskbar badge, updates, crash reports |
 | `src-tauri/src` | Startup (`lib.rs`), account and message commands, app state, settings, plan, to-dos |
@@ -121,6 +122,22 @@ put words in quotes to match a phrase. Filters can be mixed with words:
 
 Trash and Junk are left out unless `in:` names them. Message text is searchable once the message
 has been downloaded: opening it does that, and each sync downloads the last 30 days ahead of time.
+
+## Cleaning up mail
+
+The broom on the rail (`Ctrl+4`) sorts the mail in every account's inbox (or, with **All mail**,
+also Archive and your own folders) into Personal, Updates, Social, Forums, Newsletters, Promotions
+and Spam, grouped by sender. The guesses are made on the computer from the sender, the subject and
+the headers bulk mail carries (`List-Unsubscribe`, `List-Id`, `Precedence`, `Auto-Submitted`,
+spam-filter flags), and from whether you have written to the sender; nothing is sent anywhere.
+The rules live in `crates/mail-core/src/categories.rs`.
+
+**To review** lists the suggestions you haven't confirmed. Accepting one for a sender whose mail
+is all in one category files the sender there, so new mail from them follows; picking another
+category does the same. Mail can then be archived, deleted or moved to Junk by sender, and lists
+with an unsubscribe link can be left from the sender's menu. New inbox mail from senders in Spam
+goes straight to Junk. Mail cached before this feature has its list headers read once, from the
+message file when it was downloaded or else from the server.
 
 ## Keyboard shortcuts
 

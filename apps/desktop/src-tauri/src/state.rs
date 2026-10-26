@@ -467,6 +467,8 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
     if let Ok(report) = &result {
         // Rules first, so mail they file away or mark read isn't announced.
         let left = crate::mail::rules::apply(app, id, &report.new_mail);
+        // Then mail from senders put in Spam goes to Junk.
+        let left = crate::mail::cleanup::apply(app, id, &left);
         announce(app, id, &left);
     }
     if result.is_ok() && has_outgoing(app, id) {

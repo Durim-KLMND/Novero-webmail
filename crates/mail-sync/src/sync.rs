@@ -200,6 +200,35 @@ async fn prefetch_bodies(
     Ok(())
 }
 
+/// Reads the list and bulk-mail headers of `wanted` messages (`(id, uid)`
+/// pairs) in folder `name` and saves their category hints. Mail cached before
+/// those headers were fetched needs this once. `on_batch` gets the number of
+/// messages each batch covered.
+pub async fn read_signals(
+    store: &Mutex<Store>,
+    session: &mut ImapSession,
+    name: &str,
+    wanted: &[(i64, u32)],
+    on_batch: impl Fn(usize),
+) -> Result<()> {
+    session.select(name).await?;
+    for chunk in wanted.chunks(BATCH) {
+        let uids: Vec<u32> = chunk.iter().map(|(_, uid)| *uid).collect();
+        let headers = session.fetch_headers(&uid_set(&uids)).await?;
+        // A message expunged meanwhile is simply missing.
+        let found: Vec<(i64, u32, Option<String>)> = chunk
+            .iter()
+            .filter_map(|(id, uid)| {
+                let h = headers.iter().find(|h| h.uid == *uid)?;
+                Some((*id, h.signals, h.unsubscribe.clone()))
+            })
+            .collect();
+        store.lock().unwrap().set_signals(&found)?;
+        on_batch(chunk.len());
+    }
+    Ok(())
+}
+
 /// Reports one stage of an account sync as `AccountProgress` events, if the
 /// stage has any work.
 struct Progress<'a, F: Fn(Event)> {

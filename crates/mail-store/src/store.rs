@@ -604,8 +604,8 @@ impl Store {
             }
             tx.prepare_cached(
                 "INSERT INTO messages (folder_id, uid, message_id, from_addr, to_addrs, cc_addrs, \
-                 subject, date, size, flags, has_attachments) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 subject, date, size, flags, has_attachments, signals, unsubscribe) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )
             .map_err(storage)?
             .execute(params![
@@ -620,6 +620,8 @@ impl Store {
                 h.size,
                 h.flags.to_bits(),
                 h.has_attachments,
+                h.signals,
+                h.unsubscribe,
             ])
             .map_err(storage)?;
             let id = tx.last_insert_rowid();

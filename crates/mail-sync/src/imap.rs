@@ -21,7 +21,11 @@ use tokio::time::timeout;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Fields fetched for the message list. Bodies are fetched on open.
-const HEADER_QUERY: &str = "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID CONTENT-TYPE REFERENCES IN-REPLY-TO)])";
+/// The list and bulk-mail fields feed `mail_mime`'s category hints.
+const HEADER_QUERY: &str = "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE \
+     MESSAGE-ID CONTENT-TYPE REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST LIST-ID \
+     PRECEDENCE AUTO-SUBMITTED X-SPAM-FLAG X-SPAM-STATUS FEEDBACK-ID X-CAMPAIGN X-CAMPAIGNID \
+     X-MC-USER X-SG-EID X-MAILGUN-TAG)])";
 
 /// Any byte stream async-imap can run over (plain TCP or TLS).
 trait Transport: AsyncRead + AsyncWrite + Unpin + Send + fmt::Debug {}

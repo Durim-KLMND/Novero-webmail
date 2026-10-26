@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod address;
 pub mod calendar;
+pub mod categories;
 pub mod rules;
 
 /// Local identifier of a configured account.
@@ -276,6 +277,10 @@ pub struct MessageHeader {
     /// Message-IDs this one replies to, from References and In-Reply-To,
     /// oldest first. Used to group conversations.
     pub references: Vec<String>,
+    /// Hints from list and bulk-mail headers (`categories::signals` bits).
+    pub signals: u32,
+    /// Where to leave the list it was sent to: an https or mailto link.
+    pub unsubscribe: Option<String>,
 }
 
 /// Message flags the client tracks.
