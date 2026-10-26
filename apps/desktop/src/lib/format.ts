@@ -24,6 +24,13 @@ export function senderName(from: string | null): string {
   return match && match[1] ? match[1] : from;
 }
 
+/** The address of a From field, in lower case: "jane@example.com". */
+export function senderEmail(from: string | null): string {
+  if (!from) return "";
+  const match = from.match(/<([^>]+)>/);
+  return (match ? match[1] : from).trim().toLowerCase();
+}
+
 /** "To Jane Doe +2" for the first of a list of recipients. */
 export function recipientLabel(to: string | null): string {
   if (!to) return "(no recipients)";

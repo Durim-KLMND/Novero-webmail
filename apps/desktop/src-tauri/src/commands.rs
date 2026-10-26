@@ -374,10 +374,18 @@ pub async fn open_message(
     allow_remote: bool,
 ) -> Result<ParsedMessage> {
     let (_, raw) = raw_message(&app, id).await?;
-    let parsed =
-        tauri::async_runtime::spawn_blocking(move || mail_mime::parse_message(&raw, allow_remote))
-            .await
-            .map_err(|e| Error::Protocol(e.to_string()))??;
+    let senders = crate::mail::images::load(&state.store.lock().unwrap());
+    let parsed = tauri::async_runtime::spawn_blocking(move || {
+        let parsed = mail_mime::parse_message(&raw, allow_remote)?;
+        // Images from senders the user trusts load without asking.
+        let (email, _) = mail_store::sender_of(parsed.from.as_deref());
+        if parsed.blocked_remote > 0 && crate::mail::images::trusted(&senders, &email) {
+            return mail_mime::parse_message(&raw, true);
+        }
+        Ok(parsed)
+    })
+    .await
+    .map_err(|e| Error::Protocol(e.to_string()))??;
     // Copies in other folders count too, so one read elsewhere still marks
     // this folder's copy read.
     let unread: Vec<i64> = {

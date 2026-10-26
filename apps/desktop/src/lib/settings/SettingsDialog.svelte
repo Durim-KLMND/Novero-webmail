@@ -16,6 +16,7 @@
   import SignatureSettings from "./SignatureSettings.svelte";
   import TemplateSettings from "./TemplateSettings.svelte";
   import AccountServers from "../accounts/AccountServers.svelte";
+  import ImageSenders from "./ImageSenders.svelte";
 
   interface Props {
     accounts: Account[];
@@ -477,6 +478,7 @@
           {#if version}<small class="quiet">Novero Mail {version}</small>{/if}
         </fieldset>
       {:else if category === "privacy"}
+        <ImageSenders />
         <fieldset>
           <label class="check">
             <input type="checkbox" bind:checked={draft.crashReports} />

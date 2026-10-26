@@ -412,6 +412,8 @@ export interface ParsedMessage {
   text: string | null;
   html: string | null;
   blockedRemote: number;
+  /** Remote images were let through: asked for, or a trusted sender. */
+  imagesAllowed: boolean;
   attachments: Attachment[];
   /** Carries a calendar invitation; `api.messageInvite` reads it. */
   invite: boolean;
@@ -573,6 +575,10 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) =>
     invoke<Settings>("save_settings", { settings }),
+  /** Addresses and domains whose remote images always load. */
+  listImageSenders: () => invoke<string[]>("list_image_senders"),
+  allowImagesFrom: (sender: string) => invoke<string[]>("allow_images_from", { sender }),
+  forgetImageSender: (sender: string) => invoke<string[]>("forget_image_sender", { sender }),
   listRules: (account: number) => invoke<Rule[]>("list_rules", { account }),
   saveRule: (rule: Rule) => invoke<Rule>("save_rule", { rule }),
   deleteRule: (id: number) => invoke<void>("delete_rule", { id }),
