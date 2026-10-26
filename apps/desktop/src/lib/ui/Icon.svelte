@@ -7,6 +7,7 @@
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import Bell from "@lucide/svelte/icons/bell";
   import Bold from "@lucide/svelte/icons/bold";
+  import BrushCleaning from "@lucide/svelte/icons/brush-cleaning";
   import CalendarDays from "@lucide/svelte/icons/calendar-days";
   import Check from "@lucide/svelte/icons/check";
   import CalendarClock from "@lucide/svelte/icons/calendar-clock";
@@ -49,6 +50,7 @@
   import Link from "@lucide/svelte/icons/link";
   import List from "@lucide/svelte/icons/list";
   import ListFilter from "@lucide/svelte/icons/list-filter";
+  import ListChecks from "@lucide/svelte/icons/list-checks";
   import ListOrdered from "@lucide/svelte/icons/list-ordered";
   import LogIn from "@lucide/svelte/icons/log-in";
   import Maximize from "@lucide/svelte/icons/square";
@@ -56,6 +58,8 @@
   import Mail from "@lucide/svelte/icons/mail";
   import MailOpen from "@lucide/svelte/icons/mail-open";
   import Mails from "@lucide/svelte/icons/mails";
+  import MessagesSquare from "@lucide/svelte/icons/messages-square";
+  import Newspaper from "@lucide/svelte/icons/newspaper";
   import Palette from "@lucide/svelte/icons/palette";
   import Play from "@lucide/svelte/icons/play";
   import Paperclip from "@lucide/svelte/icons/paperclip";
@@ -75,6 +79,7 @@
   import Send from "@lucide/svelte/icons/send";
   import Settings from "@lucide/svelte/icons/settings";
   import Sparkles from "@lucide/svelte/icons/sparkles";
+  import Tag from "@lucide/svelte/icons/tag";
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import TextCursor from "@lucide/svelte/icons/text-cursor";
   import Trash from "@lucide/svelte/icons/trash";
@@ -92,6 +97,7 @@
     "move-up": ArrowUp,
     bell: Bell,
     bold: Bold,
+    cleanup: BrushCleaning,
     calendar: CalendarDays,
     check: Check,
     due: CalendarClock,
@@ -131,6 +137,7 @@
     list: List,
     rules: ListFilter,
     "list-ordered": ListOrdered,
+    review: ListChecks,
     "sign-in": LogIn,
     location: MapPin,
     lock: Lock,
@@ -140,6 +147,9 @@
     mail: Mail,
     read: MailOpen,
     "all-inboxes": Mails,
+    forums: MessagesSquare,
+    newsletters: Newspaper,
+    promotions: Tag,
     palette: Palette,
     attachment: Paperclip,
     signature: PenLine,

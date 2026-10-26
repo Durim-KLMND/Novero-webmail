@@ -1,6 +1,7 @@
 //! Reading, writing and organising mail.
 
 pub(crate) mod attachments;
+pub(crate) mod cleanup;
 pub(crate) mod compose;
 pub(crate) mod files;
 pub(crate) mod folders;

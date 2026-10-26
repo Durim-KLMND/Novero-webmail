@@ -236,6 +236,81 @@ export interface Flags {
 /** How a composer ended. */
 export type ComposerOutcome = "sent" | "scheduled" | "saved" | "discarded";
 
+/** What kind of mail a message is, for mail cleanup. */
+export type Category =
+  | "personal"
+  | "updates"
+  | "social"
+  | "forums"
+  | "newsletters"
+  | "promotions"
+  | "spam";
+
+/** Why a category was suggested (see `mail_core::categories::Reason`). */
+export type CategoryReason =
+  | "spamFilter"
+  | "spamWords"
+  | "nameMismatch"
+  | "contact"
+  | "replied"
+  | "ownAddress"
+  | "personLike"
+  | "socialSite"
+  | "discussion"
+  | "mailingList"
+  | "serviceSite"
+  | "automated"
+  | "noReply"
+  | "updateWords"
+  | "promoWords"
+  | "promoSender"
+  | "newsletterSender"
+  | "newsWords"
+  | "unsubscribe"
+  | "bulkMail";
+
+/** Every inbox, or the inbox, Archive and the user's own folders. */
+export type CleanupScope = "inbox" | "allMail";
+
+/** One sender's mail of one category. */
+export interface SenderGroup {
+  /** Lower case; empty when the mail has no sender. */
+  email: string;
+  name: string | null;
+  category: Category;
+  /** The user chose this category, for the sender or each message. */
+  confirmed: boolean;
+  senderCategory: Category | null;
+  sure: boolean;
+  reasons: CategoryReason[];
+  /** Newest first. */
+  ids: number[];
+  unread: number;
+  latest: number | null;
+  subject: string | null;
+  accounts: number[];
+  /** An https or mailto link to leave the list. */
+  unsubscribe: string | null;
+}
+
+export interface CleanupReport {
+  groups: SenderGroup[];
+  /** Messages whose list headers haven't been read yet. */
+  unchecked: number;
+}
+
+export interface CleanupItem {
+  id: number;
+  accountId: number;
+  subject: string | null;
+  date: number | null;
+  unread: boolean;
+  category: Category;
+  confirmed: boolean;
+  sure: boolean;
+  reasons: CategoryReason[];
+}
+
 export type Mailbox =
   | { kind: "folder"; id: number }
   | { kind: "allInboxes" }
@@ -568,6 +643,19 @@ export const api = {
     invoke<void>("move_messages", { ids, folder }),
   archiveMessages: (ids: number[]) => invoke<void>("archive_messages", { ids }),
   deleteMessages: (ids: number[]) => invoke<void>("delete_messages", { ids }),
+  junkMessages: (ids: number[]) => invoke<void>("junk_messages", { ids }),
+  /** Every sender's mail in a scope, grouped by sender and category. */
+  cleanupReport: (scope: CleanupScope, account: number | null) =>
+    invoke<CleanupReport>("cleanup_report", { scope, account }),
+  cleanupItems: (ids: number[]) => invoke<CleanupItem[]>("cleanup_items", { ids }),
+  /** Puts everything from a sender in a category; null goes back to guessing. */
+  setSenderCategory: (email: string, category: Category | null) =>
+    invoke<void>("set_sender_category", { email, category }),
+  setMessageCategory: (ids: number[], category: Category | null) =>
+    invoke<void>("set_message_category", { ids, category }),
+  /** Reads list headers older mail was cached without; returns how many are still unread. */
+  checkListHeaders: (scope: CleanupScope, account: number | null) =>
+    invoke<number>("check_list_headers", { scope, account }),
   /** Makes a folder inside `parent`, or at the top when it is null. */
   createFolder: (account: number, parent: number | null, name: string) =>
     invoke<Folder>("create_folder", { account, parent, name }),
@@ -695,6 +783,13 @@ export function onPlanChanged(handler: () => void): Promise<UnlistenFn> {
 /** A mailto: link was opened; `api.takeMailto` returns it. */
 export function onMailto(handler: () => void): Promise<UnlistenFn> {
   return listen("mailto", () => handler());
+}
+
+/** Reading list headers for mail cleanup: how far along it is. */
+export function onCleanupProgress(
+  handler: (progress: { done: number; total: number }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ done: number; total: number }>("cleanup-progress", (e) => handler(e.payload));
 }
 
 export function onMailEvent(

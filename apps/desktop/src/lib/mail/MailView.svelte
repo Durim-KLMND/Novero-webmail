@@ -37,6 +37,7 @@
   import AppRail, { type AppView } from "../shell/AppRail.svelte";
   import CalendarView from "../calendar/CalendarView.svelte";
   import TodoView from "../todo/TodoView.svelte";
+  import CleanupView from "../cleanup/CleanupView.svelte";
   import { dueCount } from "../todo/todo";
   import CrashReport from "../shell/CrashReport.svelte";
   import UpdateDialog from "../shell/UpdateDialog.svelte";
@@ -90,9 +91,11 @@
   /** The to-do view too; until then the rail's count comes from here. */
   let todoOpened = $state(false);
   let tasksDue = $state(0);
+  let cleanupOpened = $state(false);
   $effect(() => {
     if (view === "calendar") calendarOpened = true;
     if (view === "todo") todoOpened = true;
+    if (view === "cleanup") cleanupOpened = true;
   });
   const unreadInboxes = $derived(
     Object.values(folders)
@@ -931,8 +934,8 @@
   function shortcut(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
     const dialog = showHelp || showSettings || rulesFor || signingIn || pickingSnooze || showWhatsNew;
-    // Ctrl+1, 2 and 3 switch between mail, the calendar and the to-do list.
-    const views: Record<string, AppView> = { "1": "mail", "2": "calendar", "3": "todo" };
+    // Ctrl+1 to 4 switch between mail, the calendar, the to-do list and cleanup.
+    const views: Record<string, AppView> = { "1": "mail", "2": "calendar", "3": "todo", "4": "cleanup" };
     if (event.ctrlKey && !event.altKey && !event.shiftKey && views[event.key]) {
       if (dialog) return;
       event.preventDefault();
@@ -1116,6 +1119,15 @@
 {#if todoOpened}
   <div class="pane" class:hidden={view !== "todo"}>
     <TodoView onDue={(n) => (tasksDue = n)} />
+  </div>
+{/if}
+{#if cleanupOpened}
+  <div class="pane" inert={blocked} class:hidden={view !== "cleanup"}>
+    <CleanupView
+      {accounts}
+      active={view === "cleanup"}
+      onCompose={(account, link) => openComposer(() => api.mailtoDraft(account, link))}
+    />
   </div>
 {/if}
   {#if signingIn}

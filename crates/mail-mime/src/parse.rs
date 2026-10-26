@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use base64::Engine;
+use mail_core::categories::signals;
 use mail_core::{Error, MessageHeader, Result};
-use mail_parser::{Address, HeaderValue, MessageParser, MessagePart, MimeHeaders};
+use mail_parser::{Address, HeaderValue, Message, MessageParser, MessagePart, MimeHeaders};
 use serde::Serialize;
 
 use crate::html::sanitize_html;
@@ -153,9 +154,12 @@ pub fn parse_header_fields(raw: &[u8]) -> MessageHeader {
             references.push(id);
         }
     }
+    let (signals, unsubscribe) = list_signals(&message);
     MessageHeader {
         message_id: message.message_id().map(bracketed),
         references,
+        signals,
+        unsubscribe,
         from: message.from().and_then(first_address),
         to: message.to().map(all_addresses),
         cc: message.cc().map(all_addresses),
@@ -164,6 +168,64 @@ pub fn parse_header_fields(raw: &[u8]) -> MessageHeader {
         has_attachments,
         ..MessageHeader::default()
     }
+}
+
+/// Headers bulk mailing services add; any of them sets `signals::CAMPAIGN`.
+const CAMPAIGN_HEADERS: &[&str] = &[
+    "Feedback-ID",
+    "X-Campaign",
+    "X-CampaignID",
+    "X-MC-User",
+    "X-SG-EID",
+    "X-Mailgun-Tag",
+];
+
+/// What the list and bulk-mail headers say about a message, and its
+/// unsubscribe link (https preferred over mailto).
+fn list_signals(message: &Message<'_>) -> (u32, Option<String>) {
+    let raw = |name: &'static str| message.header_raw(name).map(str::trim);
+    let starts = |value: Option<&str>, word: &str| {
+        value.is_some_and(|v| v.len() >= word.len() && v[..word.len()].eq_ignore_ascii_case(word))
+    };
+    let mut bits = 0;
+    let mut unsubscribe = None;
+    if let Some(value) = raw("List-Unsubscribe") {
+        bits |= signals::UNSUBSCRIBE;
+        let links: Vec<&str> = value
+            .split('<')
+            .skip(1)
+            .filter_map(|part| part.split_once('>').map(|(link, _)| link.trim()))
+            .collect();
+        unsubscribe = links
+            .iter()
+            .find(|l| starts(Some(l), "https://"))
+            .or_else(|| links.iter().find(|l| starts(Some(l), "mailto:")))
+            .map(|l| l.chars().filter(|c| !c.is_whitespace()).collect());
+    }
+    if raw("List-Unsubscribe-Post").is_some() {
+        bits |= signals::ONE_CLICK;
+    }
+    if raw("List-Id").is_some() {
+        bits |= signals::LIST_ID;
+    }
+    let precedence = raw("Precedence");
+    if ["bulk", "junk", "list"]
+        .iter()
+        .any(|w| starts(precedence, w))
+    {
+        bits |= signals::BULK;
+    }
+    let auto = raw("Auto-Submitted");
+    if auto.is_some() && !starts(auto, "no") {
+        bits |= signals::AUTOMATED;
+    }
+    if starts(raw("X-Spam-Flag"), "yes") || starts(raw("X-Spam-Status"), "yes") {
+        bits |= signals::SPAM_FLAG;
+    }
+    if CAMPAIGN_HEADERS.iter().any(|h| raw(h).is_some()) {
+        bits |= signals::CAMPAIGN;
+    }
+    (bits, unsubscribe)
 }
 
 /// The words of a message for the search index: its text (converted from
@@ -375,5 +437,36 @@ Content-Type: multipart/mixed; boundary=b\r\n\r\n\
     fn garbage_header_bytes_give_empty_fields() {
         let h = parse_header_fields(b"");
         assert_eq!(h.subject, None);
+    }
+
+    #[test]
+    fn list_headers_become_category_hints() {
+        use mail_core::categories::signals;
+        let raw = b"From: Shop <deals@shop.test>\r\n\
+List-Unsubscribe: <mailto:leave@shop.test>,\r\n <https://shop.test/leave?u=1>\r\n\
+List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n\
+Precedence: Bulk\r\n\
+Feedback-ID: 1:2:shop\r\n\
+Auto-Submitted: no\r\n\
+X-Spam-Status: No, score=0.1\r\n\r\n";
+        let h = parse_header_fields(raw);
+        assert_eq!(
+            h.signals,
+            signals::UNSUBSCRIBE | signals::ONE_CLICK | signals::BULK | signals::CAMPAIGN
+        );
+        assert_eq!(
+            h.unsubscribe.as_deref(),
+            Some("https://shop.test/leave?u=1")
+        );
+
+        let raw = b"From: x@y.test\r\nList-Unsubscribe: <mailto:off@y.test>\r\n\
+X-Spam-Flag: YES\r\nAuto-Submitted: auto-generated\r\n\r\n";
+        let h = parse_header_fields(raw);
+        assert_eq!(
+            h.signals,
+            signals::UNSUBSCRIBE | signals::SPAM_FLAG | signals::AUTOMATED
+        );
+        assert_eq!(h.unsubscribe.as_deref(), Some("mailto:off@y.test"));
+        assert_eq!(parse_header_fields(b"From: a@b.test\r\n\r\n").signals, 0);
     }
 }
