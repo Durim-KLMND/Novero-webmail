@@ -34,7 +34,6 @@
   import { toast } from "../shell/toast.svelte";
   import EventDialog, { lastCalendar } from "./EventDialog.svelte";
   import Icon from "../ui/Icon.svelte";
-  import { needPro } from "../plan/pro.svelte";
 
   interface Props {
     /** Shown; keyboard shortcuts only work then. */
@@ -415,7 +414,6 @@
   }
 
   async function connect(provider: OAuthProvider, id: number | null = null) {
-    if (!needPro("calendarSync")) return;
     connecting = provider;
     try {
       const account = await api.connectCalendar(provider, id);

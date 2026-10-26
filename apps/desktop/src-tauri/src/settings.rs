@@ -6,7 +6,6 @@ use mail_store::Store;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
-use crate::plan::{self, Feature};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +24,8 @@ pub struct Settings {
     pub theme: Theme,
     /// Group messages into conversations in the message list.
     pub conversations: bool,
+    /// Inbox rows show their cleanup category (Personal, Updates...).
+    pub category_labels: bool,
     /// Show a Windows notification when new mail arrives.
     pub notifications: bool,
     /// Look for updates in the background and download them.
@@ -45,6 +46,7 @@ impl Default for Settings {
         Settings {
             theme: Theme::System,
             conversations: true,
+            category_labels: true,
             notifications: true,
             auto_update: true,
             crash_reports: true,
@@ -132,14 +134,6 @@ pub fn list_signatures(state: State<'_, AppState>) -> Result<Vec<Signature>> {
 #[tauri::command]
 pub fn save_signature(state: State<'_, AppState>, signature: Signature) -> Result<Signature> {
     let store = state.store.lock().unwrap();
-    let has_one = || {
-        store
-            .signatures()
-            .map(|all| all.iter().any(|s| s.account == signature.account))
-    };
-    if signature.id == 0 && has_one()? {
-        plan::require(&store, Feature::MoreSignatures)?;
-    }
     let signature = Signature {
         name: named(&signature.name, "Signature"),
         // Trailing blank lines would only push the quote further down.
@@ -179,10 +173,6 @@ pub fn list_templates(state: State<'_, AppState>) -> Result<Vec<Template>> {
 #[tauri::command]
 pub fn save_template(state: State<'_, AppState>, template: Template) -> Result<Template> {
     let store = state.store.lock().unwrap();
-    // Templates made on Pro can still be changed.
-    if template.id == 0 {
-        plan::require(&store, Feature::Templates)?;
-    }
     let template = Template {
         name: named(&template.name, "Template"),
         subject: template.subject.trim().to_owned(),

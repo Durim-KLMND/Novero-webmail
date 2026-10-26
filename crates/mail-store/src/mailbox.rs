@@ -56,6 +56,9 @@ pub struct MessageSummary {
     pub ids: Vec<i64>,
     /// Messages in the whole conversation, in any folder but Trash and Junk.
     pub count: u32,
+    /// The cleanup category of an inbox row's newest message, when asked
+    /// for (`Store::label_categories`).
+    pub category: Option<mail_core::categories::Category>,
 }
 
 /// A window of the message list.
@@ -250,6 +253,7 @@ fn summary(r: &Row<'_>) -> rusqlite::Result<MessageSummary> {
         thread_id: r.get(12)?,
         ids: vec![id],
         count: 1,
+        category: None,
     })
 }
 

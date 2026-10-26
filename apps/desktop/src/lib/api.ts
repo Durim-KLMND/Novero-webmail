@@ -299,6 +299,13 @@ export interface CleanupReport {
   unchecked: number;
 }
 
+/** A folder of the user's that a category's inbox mail is filed into. */
+export interface CategoryFolder {
+  account: number;
+  category: Category;
+  folder: number;
+}
+
 export interface CleanupItem {
   id: number;
   accountId: number;
@@ -338,6 +345,8 @@ export interface MessageSummary {
   ids: number[];
   /** Messages in the whole conversation. */
   count: number;
+  /** An inbox row's cleanup category, when labels are on. */
+  category: Category | null;
 }
 
 export type Theme = "system" | "light" | "dark";
@@ -345,6 +354,8 @@ export type Theme = "system" | "light" | "dark";
 export interface Settings {
   theme: Theme;
   conversations: boolean;
+  /** Inbox rows show their cleanup category. */
+  categoryLabels: boolean;
   notifications: boolean;
   /** Look for updates in the background and download them. */
   autoUpdate: boolean;
@@ -361,6 +372,7 @@ export interface Settings {
 export const defaultSettings: Settings = {
   theme: "system",
   conversations: true,
+  categoryLabels: true,
   notifications: true,
   autoUpdate: true,
   crashReports: true,
@@ -376,36 +388,6 @@ export interface UpdateInfo {
   notes: string | null;
   /** When it was released, in seconds since 1970, when known. */
   released: number | null;
-}
-
-/** Why the plan is what it is (src-tauri/src/plan.rs). */
-export type PlanReason = "unlocked" | "license" | "trial" | "unchecked" | "ended" | "tooNew" | "free";
-
-export interface LicenseInfo {
-  /** Only the last part is shown. */
-  key: string;
-  /** The option bought, as named in the store. */
-  variant: string;
-  status: string;
-  expiresAt: string | null;
-  /** When the store last confirmed it, in seconds since 1970. */
-  checked: number;
-  /** Versions released until then are covered, in seconds since 1970. */
-  updatesUntil: number | null;
-}
-
-export interface Plan {
-  tier: "free" | "pro";
-  reason: PlanReason;
-  /** Days of the trial left, counting today; 0 once it's over. */
-  trialDaysLeft: number;
-  license: LicenseInfo | null;
-  /** Whether Pro can be bought from this copy. */
-  canBuy: boolean;
-  /** How many accounts Free syncs. */
-  freeAccounts: number;
-  /** Accounts Free doesn't sync. */
-  pausedAccounts: number[];
 }
 
 export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready" | "installing";
@@ -442,6 +424,8 @@ export interface ParsedMessage {
   text: string | null;
   html: string | null;
   blockedRemote: number;
+  /** Remote images were let through: asked for, or a trusted sender. */
+  imagesAllowed: boolean;
   attachments: Attachment[];
   /** Carries a calendar invitation; `api.messageInvite` reads it. */
   invite: boolean;
@@ -603,6 +587,10 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) =>
     invoke<Settings>("save_settings", { settings }),
+  /** Addresses and domains whose remote images always load. */
+  listImageSenders: () => invoke<string[]>("list_image_senders"),
+  allowImagesFrom: (sender: string) => invoke<string[]>("allow_images_from", { sender }),
+  forgetImageSender: (sender: string) => invoke<string[]>("forget_image_sender", { sender }),
   listRules: (account: number) => invoke<Rule[]>("list_rules", { account }),
   saveRule: (rule: Rule) => invoke<Rule>("save_rule", { rule }),
   deleteRule: (id: number) => invoke<void>("delete_rule", { id }),
@@ -645,6 +633,11 @@ export const api = {
   deleteMessages: (ids: number[]) => invoke<void>("delete_messages", { ids }),
   junkMessages: (ids: number[]) => invoke<void>("junk_messages", { ids }),
   /** Every sender's mail in a scope, grouped by sender and category. */
+  /** The folders picked for categories, in each account. */
+  categoryFolders: () => invoke<CategoryFolder[]>("category_folders"),
+  setCategoryFolder: (account: number, category: Category, folder: number | null) =>
+    invoke<CategoryFolder[]>("set_category_folder", { account, category, folder }),
+  fileIntoCategoryFolders: () => invoke<number>("file_into_category_folders"),
   cleanupReport: (scope: CleanupScope, account: number | null) =>
     invoke<CleanupReport>("cleanup_report", { scope, account }),
   cleanupItems: (ids: number[]) => invoke<CleanupItem[]>("cleanup_items", { ids }),
@@ -720,13 +713,6 @@ export const api = {
   updateStatus: () => invoke<UpdateStatus>("update_status"),
   downloadUpdate: () => invoke<void>("download_update"),
   installUpdate: () => invoke<void>("install_update"),
-  getPlan: () => invoke<Plan>("get_plan"),
-  activateLicense: (key: string) => invoke<Plan>("activate_license", { key }),
-  /** Frees the key for another computer. */
-  deactivateLicense: () => invoke<Plan>("deactivate_license"),
-  /** Checks the license with the store now. */
-  refreshPlan: () => invoke<Plan>("refresh_plan"),
-  openCheckout: () => invoke<void>("open_checkout"),
   listCalendars: () => invoke<Calendar[]>("list_calendars"),
   saveCalendar: (calendar: Calendar) => invoke<Calendar>("save_calendar", { calendar }),
   deleteCalendar: (id: number) => invoke<void>("delete_calendar", { id }),
@@ -773,11 +759,6 @@ export function onFileDrop(handler: (event: FileDrop) => void): Promise<Unlisten
 /** Updates were looked for, found, downloaded or installed. */
 export function onUpdateStatus(handler: (status: UpdateStatus) => void): Promise<UnlistenFn> {
   return listen<UpdateStatus>("update-status", (e) => handler(e.payload));
-}
-
-/** The plan may have changed (a key activated, checked or removed). */
-export function onPlanChanged(handler: () => void): Promise<UnlistenFn> {
-  return listen("plan-changed", () => handler());
 }
 
 /** A mailto: link was opened; `api.takeMailto` returns it. */

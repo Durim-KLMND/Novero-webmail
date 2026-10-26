@@ -78,7 +78,6 @@ pub async fn add_account(
     if !email.contains('@') {
         return Err(Error::Invalid("enter a full email address".into()));
     }
-    crate::plan::can_add_account(&state.store.lock().unwrap())?;
     let mut username = match input.username.trim() {
         "" => email.clone(),
         name => name.to_owned(),
@@ -345,8 +344,12 @@ pub fn list_messages(
     limit: u32,
 ) -> Result<MessagePage> {
     let store = state.store.lock().unwrap();
-    let threaded = Settings::load(&store).conversations;
-    store.list(&mailbox, threaded, offset, limit.min(500))
+    let settings = Settings::load(&store);
+    let mut page = store.list(&mailbox, settings.conversations, offset, limit.min(500))?;
+    if settings.category_labels {
+        store.label_categories(&mut page.items)?;
+    }
+    Ok(page)
 }
 
 /// The messages of a conversation, oldest first (see `Store::conversation`).
@@ -375,10 +378,18 @@ pub async fn open_message(
     allow_remote: bool,
 ) -> Result<ParsedMessage> {
     let (_, raw) = raw_message(&app, id).await?;
-    let parsed =
-        tauri::async_runtime::spawn_blocking(move || mail_mime::parse_message(&raw, allow_remote))
-            .await
-            .map_err(|e| Error::Protocol(e.to_string()))??;
+    let senders = crate::mail::images::load(&state.store.lock().unwrap());
+    let parsed = tauri::async_runtime::spawn_blocking(move || {
+        let parsed = mail_mime::parse_message(&raw, allow_remote)?;
+        // Images from senders the user trusts load without asking.
+        let (email, _) = mail_store::sender_of(parsed.from.as_deref());
+        if parsed.blocked_remote > 0 && crate::mail::images::trusted(&senders, &email) {
+            return mail_mime::parse_message(&raw, true);
+        }
+        Ok(parsed)
+    })
+    .await
+    .map_err(|e| Error::Protocol(e.to_string()))??;
     // Copies in other folders count too, so one read elsewhere still marks
     // this folder's copy read.
     let unread: Vec<i64> = {

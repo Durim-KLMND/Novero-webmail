@@ -25,6 +25,8 @@ pub struct ParsedMessage {
     pub html: Option<String>,
     /// Remote images blocked in `html`.
     pub blocked_remote: usize,
+    /// Remote images were let through.
+    pub images_allowed: bool,
     pub attachments: Vec<AttachmentInfo>,
     /// Carries a calendar invitation (see `calendar_text`).
     pub invite: bool,
@@ -85,6 +87,7 @@ pub fn parse_message(raw: &[u8], allow_remote: bool) -> Result<ParsedMessage> {
         text,
         blocked_remote: sanitized.as_ref().map_or(0, |s| s.blocked_remote),
         html: sanitized.map(|s| s.html),
+        images_allowed: allow_remote,
         attachments,
         invite: crate::invite::calendar_part(&message).is_some(),
     })

@@ -2,9 +2,9 @@
   import Icon from "../ui/Icon.svelte";
   import InviteCard from "./InviteCard.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { closeMenu, fallbackMenu, items, openMenu } from "../shell/menus.svelte";
+  import { closeMenu, fallbackMenu, items, openMenu, toggleMenuUnder } from "../shell/menus.svelte";
   import { api, errorText, type Attachment, type MessageSummary, type ParsedMessage } from "../api";
-  import { fileSize, folderLabel, fullDate, listDate, senderName } from "../format";
+  import { fileSize, folderLabel, fullDate, listDate, senderEmail, senderName } from "../format";
   import { toast } from "../shell/toast.svelte";
   import { viewKind } from "./viewer";
   import { forgetLinks, watchLinks } from "./hoverlink.svelte";
@@ -80,6 +80,29 @@
   function loadImages() {
     allowRemote = true;
     load(true);
+  }
+
+  /** Loads the images now and from this sender, or its domain, from now on. */
+  function alwaysLoadMenu(event: MouseEvent) {
+    const email = senderEmail(message?.from ?? summary.from);
+    const domain = email.split("@")[1] ?? "";
+    const trust = async (sender: string) => {
+      try {
+        await api.allowImagesFrom(sender);
+        loadImages();
+        toast(`Images from ${sender} will always load`);
+      } catch (err) {
+        toast(errorText(err), "error");
+      }
+    };
+    toggleMenuUnder(
+      event.currentTarget as HTMLElement,
+      items(
+        !!email && { label: `From ${email}`, icon: "contacts", run: () => trust(email) },
+        !!domain && { label: `From everyone at ${domain}`, icon: "inbox", run: () => trust(domain) },
+      ),
+      true,
+    );
   }
 
   /** The message HTML in its own document: no scripts, no network unless images are allowed. */
@@ -191,10 +214,15 @@
           {/each}
         </ul>
       {/if}
-      {#if message.blockedRemote > 0 && !allowRemote}
+      {#if message.blockedRemote > 0 && !message.imagesAllowed}
         <div class="blocked">
           <span>Remote images are blocked to protect your privacy ({message.blockedRemote}).</span>
-          <button onclick={loadImages} disabled={loading}>Load images</button>
+          <span class="actions">
+            <button onclick={loadImages} disabled={loading}>Load images</button>
+            <button onclick={alwaysLoadMenu} disabled={loading} aria-haspopup="menu">
+              Always load <Icon name="chevron-down" size={14} />
+            </button>
+          </span>
         </div>
       {/if}
       <div class="body">
@@ -203,7 +231,7 @@
             <iframe
               title="Message content"
               sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-              srcdoc={frameDoc(message.html, allowRemote)}
+              srcdoc={frameDoc(message.html, message.imagesAllowed)}
               onload={(e) => wireFrame(e.currentTarget as HTMLIFrameElement)}
             ></iframe>
           {/key}
@@ -340,6 +368,16 @@
     background: var(--note-bg);
     padding: 8px 16px;
     font-size: 13px;
+  }
+  .blocked .actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .blocked .actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
   .body {
     border-top: 1px solid var(--border);

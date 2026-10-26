@@ -3,6 +3,7 @@
   import Icon from "../ui/Icon.svelte";
   import { api, errorText, type Mailbox, type MessageSummary } from "../api";
   import { listDate, recipientLabel, senderName } from "../format";
+  import { categoryOf } from "../cleanup/categories";
 
   interface Props {
     mailbox: Mailbox | null;
@@ -212,6 +213,11 @@
                   <span class="from">{outgoing(item) ? recipientLabel(item.to) : senderName(item.from)}</span>
                   {#if item.count > 1}<span class="count" title="{item.count} messages in this conversation">{item.count}</span>{/if}
                   {#if where}<span class="place" title={where}>{where}</span>{/if}
+                  {#if item.category}
+                    <span class="label cat-{item.category}" title="Category: {categoryOf[item.category].label}">
+                      {categoryOf[item.category].label}
+                    </span>
+                  {/if}
                   <span class="date">{listDate(item.date)}</span>
                 </span>
                 <span class="line2">
@@ -325,6 +331,17 @@
     max-width: 40%;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: none;
+  }
+  .label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--cat);
+    background: color-mix(in srgb, var(--cat) 12%, transparent);
+    border-radius: 4px;
+    padding: 0 5px;
+    line-height: 16px;
     white-space: nowrap;
     flex: none;
   }

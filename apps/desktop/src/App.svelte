@@ -6,8 +6,6 @@
   import ContextMenu from "./lib/shell/ContextMenu.svelte";
   import ComposerWindow from "./lib/compose/ComposerWindow.svelte";
   import TitleBar from "./lib/shell/TitleBar.svelte";
-  import UpgradeDialog from "./lib/plan/UpgradeDialog.svelte";
-  import { pro } from "./lib/plan/pro.svelte";
 
   /** Set in a window opened for one draft ("New message in a new window"). */
   const composeId = Number(new URLSearchParams(location.search).get("compose")) || null;
@@ -57,9 +55,6 @@
   <TitleBar title="Novero Mail" />
 {/if}
 <ContextMenu />
-{#if pro.asking}
-  <UpgradeDialog feature={pro.asking} onClose={() => (pro.asking = null)} />
-{/if}
 
 <style>
   .center {

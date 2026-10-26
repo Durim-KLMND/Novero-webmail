@@ -157,9 +157,6 @@ pub fn emit(app: &AppHandle, event: Event) {
 /// Starts the background tasks of an account: pushing changes and IDLE.
 pub fn start_account(app: &AppHandle, id: AccountId) {
     let state = app.state::<AppState>();
-    if !crate::plan::syncs(&state.store.lock().unwrap(), id) {
-        return;
-    }
     let mut workers = state.workers.lock().unwrap();
     if workers.contains_key(&id) {
         return;
@@ -418,9 +415,6 @@ fn pushed_lately(app: &AppHandle, id: AccountId) -> bool {
 /// If one is already running, another runs right after it.
 pub fn request_sync(app: &AppHandle, id: AccountId, full: bool) {
     let state = app.state::<AppState>();
-    if !crate::plan::syncs(&state.store.lock().unwrap(), id) {
-        return;
-    }
     {
         let mut syncing = state.syncing.lock().unwrap();
         if let Some(next) = syncing.get_mut(&id) {
@@ -469,6 +463,8 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
         let left = crate::mail::rules::apply(app, id, &report.new_mail);
         // Then mail from senders put in Spam goes to Junk.
         let left = crate::mail::cleanup::apply(app, id, &left);
+        // Then sorted mail goes to the folders chosen for its category.
+        let left = crate::mail::category_folders::apply(app, id, &left);
         announce(app, id, &left);
     }
     if result.is_ok() && has_outgoing(app, id) {

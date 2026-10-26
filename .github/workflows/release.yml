@@ -78,10 +78,6 @@ jobs:
           NOVERO_GOOGLE_CLIENT_SECRET: ${{ secrets.NOVERO_GOOGLE_CLIENT_SECRET }}
           NOVERO_MICROSOFT_CLIENT_ID: ${{ secrets.NOVERO_MICROSOFT_CLIENT_ID }}
           NOVERO_UPDATER_PUBKEY: ${{ vars.NOVERO_UPDATER_PUBKEY }}
-          # Selling Pro (docs/plans.md). Without these, every feature is unlocked.
-          NOVERO_PLANS_STORE_ID: ${{ vars.NOVERO_PLANS_STORE_ID }}
-          NOVERO_PLANS_PRODUCT_ID: ${{ vars.NOVERO_PLANS_PRODUCT_ID }}
-          NOVERO_PLANS_CHECKOUT_URL: ${{ vars.NOVERO_PLANS_CHECKOUT_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
