@@ -7,6 +7,8 @@
   import { fileSize, folderLabel, fullDate, listDate, senderEmail, senderName } from "../format";
   import { toast } from "../shell/toast.svelte";
   import { viewKind } from "./viewer";
+  import { quoteBlocks, type TextBlock } from "./plaintext";
+  import { groupReactions, reactionText } from "./reactions";
   import { forgetLinks, watchLinks } from "./hoverlink.svelte";
 
   interface Props {
@@ -31,6 +33,7 @@
   let allowRemote = $state(false);
   let request = 0;
   const isDraft = $derived(summary.folderRole === "drafts");
+  const reactions = $derived(groupReactions(summary.reactions ?? []));
   /** The shown message's document, whose hovered link must not outlive it. */
   let shownDoc: Document | null = null;
 
@@ -167,6 +170,9 @@
     {#if isDraft}<span class="tag draft">Draft</span>
     {:else if showFolder}<span class="tag">{folderLabel(summary.folderName, summary.folderRole, null)}</span>{/if}
     {#if summary.hasAttachments}<span class="quiet clip"><Icon name="attachment" size={14} label="Has attachments" /></span>{/if}
+    {#if reactions.length && !expanded}
+      <span class="head-reactions" title={reactionText(reactions)}>{reactions.map((g) => g.emoji).join("")}</span>
+    {/if}
     <span class="date quiet" title={fullDate(summary.date)}>{expanded ? fullDate(summary.date) : listDate(summary.date)}</span>
   </button>
 
@@ -236,11 +242,21 @@
             ></iframe>
           {/key}
         {:else if message.text}
-          <pre class="selectable">{message.text}</pre>
+          <div class="plain selectable">{@render textBlocks(quoteBlocks(message.text))}</div>
         {:else}
           <p class="quiet pad">This message has no text.</p>
         {/if}
       </div>
+      {#if reactions.length}
+        <ul class="reactions" aria-label="Reactions">
+          {#each reactions as g (g.emoji)}
+            <li title={reactionText([g])}>
+              <span class="emoji">{g.emoji}</span>
+              <span class="names">{g.names.join(", ")}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
       {#if !isDraft}
         <div class="replies">
           <button onclick={() => onReply(false)}><Icon name="reply" />Reply</button>
@@ -251,6 +267,16 @@
     {/if}
   {/if}
 </div>
+
+{#snippet textBlocks(blocks: TextBlock[])}
+  {#each blocks as block, i (i)}
+    {#if block.kind === "quote"}
+      <blockquote>{@render textBlocks(block.blocks)}</blockquote>
+    {:else}
+      <pre>{block.text}</pre>
+    {/if}
+  {/each}
+{/snippet}
 
 <style>
   .card {
@@ -390,12 +416,53 @@
     background: #fff;
     min-height: 120px;
   }
+  .plain {
+    padding: 16px;
+  }
   pre {
     white-space: pre-wrap;
     word-wrap: break-word;
     font: 14px/1.5 var(--font);
     margin: 0;
-    padding: 16px;
+  }
+  blockquote {
+    margin: 2px 0;
+    padding-left: 12px;
+    border-left: 3px solid var(--border);
+    color: var(--text-quiet);
+  }
+  .head-reactions {
+    flex: none;
+    font-size: 13px;
+  }
+  .reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    list-style: none;
+    margin: 0;
+    padding: 0 16px 12px;
+  }
+  .reactions li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 2px 10px 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-hover);
+    font-size: 12px;
+    color: var(--text-quiet);
+  }
+  .reactions .emoji {
+    font-size: 15px;
+    line-height: 20px;
+  }
+  .reactions .names {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .replies {
     display: flex;

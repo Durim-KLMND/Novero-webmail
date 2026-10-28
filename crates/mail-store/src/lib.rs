@@ -9,6 +9,7 @@ mod categories;
 mod contacts;
 mod mailbox;
 mod outgoing;
+mod reactions;
 mod rules;
 mod signatures;
 mod snooze;
@@ -24,6 +25,7 @@ pub use contacts::Contact;
 pub use mail_core::{Error, Result};
 pub use mailbox::{MAX_RESULTS, Mailbox, MessagePage, MessageSummary, SearchQuery};
 pub use outgoing::{DraftUpload, NewDraft, OutboxItem, OutboxState};
+pub use reactions::MessageReaction;
 pub use rules::RuleMessage;
 use rusqlite::Connection;
 pub use snooze::Woken;
@@ -44,6 +46,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0010_calendar_sync.sql"),
     include_str!("../migrations/0011_notes_tasks.sql"),
     include_str!("../migrations/0012_categories.sql"),
+    include_str!("../migrations/0013_reactions.sql"),
 ];
 
 /// Schema version a fully migrated database has.

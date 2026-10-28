@@ -45,6 +45,20 @@ pub async fn raw(app: &AppHandle, account: &Account, id: i64) -> Result<Vec<u8>>
     if let Some(raw) = mail_sync::cached_message(&state.store, id)? {
         return Ok(raw);
     }
+    let raw = raw_only(app, account, id).await?;
+    let app = app.clone();
+    let account = account.clone();
+    tauri::async_runtime::spawn(async move { download_ahead(&app, &account, id).await });
+    Ok(raw)
+}
+
+/// A message's raw bytes, from the cache or downloaded, without fetching
+/// any others with it: for messages looked at in the background.
+pub async fn raw_only(app: &AppHandle, account: &Account, id: i64) -> Result<Vec<u8>> {
+    let state = app.state::<AppState>();
+    if let Some(raw) = mail_sync::cached_message(&state.store, id)? {
+        return Ok(raw);
+    }
     let slot = state.readers.slot(account.id);
     let raw = {
         let mut open = slot.lock().await;
@@ -66,9 +80,6 @@ pub async fn raw(app: &AppHandle, account: &Account, id: i64) -> Result<Vec<u8>>
         }
         raw?
     };
-    let app = app.clone();
-    let account = account.clone();
-    tauri::async_runtime::spawn(async move { download_ahead(&app, &account, id).await });
     Ok(raw)
 }
 

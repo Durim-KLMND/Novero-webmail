@@ -4,6 +4,7 @@
   import { api, errorText, type Mailbox, type MessageSummary } from "../api";
   import { listDate, recipientLabel, senderName } from "../format";
   import { categoryOf } from "../cleanup/categories";
+  import { groupReactions, reactionText } from "./reactions";
 
   interface Props {
     mailbox: Mailbox | null;
@@ -223,6 +224,12 @@
                 <span class="line2">
                   {#if !item.flags.seen}<span class="dot" aria-label="Unread"></span>{/if}
                   <span class="subject">{item.subject || "(no subject)"}</span>
+                  {#if item.reactions?.length}
+                    {@const groups = groupReactions(item.reactions)}
+                    <span class="reactions" title={reactionText(groups)}>
+                      {#each groups.slice(0, 3) as g (g.emoji)}<span>{g.emoji}</span>{/each}
+                    </span>
+                  {/if}
                   {#if item.hasAttachments}<span class="clip"><Icon name="attachment" size={14} label="Has attachments" /></span>{/if}
                   {#if item.flags.answered}<span class="answered" title="Replied"><Icon name="reply" size={14} label="Replied" /></span>{/if}
                   {#if item.flags.flagged}<span class="flag"><Icon name="flag" size={14} filled label="Flagged" /></span>{/if}
@@ -312,6 +319,12 @@
   .unread .subject {
     font-weight: 600;
     color: var(--text);
+  }
+  .reactions {
+    flex: none;
+    font-size: 13px;
+    line-height: 16px;
+    letter-spacing: 1px;
   }
   .count {
     font-size: 12px;

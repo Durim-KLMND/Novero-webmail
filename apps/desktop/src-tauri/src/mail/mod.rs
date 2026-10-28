@@ -9,6 +9,7 @@ pub(crate) mod folders;
 pub(crate) mod images;
 pub(crate) mod invites;
 pub(crate) mod links;
+pub(crate) mod reactions;
 pub(crate) mod reader;
 pub(crate) mod rules;
 pub(crate) mod snooze;

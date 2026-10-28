@@ -13,6 +13,7 @@ base64 = "0.22"
 mail-builder = "1"
 mail-parser = "0.11"
 serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

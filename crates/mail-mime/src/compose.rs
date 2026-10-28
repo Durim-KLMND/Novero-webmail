@@ -14,6 +14,11 @@ use mail_parser::{Address, DateTime, HeaderValue, Message, MessageParser, MimeHe
 /// the newest references, which is all mail clients use to thread.
 const MAX_REFERENCES: usize = 20;
 
+/// How a quote is marked in sent formatted mail: a bar at the left, as Gmail
+/// and Outlook show quotes.
+const QUOTE_TAG: &str =
+    "<blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex\">";
+
 /// Splits a typed address list on commas and semicolons outside quotes and
 /// angle brackets. Every entry must be a valid address.
 pub fn parse_addresses(input: &str) -> Result<Vec<Mailbox>> {
@@ -100,6 +105,8 @@ pub fn build_message(
             let id_base = draft.message_id.trim_matches(['<', '>']);
             let (html, images) =
                 crate::inline_images(&crate::clean_compose_html(&draft.fields.html), id_base);
+            // Quotes get the bar other mail programs show them with.
+            let html = html.replace("<blockquote>", QUOTE_TAG);
             let html = MimePart::new(
                 "text/html",
                 BodyPart::Text(format!("<!DOCTYPE html><html><body>{html}</body></html>").into()),
@@ -253,6 +260,13 @@ pub fn reply(raw: &[u8], mode: ReplyMode, own: &[&str]) -> Result<Prefill> {
         None => format!("{from} wrote:"),
     };
     let body = format!("\n\n{intro}\n{}", quote(&body_text(&message)));
+    // The formatted copy shows the original as the sender wrote it, under a
+    // bar rather than behind "> " marks.
+    let html = format!(
+        "<div><br></div><div><br></div><div>{}</div><blockquote>{}</blockquote>",
+        escape_html(&intro),
+        quoted_html(&message)
+    );
 
     Ok(Prefill {
         fields: DraftFields {
@@ -261,7 +275,7 @@ pub fn reply(raw: &[u8], mode: ReplyMode, own: &[&str]) -> Result<Prefill> {
             bcc: String::new(),
             subject: prefixed("Re:", message.subject()),
             body,
-            html: String::new(),
+            html,
         },
         in_reply_to: message_id,
         references,
@@ -414,6 +428,122 @@ fn ids(value: &HeaderValue<'_>) -> Vec<String> {
 }
 
 /// The text of a message, converted from HTML when it has no plain part.
+/// The original message for a formatted reply's quote: its own formatting
+/// where it has some (kept to what the composer allows, with its pictures),
+/// or else its text.
+fn quoted_html(message: &Message<'_>) -> String {
+    let html = message
+        .html_part(0)
+        .filter(|p| p.is_text_html())
+        .and_then(|p| p.text_contents());
+    match html {
+        Some(html) => {
+            let html = crate::restore_inline_images(body_of(html), &inline_parts(message));
+            collapse_spaces(&crate::clean_compose_html(&html))
+        }
+        None => text_to_html(&body_text(message)),
+    }
+}
+
+/// Whitespace in HTML shows as one space; the composer keeps it as typed,
+/// so the source's line breaks would otherwise show as empty lines. Spaces
+/// next to block tags go: in the composer they would make lines of their own.
+fn collapse_spaces(html: &str) -> String {
+    const BLOCKS: [&str; 21] = [
+        "div",
+        "p",
+        "br",
+        "blockquote",
+        "ul",
+        "ol",
+        "li",
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "td",
+        "th",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+    ];
+    let tag_name = |tag: &str| -> String {
+        tag.trim_start_matches(['<', '/'])
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    let is_block = |tag: &str| BLOCKS.contains(&tag_name(tag).as_str());
+    let mut out = String::with_capacity(html.len());
+    let mut last_tag = String::new();
+    let mut rest = html;
+    while let Some(c) = rest.chars().next() {
+        if c.is_whitespace() {
+            let end = rest
+                .find(|c: char| !c.is_whitespace())
+                .unwrap_or(rest.len());
+            let next = &rest[end..];
+            let after_block = out.ends_with('>') && is_block(&last_tag);
+            let before_block = next.starts_with('<') && is_block(next);
+            if !out.is_empty() && !next.is_empty() && !after_block && !before_block {
+                out.push(' ');
+            }
+            rest = next;
+        } else if c == '<' {
+            let end = rest.find('>').map_or(rest.len(), |e| e + 1);
+            last_tag = rest[..end].to_owned();
+            out.push_str(&rest[..end]);
+            rest = &rest[end..];
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+pub(crate) fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Plain text as the composer shows it: a `<div>` per line, and "> " lines
+/// as quotes (as the composer's own `textToHtml` does).
+pub fn text_to_html(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut html = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].starts_with('>') {
+            let mut quoted = Vec::new();
+            while i < lines.len() && lines[i].starts_with('>') {
+                let line = &lines[i][1..];
+                quoted.push(line.strip_prefix(' ').unwrap_or(line));
+                i += 1;
+            }
+            html.push_str(&format!(
+                "<blockquote>{}</blockquote>",
+                text_to_html(&quoted.join("\n"))
+            ));
+        } else {
+            match escape_html(lines[i]) {
+                line if line.is_empty() => html.push_str("<div><br></div>"),
+                line => html.push_str(&format!("<div>{line}</div>")),
+            }
+            i += 1;
+        }
+    }
+    html
+}
+
 fn body_text(message: &Message<'_>) -> String {
     message
         .body_text(0)
@@ -751,6 +881,56 @@ Content-Disposition: attachment; filename=\"menu.pdf\"\r\n\
             p.fields.body
         );
         assert!(p.attachments.is_empty());
+    }
+
+    #[test]
+    fn formatted_replies_quote_with_a_bar_not_marks() {
+        let p = reply(ORIGINAL, ReplyMode::Sender, &["alice@example.test"]).unwrap();
+        assert_eq!(
+            p.fields.html,
+            "<div><br></div><div><br></div>\
+             <div>On 19 Oct 2026 at 09:05, Bob &lt;bob@example.test&gt; wrote:</div>\
+             <blockquote><div>Noon?</div><div><br></div><blockquote><div>earlier</div></blockquote></blockquote>"
+        );
+        let html = b"From: Bob <bob@example.test>\r\n\
+Subject: Plan\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<html><head><style>p{color:red}</style></head><body>\r\n\
+<p>The <b>plan</b>\r\n  is <i>here</i>:</p>\r\n\
+<table><tr><td>A</td> <td>B</td></tr></table>\r\n\
+<img src=\"https://track.example/x.png\"><script>x()</script></body></html>";
+        let p = reply(html, ReplyMode::Sender, &[]).unwrap();
+        assert!(
+            p.fields.html.ends_with(
+                "<blockquote><p>The <b>plan</b> is <i>here</i>:</p>\
+                 <table><tbody><tr><td>A</td><td>B</td></tr></tbody></table></blockquote>"
+            ),
+            "{}",
+            p.fields.html
+        );
+    }
+
+    #[test]
+    fn sent_quotes_carry_a_bar() {
+        let d = draft(DraftFields {
+            to: "bob@example.test".into(),
+            body: "Yes\n\nBob wrote:\n> Hi".into(),
+            html: "<div>Yes</div><div>Bob wrote:</div><blockquote><div>Hi</div></blockquote>"
+                .into(),
+            ..DraftFields::default()
+        });
+        let built = build_message(ME, &d, &[], 0, true).unwrap();
+        let sent = MessageParser::default().parse(&built.raw).unwrap();
+        let html = sent.body_html(0).unwrap();
+        assert!(
+            html.contains("<blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;"),
+            "{html}"
+        );
+        assert_eq!(
+            sent.body_text(0).unwrap().replace("\r\n", "\n"),
+            "Yes\n\nBob wrote:\n> Hi"
+        );
     }
 
     #[test]

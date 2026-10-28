@@ -2669,6 +2669,7 @@ dependencies = [
  "mail-core",
  "mail-parser",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

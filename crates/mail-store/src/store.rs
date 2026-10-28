@@ -290,7 +290,7 @@ impl Store {
             .prepare(
                 "SELECT f.id, f.account_id, f.name, f.delimiter, f.role, \
                  count(m.id), coalesce(sum(m.flags & 1 = 0), 0) \
-                 FROM folders f LEFT JOIN messages m ON m.folder_id = f.id \
+                 FROM folders f LEFT JOIN messages m ON m.folder_id = f.id AND m.reaction IS NULL \
                  WHERE f.account_id = ?1 GROUP BY f.id",
             )
             .map_err(storage)?;
@@ -319,7 +319,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id \
-                 WHERE f.role = 'inbox' AND m.flags & 1 = 0 \
+                 WHERE f.role = 'inbox' AND m.flags & 1 = 0 AND m.reaction IS NULL \
                  AND m.id NOT IN (SELECT message FROM snoozes)",
                 [],
                 |r| r.get(0),
