@@ -518,6 +518,19 @@
     border-left: 3px solid var(--border);
     color: var(--text-quiet);
   }
+  .editor :global(blockquote table) {
+    border-collapse: collapse;
+    max-width: 100%;
+  }
+  .editor :global(blockquote td),
+  .editor :global(blockquote th) {
+    padding: 2px 6px;
+    vertical-align: top;
+  }
+  .editor :global(blockquote :is(h1, h2, h3, h4, h5, h6)) {
+    margin: 4px 0;
+    font-size: 1.1em;
+  }
   .editor :global(ul),
   .editor :global(ol) {
     margin: 4px 0;

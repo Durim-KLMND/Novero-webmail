@@ -108,7 +108,7 @@ fn filter_attribute<'u>(
 }
 
 /// What a formatted message being written may contain: text styles, links,
-/// lists, quotes and pasted images (as `data:` URLs, sent as inline parts).
+/// lists, quotes, tables and headings (from quoted mail), and pasted images (as `data:` URLs, sent as inline parts).
 /// Anything else, such as pasted scripts, styles or remote images, is dropped
 /// before the message is saved or sent.
 pub fn clean_compose_html(html: &str) -> String {
@@ -129,6 +129,20 @@ pub fn clean_compose_html(html: &str) -> String {
             "li",
             "blockquote",
             "img",
+            "table",
+            "thead",
+            "tbody",
+            "tfoot",
+            "tr",
+            "td",
+            "th",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "hr",
         ])
         .add_tag_attributes("a", ["href"])
         .add_tag_attributes("img", ["src", "alt", "width", "height"])

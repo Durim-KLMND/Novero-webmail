@@ -459,12 +459,16 @@ async fn run_sync(app: &AppHandle, id: AccountId, full: bool) {
     }
     .await;
     if let Ok(report) = &result {
-        // Rules first, so mail they file away or mark read isn't announced.
-        let left = crate::mail::rules::apply(app, id, &report.new_mail);
+        // Reactions first: they show on the message they are to, and are
+        // announced as reactions rather than as mail.
+        let (left, reactions) = crate::mail::reactions::find(app, id, &report.new_mail).await;
+        // Rules next, so mail they file away or mark read isn't announced.
+        let left = crate::mail::rules::apply(app, id, &left);
         // Then mail from senders put in Spam goes to Junk.
         let left = crate::mail::cleanup::apply(app, id, &left);
         // Then sorted mail goes to the folders chosen for its category.
-        let left = crate::mail::category_folders::apply(app, id, &left);
+        let mut left = crate::mail::category_folders::apply(app, id, &left);
+        left.extend(reactions);
         announce(app, id, &left);
     }
     if result.is_ok() && has_outgoing(app, id) {

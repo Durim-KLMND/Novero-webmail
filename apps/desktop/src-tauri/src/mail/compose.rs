@@ -52,6 +52,22 @@ pub fn with_signature(body: &str, signature: &str) -> String {
     format!("\n\n-- \n{signature}{body}")
 }
 
+/// The formatted form of [`with_signature`]: `html` starts with two blank
+/// lines, and the signature goes after the first, marked as the composer
+/// marks the signatures it puts in. `signature_html` is used when set.
+pub fn with_signature_html(html: &str, signature: &str, signature_html: &str) -> String {
+    const BLANK: &str = "<div><br></div>";
+    let block = if !signature_html.trim().is_empty() {
+        signature_html.trim().to_owned()
+    } else if !signature.trim().is_empty() {
+        mail_mime::text_to_html(signature.trim_end())
+    } else {
+        return html.to_owned();
+    };
+    let rest = html.strip_prefix(BLANK).unwrap_or(html);
+    format!("{BLANK}{BLANK}<div data-signature=\"\"><div>-- </div>{block}</div>{rest}")
+}
+
 /// A reply to a cached message, from the account it arrived in.
 #[tauri::command]
 pub async fn reply_draft(
@@ -77,6 +93,11 @@ pub async fn reply_draft(
     };
     let mut prefill = mail_mime::reply(&raw, mode, &own)?;
     prefill.fields.body = with_signature(&prefill.fields.body, &account.reply_signature);
+    prefill.fields.html = with_signature_html(
+        &prefill.fields.html,
+        &account.reply_signature,
+        &account.reply_signature_html,
+    );
     create(&state, account.id, &account.email, prefill, Some(message))
 }
 
@@ -447,7 +468,24 @@ pub(crate) fn now() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::with_signature;
+    use super::{with_signature, with_signature_html};
+
+    #[test]
+    fn formatted_signatures_go_above_the_quote() {
+        let quote =
+            "<div><br></div><div><br></div><div>Bob wrote:</div><blockquote>Hi</blockquote>";
+        assert_eq!(
+            with_signature_html(quote, "Ann", ""),
+            "<div><br></div><div><br></div><div data-signature=\"\"><div>-- </div><div>Ann</div></div>\
+             <div><br></div><div>Bob wrote:</div><blockquote>Hi</blockquote>"
+        );
+        assert_eq!(
+            with_signature_html(quote, "Ann", "<b>Ann</b>"),
+            "<div><br></div><div><br></div><div data-signature=\"\"><div>-- </div><b>Ann</b></div>\
+             <div><br></div><div>Bob wrote:</div><blockquote>Hi</blockquote>"
+        );
+        assert_eq!(with_signature_html(quote, " ", ""), quote);
+    }
 
     #[test]
     fn signatures_go_above_the_quote() {

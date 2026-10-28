@@ -347,6 +347,16 @@ export interface MessageSummary {
   count: number;
   /** An inbox row's cleanup category, when labels are on. */
   category: Category | null;
+  /** Emoji reactions: in a list, to any message of the conversation; in a
+   *  conversation, to this message. */
+  reactions: MessageReaction[];
+}
+
+/** Someone's emoji reaction to a message, sent as mail. */
+export interface MessageReaction {
+  emoji: string;
+  from: string | null;
+  date: number | null;
 }
 
 export type Theme = "system" | "light" | "dark";

@@ -10,10 +10,11 @@ mod html;
 mod invite;
 mod mailto;
 mod parse;
+mod reaction;
 
 pub use compose::{
     BuiltMessage, Mailbox, Prefill, ReplyMode, Sender, build_message, forward, message_id_of,
-    new_message_id, parse_addresses, reopen, reply,
+    new_message_id, parse_addresses, reopen, reply, text_to_html,
 };
 pub use html::{
     InlineImage, SanitizedHtml, clean_compose_html, inline_images, restore_inline_images,
@@ -26,3 +27,4 @@ pub use parse::{
     AttachmentInfo, ParsedMessage, attachment, bracketed, parse_header_fields, parse_message,
     search_text,
 };
+pub use reaction::{MAX_REACTION_SIZE, Reaction, reaction};

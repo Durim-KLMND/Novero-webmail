@@ -59,6 +59,10 @@ pub struct MessageSummary {
     /// The cleanup category of an inbox row's newest message, when asked
     /// for (`Store::label_categories`).
     pub category: Option<mail_core::categories::Category>,
+    /// Emoji reactions: in a list, to any message of the row's conversation;
+    /// in a conversation, to this message. Reaction mail itself is left out
+    /// of both.
+    pub reactions: Vec<crate::MessageReaction>,
 }
 
 /// A window of the message list.
@@ -254,6 +258,7 @@ fn summary(r: &Row<'_>) -> rusqlite::Result<MessageSummary> {
         ids: vec![id],
         count: 1,
         category: None,
+        reactions: Vec::new(),
     })
 }
 
@@ -269,15 +274,19 @@ impl Store {
     ) -> Result<MessagePage> {
         let (filter, args): (&str, Vec<Value>) = match mailbox {
             // Snoozed messages are away from their folder until they wake.
+            // Reactions show on the message they are to, not as mail of their own.
             Mailbox::Folder { id } => (
-                "m.folder_id = ? AND m.id NOT IN (SELECT message FROM snoozes)",
+                "m.folder_id = ? AND m.reaction IS NULL AND m.id NOT IN (SELECT message FROM snoozes)",
                 vec![Value::Integer(id.0)],
             ),
             Mailbox::AllInboxes => (
-                "f.role = 'inbox' AND m.id NOT IN (SELECT message FROM snoozes)",
+                "f.role = 'inbox' AND m.reaction IS NULL AND m.id NOT IN (SELECT message FROM snoozes)",
                 Vec::new(),
             ),
-            Mailbox::Snoozed => ("m.id IN (SELECT message FROM snoozes)", Vec::new()),
+            Mailbox::Snoozed => (
+                "m.id IN (SELECT message FROM snoozes) AND m.reaction IS NULL",
+                Vec::new(),
+            ),
             Mailbox::Search { query } => {
                 return self.search(&SearchQuery::parse(query), offset, limit);
             }
@@ -414,14 +423,16 @@ impl Store {
         Ok(rows)
     }
 
-    /// Fills in how many messages each row's conversation has.
+    /// Fills in how many messages each row's conversation has, and the
+    /// reactions in it.
     fn count_conversations(&self, items: &mut [MessageSummary]) -> Result<()> {
         let mut stmt = self
             .conn
             .prepare_cached(
                 "SELECT count(DISTINCT coalesce(m.message_id, m.id)) FROM messages m \
                  JOIN folders f ON f.id = m.folder_id \
-                 WHERE m.thread_id = ?1 AND coalesce(f.role, '') NOT IN ('trash', 'junk')",
+                 WHERE m.thread_id = ?1 AND m.reaction IS NULL \
+                 AND coalesce(f.role, '') NOT IN ('trash', 'junk')",
             )
             .map_err(storage)?;
         for item in items {
@@ -432,6 +443,9 @@ impl Store {
                     .max(1),
                 None => 1,
             };
+            if let Some(thread) = item.thread_id {
+                item.reactions = self.thread_reactions(thread)?;
+            }
         }
         Ok(())
     }
@@ -468,6 +482,7 @@ impl Store {
         if query.attachments {
             conditions.push("m.has_attachments".into());
         }
+        conditions.push("m.reaction IS NULL".into());
         match &query.folder {
             Some(folder) => {
                 conditions.push("(f.role = lower(?) OR f.name = ? COLLATE NOCASE)".into());
@@ -542,11 +557,13 @@ impl Store {
                 "SELECT {SUMMARY_COLUMNS}, m.message_id FROM messages m \
                  JOIN folders f ON f.id = m.folder_id \
                  WHERE m.thread_id = ?1 AND (?2 OR coalesce(f.role, '') NOT IN ('trash', 'junk')) \
-                 ORDER BY m.date, m.id"
+                 AND (m.reaction IS NULL OR m.id = ?3) ORDER BY m.date, m.id"
             ))
             .map_err(storage)?;
         let rows: Vec<(MessageSummary, Option<String>)> = stmt
-            .query_map(params![thread, hidden], |r| Ok((summary(r)?, r.get(13)?)))
+            .query_map(params![thread, hidden, message], |r| {
+                Ok((summary(r)?, r.get(13)?))
+            })
             .map_err(storage)?
             .collect::<rusqlite::Result<_>>()
             .map_err(storage)?;
@@ -566,7 +583,14 @@ impl Store {
                 None => out.push((row, message_id)),
             }
         }
-        Ok(out.into_iter().map(|(row, _)| row).collect())
+        out.into_iter()
+            .map(|(mut row, message_id)| {
+                if let Some(id) = message_id {
+                    row.reactions = self.reactions_to(row.account_id, &id)?;
+                }
+                Ok(row)
+            })
+            .collect()
     }
 
     /// Adds a message's text to the search index once its body is cached.
@@ -926,6 +950,67 @@ mod tests {
         let x = insert(&mut store, ia, &[msg(1, "same", &[], 1)]);
         let y = insert(&mut store, ib, &[msg(1, "same", &[], 1)]);
         assert_ne!(thread_of(&store, x[0]), thread_of(&store, y[0]));
+    }
+
+    #[test]
+    fn reactions_show_on_the_message_not_in_lists() {
+        let (_dir, mut store) = store();
+        let acc = account(&store, "a@example.test");
+        let f = folders(
+            &mut store,
+            acc,
+            &[("INBOX", FolderRole::Inbox), ("Sent", FolderRole::Sent)],
+        );
+        let (inbox, sent) = (f[0], f[1]);
+        let mine = insert(&mut store, sent, &[msg(1, "mine", &[], 10)])[0];
+        // An older message in the thread, an answer, and a reaction.
+        let ids = insert(
+            &mut store,
+            inbox,
+            &[
+                msg(1, "old", &[], 5),
+                msg(2, "answer", &["mine"], 20),
+                msg(3, "thumbs", &["mine"], 30),
+            ],
+        );
+        let candidates = store.reaction_candidates(acc, 0, 64 * 1024, 10).unwrap();
+        assert_eq!(
+            candidates,
+            [ids[2], ids[1]],
+            "only mail after the user's own"
+        );
+        store.set_reaction(ids[2], Some(("👍", "<mine>"))).unwrap();
+        store.set_reaction(ids[1], None).unwrap();
+        assert!(
+            store
+                .reaction_candidates(acc, 0, 64 * 1024, 10)
+                .unwrap()
+                .is_empty()
+        );
+
+        let page = store
+            .list(&Mailbox::Folder { id: inbox }, true, 0, 10)
+            .unwrap();
+        assert_eq!(
+            page.items.iter().map(|r| r.id).collect::<Vec<_>>(),
+            [ids[1], ids[0]]
+        );
+        assert_eq!(page.items[0].count, 2, "the reaction is not counted");
+        assert_eq!(page.items[0].reactions.len(), 1);
+        assert_eq!(page.items[0].reactions[0].emoji, "👍");
+        assert_eq!(
+            page.items[0].reactions[0].from.as_deref(),
+            Some("thumbs <thumbs@example.test>")
+        );
+
+        let conversation = store.conversation(mine).unwrap();
+        assert_eq!(
+            conversation.iter().map(|m| m.id).collect::<Vec<_>>(),
+            [mine, ids[1]]
+        );
+        assert_eq!(conversation[0].reactions[0].emoji, "👍");
+        assert!(conversation[1].reactions.is_empty());
+        assert_eq!(store.list_folders(acc).unwrap()[0].total, 2);
     }
 
     #[test]
