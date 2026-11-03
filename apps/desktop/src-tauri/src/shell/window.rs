@@ -26,7 +26,10 @@ fn main_size(app: &AppHandle) -> (f64, f64) {
     let Ok(Some(monitor)) = app.primary_monitor() else {
         return MAIN_SIZE;
     };
-    let area = monitor.work_area().size.to_logical::<f64>(monitor.scale_factor());
+    let area = monitor
+        .work_area()
+        .size
+        .to_logical::<f64>(monitor.scale_factor());
     let fit = |want: f64, room: f64, min: f64| want.min(room * 0.92).max(min).round();
     (
         fit(MAIN_SIZE.0, area.width, MAIN_MIN_SIZE.0),
