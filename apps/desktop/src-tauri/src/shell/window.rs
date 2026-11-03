@@ -16,13 +16,36 @@ pub fn custom_titlebar(app: &AppHandle) -> bool {
     Settings::load(&app.state::<AppState>().store.lock().unwrap()).custom_titlebar
 }
 
+/// The main window's size on launch. The folder and message lists keep their
+/// own widths (MailView.svelte), so the extra width goes to the reading pane.
+const MAIN_SIZE: (f64, f64) = (1480.0, 900.0);
+const MAIN_MIN_SIZE: (f64, f64) = (800.0, 500.0);
+
+/// The launch size, shrunk to fit smaller screens with a little room around it.
+fn main_size(app: &AppHandle) -> (f64, f64) {
+    let Ok(Some(monitor)) = app.primary_monitor() else {
+        return MAIN_SIZE;
+    };
+    let area = monitor
+        .work_area()
+        .size
+        .to_logical::<f64>(monitor.scale_factor());
+    let fit = |want: f64, room: f64, min: f64| want.min(room * 0.92).max(min).round();
+    (
+        fit(MAIN_SIZE.0, area.width, MAIN_MIN_SIZE.0),
+        fit(MAIN_SIZE.1, area.height, MAIN_MIN_SIZE.1),
+    )
+}
+
 /// Opens the main window. It is made here rather than in tauri.conf.json so
 /// it starts with the right frame and doesn't flash the other one.
 pub fn open_main(app: &AppHandle) -> tauri::Result<()> {
+    let (width, height) = main_size(app);
     WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
         .title("Novero Mail")
-        .inner_size(1280.0, 800.0)
-        .min_inner_size(800.0, 500.0)
+        .inner_size(width, height)
+        .min_inner_size(MAIN_MIN_SIZE.0, MAIN_MIN_SIZE.1)
+        .center()
         .decorations(!custom_titlebar(app))
         .build()
         .map(|window| paint_background(app, &window))?;
