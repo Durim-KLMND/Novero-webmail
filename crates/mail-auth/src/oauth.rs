@@ -378,9 +378,9 @@ fn page(title: &str, text: &str) -> String {
         "<!doctype html><meta charset=utf-8><title>{t} · Novero Mail</title>\
          <style>body{{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;\
          place-items:center;min-height:100vh;background:#f6f6f4;color:#1d1d1b}}\
-         main{{max-width:28rem;padding:24px}}h1{{color:#004b4a;font-size:22px}}\
+         main{{max-width:28rem;padding:24px}}h1{{color:#1d3d37;font-size:22px}}\
          @media (prefers-color-scheme:dark){{body{{background:#111111;color:#eeeeec}}\
-         h1{{color:#5cbdb4}}}}</style><main><h1>{t}</h1><p>{x}</p></main>",
+         h1{{color:#8fb3a8}}}}</style><main><h1>{t}</h1><p>{x}</p></main>",
         t = escape(title),
         x = escape(text)
     )

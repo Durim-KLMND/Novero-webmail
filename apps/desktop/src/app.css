@@ -1,14 +1,18 @@
 :root {
-  --brand: #004b4a;
+  /* Brand: deep green primary, with two lighter supporting shades. */
+  --brand: #1d3d37;
+  --brand-mid: #33554d;
+  --brand-light: #486960;
   --bg: #ffffff;
   --bg-side: #f6f6f5;
   --bg-hover: #ececea;
-  --bg-selected: #e1eeec;
+  --bg-selected: #dfe9e5;
   --text: #1a1a19;
   --text-quiet: #5f625f;
   --border: #e2e2df;
   /* Filled surfaces: primary buttons, the logo. */
   --accent: var(--brand);
+  --accent-hover: var(--brand-mid);
   --accent-text: #ffffff;
   /* Accent used as text or a small mark: links, badges, unread dots, focus rings. */
   --accent-ink: var(--brand);
@@ -25,7 +29,7 @@
   --scroll-thumb: rgba(26, 26, 25, 0.22);
   --scroll-thumb-hover: rgba(26, 26, 25, 0.4);
   /* A colour per cleanup category, for dots and labels; .cat-<id> picks one as --cat. */
-  --cat-personal: #0f766e;
+  --cat-personal: var(--brand-light);
   --cat-updates: #2563eb;
   --cat-social: #7c3aed;
   --cat-forums: #b45309;
@@ -40,14 +44,16 @@
   --bg: #111111;
   --bg-side: #181817;
   --bg-hover: #232322;
-  --bg-selected: #0f2e2d;
+  --bg-selected: #182b28;
   --text: #ececea;
   --text-quiet: #a3a39e;
   --border: #2b2b29;
-  --accent: var(--brand);
+  /* #1d3d37 barely shows on #111111, so filled surfaces use the middle shade. */
+  --accent: var(--brand-mid);
+  --accent-hover: var(--brand-light);
   --accent-text: #ffffff;
-  /* The brand teal is too dark to read on #111111, so marks use a lighter tint of it. */
-  --accent-ink: #5cbdb4;
+  /* The brand green is too dark to read on #111111, so marks use a lighter tint of it. */
+  --accent-ink: #8fb3a8;
   --danger: #f28b82;
   --danger-bg: #3a2120;
   --note-bg: #34301f;
@@ -55,7 +61,7 @@
   --success: #22a35a;
   --scroll-thumb: rgba(236, 236, 234, 0.2);
   --scroll-thumb-hover: rgba(236, 236, 234, 0.36);
-  --cat-personal: #5cbdb4;
+  --cat-personal: #8fb3a8;
   --cat-updates: #7aa7ff;
   --cat-social: #b69cff;
   --cat-forums: #f0b45a;
@@ -69,14 +75,16 @@
     --bg: #111111;
     --bg-side: #181817;
     --bg-hover: #232322;
-    --bg-selected: #0f2e2d;
+    --bg-selected: #182b28;
     --text: #ececea;
     --text-quiet: #a3a39e;
     --border: #2b2b29;
-    --accent: var(--brand);
+    /* #1d3d37 barely shows on #111111, so filled surfaces use the middle shade. */
+    --accent: var(--brand-mid);
+    --accent-hover: var(--brand-light);
     --accent-text: #ffffff;
-    /* The brand teal is too dark to read on #111111, so marks use a lighter tint of it. */
-    --accent-ink: #5cbdb4;
+    /* The brand green is too dark to read on #111111, so marks use a lighter tint of it. */
+    --accent-ink: #8fb3a8;
     --danger: #f28b82;
     --danger-bg: #3a2120;
     --note-bg: #34301f;
@@ -84,7 +92,7 @@
     --success: #22a35a;
     --scroll-thumb: rgba(236, 236, 234, 0.2);
     --scroll-thumb-hover: rgba(236, 236, 234, 0.36);
-    --cat-personal: #5cbdb4;
+    --cat-personal: #8fb3a8;
     --cat-updates: #7aa7ff;
     --cat-social: #b69cff;
     --cat-forums: #f0b45a;
@@ -166,8 +174,8 @@ button.primary {
 }
 
 button.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-  background: var(--accent);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 button:disabled {
